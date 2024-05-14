@@ -8,6 +8,10 @@
 `include "CONFIGS/ulx3s_config.v"
 `endif
 
+`ifdef COLORLIGHT_I5
+`include "CONFIGS/colorlight_i5_config.v"
+`endif
+
 `ifdef ICE_STICK
 `include "CONFIGS/icestick_config.v"
 `endif

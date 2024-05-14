@@ -50,6 +50,9 @@ localparam NRV_DEVICES = 0
 `ifdef NRV_IO_FGA
    | (1 << IO_FGA_CNTL_bit) | (1 << IO_FGA_DAT_bit)
 `endif			 
+`ifdef NRV_IO_SEGMENT
+   | (1 << IO_SEGMENT_bit) 			 			 			 
+`endif 
 ;
    
    assign rdata = sel_memory  ? `NRV_RAM  :

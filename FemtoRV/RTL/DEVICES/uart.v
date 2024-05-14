@@ -43,6 +43,8 @@ endmodule
 // probably a couple of bugs there... 
 `ifdef ARTY
 `include "uart_picosoc.v.orig"
+//`elsif COLORLIGHT_I5
+//`include "uart_picosoc.v.orig"
 `else
 `include "uart_picosoc_shrunk.v"
 `endif

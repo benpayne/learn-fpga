@@ -22,6 +22,7 @@
 `include "DEVICES/Buttons.v"        // Driver for the buttons
 `include "DEVICES/FGA.v"            // Femto Graphic Adapter
 `include "DEVICES/HardwareConfig.v" // Constant registers to query hardware config.
+`include "DEVICES/segment.v"        // 7-segment display
 
 // The Ice40UP5K has ample quantities (128 KB) of single-ported RAM that can be
 // used as system RAM (but cannot be inferred, uses a special block).
@@ -90,6 +91,10 @@ module femtosoc(
    input  irda_RXD,
    output irda_SD,		
 `endif   		
+`ifdef NRV_IO_SEGMENT
+   output [6:0] segments,
+   output seg_select,
+`endif
    input pclk
 );
 
@@ -411,8 +416,13 @@ HardwareConfig hwconfig(
  // Internal wires to connect IO buffers to UART
  wire RXD_internal;
  wire TXD_internal;
-   
- `ifdef ULX3S
+
+ `ifdef COLORLIGHT_I5
+ `define BUFFER_RX
+ `elsif ULX3S
+ `define BUFFER_RX
+ `endif
+ `ifdef BUFFER_RX
    `ifndef BENCH_OR_LINT
      // On the ULX3S, we need to latch RXD, using the latch
      // embedded in the input buffer. If we do not do that,
@@ -515,6 +525,21 @@ HardwareConfig hwconfig(
    );
 `endif
    
+/********************* 7 Segment Display *************************************/
+/*
+ * Directly wired to the buttons.
+ */
+`ifdef NRV_IO_SEGMENT
+   SevenSegment segment_driver(
+      .clk(clk),
+      .wstrb(io_wstrb),			
+      .sel(io_word_address[IO_SEGMENT_bit]),
+      .wdata(io_wdata),		  
+      .segments(segments),
+      .seg_select(seg_select)		   
+   );
+`endif
+
 /************** io_rdata, io_rbusy and io_wbusy signals *************/
 
 /*

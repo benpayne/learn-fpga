@@ -86,6 +86,7 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define IO_BUTTONS           IO_BIT_TO_OFFSET(IO_BUTTONS_bit)
 #define IO_FGA_CNTL          IO_BIT_TO_OFFSET(IO_FGA_CNTL_bit)
 #define IO_FGA_DAT           IO_BIT_TO_OFFSET(IO_FGA_DAT_bit)    
+#define IO_SEGMENT			 IO_BIT_TO_OFFSET(IO_SEGMENT_bit)
 #define IO_HW_CONFIG_RAM     IO_BIT_TO_OFFSET(IO_HW_CONFIG_RAM_bit)
 #define IO_HW_CONFIG_DEVICES IO_BIT_TO_OFFSET(IO_HW_CONFIG_DEVICES_bit)
 #define IO_HW_CONFIG_CPUINFO IO_BIT_TO_OFFSET(IO_HW_CONFIG_CPUINFO_bit)

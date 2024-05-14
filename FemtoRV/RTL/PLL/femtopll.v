@@ -34,6 +34,8 @@ endmodule
   `include "pll_ulx3s.v"
  `elsif ECP5_EVN
   `include "pll_ecp5_evn.v"
+ `elsif COLORLIGHT_I5
+  `include "pll_colorlight_i5.v"
  `elsif FOMU
   `include "pll_fomu.v"
  `elsif ARTY
