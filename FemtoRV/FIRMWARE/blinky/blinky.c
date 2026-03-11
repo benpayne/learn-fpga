@@ -1,74 +1,83 @@
 
 #include <femtorv32.h>
 
+static volatile int timer_count = 0;
+static volatile int key_count = 0;
+
 static void irq_entry(void) __attribute__ ((interrupt ("machine")));
 
 void irq_entry(void)  {
     uint32_t flags = IO_IN(IO_INT_CONTROLLER);
-    printf("Begin IRQ %x\r\n", IO_IN(IO_INT_CONTROLLER));
 
     if (flags & (1 << INT_TIMER_bit)) {
-        printf("Timer IRQ\r\n");
+        timer_count++;
+        // Restart timer (25M cycles = 1 second at 25MHz)
+        IO_OUT(IO_TIMER, 25000000);
         CLEAR_INT(INT_TIMER_bit);
     }
     if (flags & (1 << INT_PS2_bit)) {
-        uint32_t ps2_data = IO_IN(IO_PS2);
-        printf(" > Key %x status %d\r\n", ps2_data & 0xFF, (ps2_data >> 8) & 3 );
+        uint32_t ps2_reg = IO_IN(IO_PS2);
+        uint8_t scancode = ps2_reg & 0xFF;
+        key_count++;
+        printf("[IRQ] key=0x%x (#%d)\r\n", scancode, key_count);
         CLEAR_INT(INT_PS2_bit);
     }
-
-    printf("Exit IRQ %x\r\n", IO_IN(IO_INT_CONTROLLER));
-}   
+}
 
 void write_mtvec(uintptr_t mtvec) {
     __asm__ volatile ("csrw mtvec, %0" : : "r"(mtvec));
 }
 
 void enable_interrupts() {
-    uint32_t mstatus, mie;
+    uint32_t mstatus;
     __asm__ volatile ("csrr %0, mstatus" : "=r"(mstatus));
-    mstatus |= (1 << 3);  // MIE bit
+    mstatus |= (1 << 3);  // MIE bit (Machine Interrupt Enable)
     __asm__ volatile ("csrw mstatus, %0" : : "r"(mstatus));
-
-    __asm__ volatile ("csrr %0, mie" : "=r"(mie));
-    mie |= (1 << 7);  // MTIE (Machine Timer Interrupt Enable)
-    mie |= (1 << 11); // MEIE (Machine External Interrupt Enable)
-    __asm__ volatile ("csrw mie, %0" : : "r"(mie));
 }
 
-int main() 
+int main()
 {
-    int buttons = 0;
     int counter = 0;
+
+    // Clear any pending state before enabling interrupts
+    IO_OUT(IO_TIMER, 0xFFFFFFFF);
+    IO_OUT(IO_INT_CONTROLLER, 0xFFFFFFFF);
+
+    milliwait(100);
+
+    printf("Interrupt Test\r\n");
+    printf("==============\r\n");
+
+    uint32_t devices = IO_IN(IO_HW_CONFIG_DEVICES);
+    printf("Devices: 0x%x\r\n", devices);
+    printf("PS2: %s\r\n", FEMTOSOC_HAS_DEVICE(IO_PS2_bit) ? "YES" : "NO");
+    printf("IntCtrl: %s\r\n", FEMTOSOC_HAS_DEVICE(IO_INT_CONTROLLER_bit) ? "YES" : "NO");
+    printf("Timer: %s\r\n", FEMTOSOC_HAS_DEVICE(IO_TIMER_bit) ? "YES" : "NO");
+
+    // Set up interrupt handler
     write_mtvec((uintptr_t)&irq_entry);
+
+    // Clear pending interrupts again right before enabling
+    IO_OUT(IO_INT_CONTROLLER, 0xFFFFFFFF);
+
+    // Start timer: 25M cycles = 1 second at 25MHz
+    IO_OUT(IO_TIMER, 25000000);
+
+    // Enable interrupts
     enable_interrupts();
 
-    uint32_t timeout = 400000000;
+    printf("Interrupts ON\r\n");
+    printf("Press PS2 keys...\r\n\r\n");
 
-    IO_OUT(IO_TIMER, timeout);
-    printf("Timer Initial Count: %d\r\n", timeout);
-    uint32_t devices = IO_IN(IO_HW_CONFIG_DEVICES);
-    printf("Devices Configured: %x\r\n", devices);
-    if (devices & (1 << IO_PS2_bit)) {
-        printf("PS2 Device Configured\r\n");
-    }
-    if (devices & (1 << IO_INT_CONTROLLER_bit)) {
-        printf("Interrupt Controller Configured\r\n");
-    }
     while(1) {
-        uint32_t timer_count = IO_IN(IO_TIMER);
-        if ( timer_count > 0 ) {
-            printf("Timer Count: %u\r\n", timer_count );
-        }
-        LEDS(0x03);
-        delay(500);
-        LEDS(0x1c);
-        delay(500);
+        // Main loop: blink LEDs, show timer interrupt count
+        LEDS(counter & 0xFF);
+        IO_OUT(IO_SEGMENT, timer_count);
 
-        buttons = IO_IN(IO_BUTTONS);
-        printf("Buttons: %d, Counter %d\r\n", buttons, counter);
-        //IO_OUT(IO_SEGMENT, counter);
-        counter += 1;
+        delay(1000);
+        counter++;
+
+        printf("t=%d keys=%d\r\n", timer_count, key_count);
     }
 
     return 0;
