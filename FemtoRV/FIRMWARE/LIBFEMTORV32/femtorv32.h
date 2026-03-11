@@ -87,6 +87,9 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define IO_FGA_CNTL          IO_BIT_TO_OFFSET(IO_FGA_CNTL_bit)
 #define IO_FGA_DAT           IO_BIT_TO_OFFSET(IO_FGA_DAT_bit)    
 #define IO_SEGMENT			 IO_BIT_TO_OFFSET(IO_SEGMENT_bit)
+#define IO_TIMER             IO_BIT_TO_OFFSET(IO_TIMER_bit)
+#define IO_INT_CONTROLLER    IO_BIT_TO_OFFSET(IO_INT_CONTROLLER_bit)
+#define IO_PS2               IO_BIT_TO_OFFSET(IO_PS2_bit)
 #define IO_HW_CONFIG_RAM     IO_BIT_TO_OFFSET(IO_HW_CONFIG_RAM_bit)
 #define IO_HW_CONFIG_DEVICES IO_BIT_TO_OFFSET(IO_HW_CONFIG_DEVICES_bit)
 #define IO_HW_CONFIG_CPUINFO IO_BIT_TO_OFFSET(IO_HW_CONFIG_CPUINFO_bit)
@@ -94,6 +97,8 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define IO_IN(port)       *(volatile uint32_t*)(IO_BASE + port)
 #define IO_OUT(port,val)  *(volatile uint32_t*)(IO_BASE + port)=(val)
 #define LEDS(val)         IO_OUT(IO_LEDS,val)
+
+#define CLEAR_INT(bit)		IO_OUT(IO_INT_CONTROLLER,1<<bit)
 
 #define FEMTOSOC_HAS_DEVICE(bit)  (IO_IN(IO_HW_CONFIG_DEVICES) & (1 << bit))
 #define FEMTORV32_FREQ           ((IO_IN(IO_HW_CONFIG_CPUINFO) >> 16) & 1023)

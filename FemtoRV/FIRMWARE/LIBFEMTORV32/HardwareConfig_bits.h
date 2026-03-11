@@ -14,7 +14,17 @@
 #define IO_FGA_CNTL_bit 10
 #define IO_FGA_DAT_bit 11
 #define IO_SEGMENT_bit 12
+#define IO_TIMER_bit 13
+#define IO_INT_CONTROLLER_bit 14
+#define IO_PS2_bit 15
 #define IO_HW_CONFIG_RAM_bit 17
 #define IO_HW_CONFIG_DEVICES_bit 18
 #define IO_HW_CONFIG_CPUINFO_bit 19
 #define IO_MAPPED_SPI_FLASH_bit 20
+
+/* Constants for Interrupt bits in the Interrupts Controller.     */
+
+#define INT_TIMER_bit 0
+#define INT_PS2_bit 1
+#define INT_UART_bit 2
+#define INT_BUTTONS_bit 3

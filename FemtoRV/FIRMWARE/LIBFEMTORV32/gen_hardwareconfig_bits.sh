@@ -1,4 +1,5 @@
 VERILOG=../../RTL/DEVICES/HardwareConfig_bits.v
+INT_CONTROLLER=../../RTL/DEVICES/Interrupt_bits.v
 
 # C/C++ header #####################################################
 
@@ -12,7 +13,18 @@ cat $VERILOG | grep localparam \
              | sed -e 's|;||g' \
              | awk '{printf "#define %s %s\n", $2, $4}' \
 	     >> HardwareConfig_bits.h
-	     
+
+cat >> HardwareConfig_bits.h << EOF
+
+/* Constants for Interrupt bits in the Interrupts Controller.     */
+
+EOF
+
+cat $INT_CONTROLLER | grep localparam \
+             | sed -e 's|;||g' \
+             | awk '{printf "#define %s %s\n", $2, $4}' \
+	     >> HardwareConfig_bits.h
+
 # ASM header #####################################################
 
 cat > HardwareConfig_bits.inc << EOF
