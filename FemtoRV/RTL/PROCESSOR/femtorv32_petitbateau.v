@@ -51,6 +51,7 @@ module FemtoRV32(
    input         mem_wbusy, // asserted if memory is busy writing value
 
    input         interrupt_request,
+   output        interrupt_ack,
 
    input         reset      // set to 0 to reset the processor
 );
@@ -379,12 +380,12 @@ module FemtoRV32(
 
    // Processor accepts interrupts in EXECUTE state.   
    wire interrupt_accepted = interrupt & state[EXECUTE_bit];        
-
+   assign interrupt_ack = interrupt_accepted;
+   
    // If current interrupt is accepted, there already might be the next one,
    //  which should not be missed:
    always @(posedge clk) begin
-     interrupt_request_sticky <= 
-         interrupt_request | (interrupt_request_sticky & ~interrupt_accepted);
+     interrupt_request_sticky <= interrupt_request | (interrupt_request_sticky & ~interrupt_accepted);
    end
 
    // Decoder for mret opcode
@@ -426,13 +427,13 @@ module FemtoRV32(
 
    always @(posedge clk) begin
       if(!reset) begin
-	 mstatus <= 0;
+         mstatus <= 0;
       end else begin
-	 // Execute a CSR opcode
-	 if (isSYSTEM & (instr[14:12] != 0) & state[EXECUTE_bit]) begin
-	    if (sel_mstatus) mstatus <= CSR_write[3];
-	    if (sel_mtvec  ) mtvec   <= CSR_write[ADDR_WIDTH-1:0];
-	 end
+         // Execute a CSR opcode
+	      if (isSYSTEM & (instr[14:12] != 0) & state[EXECUTE_bit]) begin
+	         if (sel_mstatus) mstatus <= CSR_write[3];
+	         if (sel_mtvec  ) mtvec   <= CSR_write[ADDR_WIDTH-1:0];
+	   end
       end
    end
 
@@ -601,83 +602,83 @@ module FemtoRV32(
          fetch_second_half <= 0;
       end else begin
 
-	 // See note [1] at the end of this file.
-	 (* parallel_case *)
-	 case(1'b1)
+         // See note [1] at the end of this file.
+         (* parallel_case *)
+         case(1'b1)
 
-           state[WAIT_INSTR_bit]: begin
-              if(!mem_rbusy) begin // may be high when executing from SPI flash
-		 // Update cache
-		 if (~current_cache_hit | fetch_second_half) begin
-                    cached_addr <= mem_addr[ADDR_WIDTH-1:2];
-                    cached_data <= mem_rdata;
-		 end;
+            state[WAIT_INSTR_bit]: begin
+               if(!mem_rbusy) begin // may be high when executing from SPI flash
+                  // Update cache
+                  if (~current_cache_hit | fetch_second_half) begin
+                           cached_addr <= mem_addr[ADDR_WIDTH-1:2];
+                           cached_data <= mem_rdata;
+                  end;
 
-		 // Decode instruction
-		 // Registers are fetched at the same time, in the
-		 // FPU's always block.
-		 instr  <= &raw_instr[1:0] ? raw_instr[31:2] 
-                                           : decompressed[31:2];
-		 long_instr <= &raw_instr[1:0];
+                  // Decode instruction
+                  // Registers are fetched at the same time, in the
+                  // FPU's always block.
+                  instr  <= &raw_instr[1:0] ? raw_instr[31:2] 
+                                                      : decompressed[31:2];
+                  long_instr <= &raw_instr[1:0];
 
-		 // Long opcode, unaligned, first part fetched, 
-		 // happens in non-linear code
-		 if (current_unaligned_long & ~fetch_second_half) begin
-                    fetch_second_half <= 1;
-                    state <= FETCH_INSTR;
-		 end else begin
-                    fetch_second_half <= 0;
-                    state <= &raw_instr[1:0] ? EXECUTE : DECOMPRESS_GETREGS;
-		 end
-              end
-           end
+                  // Long opcode, unaligned, first part fetched, 
+                  // happens in non-linear code
+                  if (current_unaligned_long & ~fetch_second_half) begin
+                              fetch_second_half <= 1;
+                              state <= FETCH_INSTR;
+                  end else begin
+                              fetch_second_half <= 0;
+                              state <= &raw_instr[1:0] ? EXECUTE : DECOMPRESS_GETREGS;
+                  end
+               end
+            end
 
-           state[DECOMPRESS_GETREGS_bit]: begin
-	      // All the registers are fetched in FPU's always block.
-	      state <= EXECUTE;
-	   end
+            state[DECOMPRESS_GETREGS_bit]: begin
+               // All the registers are fetched in FPU's always block.
+               state <= EXECUTE;
+            end
 	   
-           state[EXECUTE_bit]: begin
-              if (interrupt) begin
-		 PC     <= mtvec;
-		 mepc   <= PC_new;
-		 mcause <= 1;
-		 state  <= needToWait ? WAIT_ALU_OR_MEM : FETCH_INSTR;
-              end else begin
-		 // Unaligned load/store not implemented yet
-		 // (the norm supposes that FLW and FSW can handle them)
-		 `ASSERT(
-                     !((isLoad|isStore) && instr[2] && |loadstore_addr[1:0]), 
-		     ("PC=%x UNALIGNED FLW/FSW",PC)
-                 );
-		 
-		 PC <= PC_new;
-		 if (interrupt_return) mcause <= 0;
+            state[EXECUTE_bit]: begin
+               if (interrupt) begin
+                  PC     <= mtvec;
+                  mepc   <= PC_new;
+                  mcause <= 1;
+                  state  <= needToWait ? WAIT_ALU_OR_MEM : FETCH_INSTR;
+               end else begin
+                  // Unaligned load/store not implemented yet
+                  // (the norm supposes that FLW and FSW can handle them)
+                  `ASSERT(
+                                 !((isLoad|isStore) && instr[2] && |loadstore_addr[1:0]), 
+                     ("PC=%x UNALIGNED FLW/FSW",PC)
+                           );
+                  
+                  PC <= PC_new;
+                  if (interrupt_return) mcause <= 0;
 
-		 state <= next_cache_hit & ~next_unaligned_long
-  		        ? (needToWait ? WAIT_ALU_OR_MEM_SKIP : WAIT_INSTR)
-			: (needToWait ? WAIT_ALU_OR_MEM      : FETCH_INSTR);
+                  state <= next_cache_hit & ~next_unaligned_long
+                        ? (needToWait ? WAIT_ALU_OR_MEM_SKIP : WAIT_INSTR)
+                     : (needToWait ? WAIT_ALU_OR_MEM      : FETCH_INSTR);
 
-		 fetch_second_half <= next_cache_hit & next_unaligned_long;
-              end
-           end
+                  fetch_second_half <= next_cache_hit & next_unaligned_long;
+               end
+            end
 
-           state[WAIT_ALU_OR_MEM_bit]: begin
-              if(!aluBusy & !fpuBusy & !mem_rbusy & !mem_wbusy) begin
-                 state <= FETCH_INSTR;
-	      end
-           end
+            state[WAIT_ALU_OR_MEM_bit]: begin
+               if(!aluBusy & !fpuBusy & !mem_rbusy & !mem_wbusy) begin
+                  state <= FETCH_INSTR;
+	            end
+            end
 
-           state[WAIT_ALU_OR_MEM_SKIP_bit]: begin
-              if(!aluBusy & !fpuBusy & !mem_rbusy & !mem_wbusy) begin
-                 state <= WAIT_INSTR;
-	      end
-           end
+            state[WAIT_ALU_OR_MEM_SKIP_bit]: begin
+               if(!aluBusy & !fpuBusy & !mem_rbusy & !mem_wbusy) begin
+                  state <= WAIT_INSTR;
+	            end
+            end
 
-           default: begin // FETCH_INSTR
-              state <= WAIT_INSTR;
-           end
-	 endcase 
+            default: begin // FETCH_INSTR
+               state <= WAIT_INSTR;
+            end
+	      endcase 
       end
    end
 
