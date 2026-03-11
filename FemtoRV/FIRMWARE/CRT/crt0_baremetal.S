@@ -10,6 +10,10 @@ _start:
      li gp,IO_BASE       #   Base address of memory-mapped IO
 .option pop
 
+     # Disable interrupts immediately on startup
+     csrw mstatus, zero
+     csrw mie, zero
+
      li   t0,IO_HW_CONFIG_RAM  # Can't use IO_HW_CONFIG_RAM(gp) (too far away !)
      add  t0,t0,gp             # Read RAM size in hw config register and
      lw   sp,0(t0)             # initialize SP at end of RAM

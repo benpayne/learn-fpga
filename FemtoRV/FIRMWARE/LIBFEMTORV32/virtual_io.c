@@ -16,6 +16,9 @@ void set_getcharfunc(getcharfunc_t f) {
 
 int putchar(int c) {
    wait_cycles(10*FEMTORV32_FREQ); // 10us at 115200 bauds
+   if (c == '\n') {
+      (*putcharfunc)('\r');
+   }
    return (*putcharfunc)(c);
 }
 

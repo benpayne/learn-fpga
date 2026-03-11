@@ -31,6 +31,18 @@ void print_dec(int val) {
    }
 }
 
+void print_unsigned(unsigned int val) {
+   char buffer[255];
+   char *p = buffer;
+   while (val || p == buffer) {
+      *(p++) = val % 10;
+      val = val / 10;
+   }
+   while (p != buffer) {
+      putchar('0' + *(--p));
+   }
+}
+
 void print_hex(unsigned int val) {
    print_hex_digits(val, 8);
 }

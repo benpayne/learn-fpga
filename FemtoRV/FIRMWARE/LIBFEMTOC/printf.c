@@ -11,8 +11,9 @@ int printf(const char *fmt,...)
         {
             fmt++;
                  if(*fmt=='s') print_string(va_arg(ap,char *));
-            else if(*fmt=='x') print_hex(va_arg(ap,int));
+            else if(*fmt=='x') print_hex(va_arg(ap,unsigned int));
             else if(*fmt=='d') print_dec(va_arg(ap,int));
+            else if(*fmt=='u') print_unsigned(va_arg(ap,unsigned int));
             else if(*fmt=='c') putchar(va_arg(ap,int));	   
             else putchar(*fmt);
         }
