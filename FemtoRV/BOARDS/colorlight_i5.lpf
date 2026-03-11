@@ -11,35 +11,50 @@ FREQUENCY PORT "pclk" 25 MHZ;
 LOCATE COMP "RESET" SITE "T1"; # fire 2 
 IOBUF PORT "RESET" IO_TYPE=LVCMOS33;
 
-## LEDs ##########################################
+## LEDs (active-low, connector P2) #################
+## D1=rightmost on board, D8=leftmost
 
-LOCATE COMP "D1" SITE "E1";
-LOCATE COMP "D2" SITE "F2";
-LOCATE COMP "D3" SITE "E4";
-LOCATE COMP "D4" SITE "F1";
-LOCATE COMP "D5" SITE "F3";
+LOCATE COMP "D1_pin" SITE "N18";
+LOCATE COMP "D2_pin" SITE "N17";
+LOCATE COMP "D3_pin" SITE "L20";
+LOCATE COMP "D4_pin" SITE "M18";
+LOCATE COMP "D5_pin" SITE "K20";
+LOCATE COMP "D6_pin" SITE "L18";
+LOCATE COMP "D7_pin" SITE "G20";
+LOCATE COMP "D8_pin" SITE "J20";
 
-IOBUF PORT "D1"  IO_TYPE=LVCMOS33;
-IOBUF PORT "D2"  IO_TYPE=LVCMOS33;
-IOBUF PORT "D3"  IO_TYPE=LVCMOS33;
-IOBUF PORT "D4"  IO_TYPE=LVCMOS33;
-IOBUF PORT "D5"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D1_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D2_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D3_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D4_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D5_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D6_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D7_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D8_pin"  IO_TYPE=LVCMOS33;
+
+## PS2 ##########################################
+
+LOCATE COMP "ps2_clk" SITE "K5";
+LOCATE COMP "ps2_data" SITE "B3"; 
+
+IOBUF PORT "ps2_clk" PULLMODE=UP   IO_TYPE=LVCMOS33;
+IOBUF PORT "ps2_data" PULLMODE=UP   IO_TYPE=LVCMOS33;
 
 ## Buttons ######################################
 
-LOCATE COMP "buttons[0]" SITE "A2";  # power (active low)
-LOCATE COMP "buttons[1]" SITE "K5";  # FIRE1
-LOCATE COMP "buttons[2]" SITE "K4";  # UP
-LOCATE COMP "buttons[3]" SITE "B3";  # DOWN
-LOCATE COMP "buttons[4]" SITE "B2";  # LEFT
-LOCATE COMP "buttons[5]" SITE "E19"; # RIGHT
+#LOCATE COMP "buttons[0]" SITE "A2";  # power (active low)
+#LOCATE COMP "buttons[1]" SITE "K5";  # FIRE1
+#LOCATE COMP "buttons[2]" SITE "K4";  # UP
+#LOCATE COMP "buttons[3]" SITE "B3";  # DOWN
+#LOCATE COMP "buttons[4]" SITE "B2";  # LEFT
+#LOCATE COMP "buttons[5]" SITE "E19"; # RIGHT
 
-IOBUF PORT "buttons[0]" PULLMODE=UP   IO_TYPE=LVCMOS33;
-IOBUF PORT "buttons[1]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
-IOBUF PORT "buttons[2]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
-IOBUF PORT "buttons[3]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
-IOBUF PORT "buttons[4]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
-IOBUF PORT "buttons[5]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+#IOBUF PORT "buttons[0]" PULLMODE=UP   IO_TYPE=LVCMOS33;
+#IOBUF PORT "buttons[1]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+#IOBUF PORT "buttons[2]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+#IOBUF PORT "buttons[3]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+#IOBUF PORT "buttons[4]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+#IOBUF PORT "buttons[5]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
 
 
 ## UART ######################################################
@@ -98,17 +113,23 @@ IOBUF PORT "gpdi_dn[2]" IO_TYPE=LVCMOS33D DRIVE=4;
 IOBUF PORT "gpdi_dp[3]" IO_TYPE=LVCMOS33D DRIVE=4;
 IOBUF PORT "gpdi_dn[3]" IO_TYPE=LVCMOS33D DRIVE=4;
 
-# 7 Segment Display ##########################################
+# 7 Segment Display (PMOD_P4A) ##############################
 
-LOCATE COMP "seg_select" SITE "F4";
-LOCATE COMP "segments[0]" SITE "E6";  
-LOCATE COMP "segments[1]" SITE "F5";  
-LOCATE COMP "segments[2]" SITE "E5";  
-LOCATE COMP "segments[3]" SITE "D16"; 
-LOCATE COMP "segments[4]" SITE "G5";  
-LOCATE COMP "segments[5]" SITE "D18"; 
-LOCATE COMP "segments[6]" SITE "D17"; 
+LOCATE COMP "seg_select" SITE "E1";
+LOCATE COMP "segments[0]" SITE "E4";  # seg_a
+LOCATE COMP "segments[1]" SITE "F1";  # seg_b
+LOCATE COMP "segments[2]" SITE "F2";  # seg_c
+LOCATE COMP "segments[3]" SITE "F3";  # seg_d
+LOCATE COMP "segments[4]" SITE "G3";  # seg_e
+LOCATE COMP "segments[5]" SITE "H4";  # seg_f
+LOCATE COMP "segments[6]" SITE "H3";  # seg_g
 
-IOBUF PORT "seg_select" IO_TYPE=LVCMOS33;
-IOBUF PORT "segments[6:0]" IO_TYPE=LVCMOS33;
+IOBUF PORT "seg_select" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[0]" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[1]" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[2]" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[3]" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[4]" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[5]" IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "segments[6]" IO_TYPE=LVCMOS33 DRIVE=4;
 

@@ -15,14 +15,14 @@ BENCH.icarus:
 
 BENCH.verilator:
 	verilator -DBENCH_VERILATOR --top-module femtoRV32_bench \
-         -IRTL -IRTL/PROCESSOR -IRTL/DEVICES -IRTL/PLL  \
+         -IRTL -IRTL/PROCESSOR -IRTL/DEVICES -IRTL/PLL -Ilib/ps2-controller-lib \
 	 -CFLAGS '-I../SIM' -LDFLAGS '-lglfw -lGL' \
          -FI FPU_funcs.h \
 	 --cc --exe SIM/sim_main.cpp SIM/FPU_funcs.cpp SIM/SSD1351.cpp RTL/femtosoc_bench.v
-	(cd obj_dir; make -f VfemtoRV32_bench.mk)	 
+	(cd obj_dir; make -f VfemtoRV32_bench.mk)
 	obj_dir/VfemtoRV32_bench
 
 BENCH.lint:
 	verilator -DBENCH --lint-only --top-module femtoRV32_bench \
-         -IRTL -IRTL/PROCESSOR -IRTL/DEVICES -IRTL/PLL femtosoc_bench.v
+         -IRTL -IRTL/PROCESSOR -IRTL/DEVICES -IRTL/PLL -Ilib/ps2-controller-lib femtosoc_bench.v
 ################################################################################

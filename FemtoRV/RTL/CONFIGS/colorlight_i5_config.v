@@ -8,14 +8,17 @@
 //`define NRV_IO_SSD1351     // Mapped IO, 128x128x64K OLed screen
 //`define NRV_IO_MAX7219   // Mapped IO, 8x8 led matrix
 //`define NRV_IO_SDCARD      // Mapped IO, SPI SDCARD
-`define NRV_IO_BUTTONS     // Mapped IO, buttons
+//`define NRV_IO_BUTTONS     // Mapped IO, buttons
 //`define NRV_MAPPED_SPI_FLASH // SPI flash mapped in address space. Use with MINIRV32 to run code from SPI flash.
 //`define NRV_IO_FGA // Femto Graphic Adapter (ULX3S only)
 `define NRV_IO_SEGMENT     // Mapped IO, 7-segment display
+`define NRV_IO_TIMER
+`define NRV_IO_INT_CONTROLLER // Interrupt controller
+`define NRV_IO_PS2 // PS2 keyboard
 
 /************************* Frequency ********************************************************************************/
 
-`define NRV_FREQ 40          // Frequency in MHz. Recomm: 40 MHz   Overclocking: 80 MHz
+`define NRV_FREQ 25          // Frequency in MHz. Using 25 MHz (no PLL) for stability
 
 //`define NRV_FEMTORV32_QUARK // RV32I
 //`define NRV_FEMTORV32_TACHYON // RV32I high freq
