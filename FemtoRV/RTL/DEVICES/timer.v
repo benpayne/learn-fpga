@@ -34,7 +34,7 @@ module ClockTimer(
     if (sel && wstrb) begin
         timer_reg <= wdata[31:0];
         counter <= 0;
-        running_reg <= 1;
+        running_reg <= (wdata[31:0] != 0);  // Writing 0 stops the timer
         complete_reg <= 0;
 `ifdef BENCH
         $display("****************** Timer Value = %b", wdata[31:0]);
