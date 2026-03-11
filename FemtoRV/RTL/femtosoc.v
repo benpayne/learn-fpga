@@ -23,6 +23,10 @@
 `include "DEVICES/FGA.v"            // Femto Graphic Adapter
 `include "DEVICES/HardwareConfig.v" // Constant registers to query hardware config.
 `include "DEVICES/segment.v"        // 7-segment display
+`include "DEVICES/timer.v"          // Timer
+`include "DEVICES/InterruptController.v" // Interrupt controller
+`include "DEVICES/Interrupt_bits.v" // Interrupt controller
+`include "DEVICES/PS2Decoder.v" // Interrupt controller
 
 // The Ice40UP5K has ample quantities (128 KB) of single-ported RAM that can be
 // used as system RAM (but cannot be inferred, uses a special block).
@@ -47,7 +51,11 @@ module femtosoc(
  `ifdef FOMU
    output rgb0,rgb1,rgb2,
  `else
-   output D1,D2,D3,D4,D5,
+  `ifdef ACTIVE_LOW_LEDS
+   output D1_pin,D2_pin,D3_pin,D4_pin,D5_pin,D6_pin,D7_pin,D8_pin,
+  `else
+   output D1,D2,D3,D4,D5,D6,D7,D8,
+  `endif
  `endif
 `endif	      
 `ifdef NRV_IO_SSD1351_1331	      
@@ -95,6 +103,10 @@ module femtosoc(
    output [6:0] segments,
    output seg_select,
 `endif
+`ifdef NRV_IO_PS2
+   input ps2_clk,
+   input ps2_data,
+`endif
    input pclk
 );
 
@@ -120,13 +132,27 @@ module femtosoc(
 `endif
 
 `ifdef FOMU
-   // Internal wires for the LEDs, 
+   // Internal wires for the LEDs,
    // need to convert to signal for RGB led
    wire D1,D2,D3,D4,D5;
-   // On the FOMU, USB pins should be statically driven if not used   
+   // On the FOMU, USB pins should be statically driven if not used
    assign usb_dp    = 1'b0;
    assign usb_dn    = 1'b0;
    assign usb_dp_pu = 1'b0;
+`endif
+
+`ifdef ACTIVE_LOW_LEDS
+   // Internal wires for active-low LED boards (e.g. Colorlight i5)
+   // All LED logic drives these active-high, inverted at pin output
+   wire D1,D2,D3,D4,D5,D6,D7,D8;
+   assign D1_pin = ~D1;
+   assign D2_pin = ~D2;
+   assign D3_pin = ~D3;
+   assign D4_pin = ~D4;
+   assign D5_pin = ~D5;
+   assign D6_pin = ~D6;
+   assign D7_pin = ~D7;
+   assign D8_pin = ~D8;
 `endif
 
   wire  clk;
@@ -371,6 +397,41 @@ HardwareConfig hwconfig(
 );
 `endif
    
+/********************* Interrupt Controller *****************************/
+/*
+ * Interrupt Controller to track what interrupts needs to be serviced
+ */
+
+`ifdef NRV_INTERRUPTS
+   wire        interrupt_request;
+`endif 
+
+`ifdef NRV_IO_INT_CONTROLLER
+   wire [31:0] interrupt_rdata;
+   wire [31:0] interrupt_bits;
+   InterruptController interrupt_controller(
+      .rst(reset),
+      .clk(clk),
+      .wstrb(io_wstrb),			
+      .rstrb(io_rstrb),			
+      .sel(io_word_address[IO_INT_CONTROLLER_bit]),
+      .wdata(io_wdata),		  
+      .rdata(interrupt_rdata),
+      .interrupts(interrupt_bits), 
+      .interrupt_request(interrupt_request)
+   );
+
+`ifndef NRV_IO_TIMER
+   assign interrupt_bits[INT_TIMER_bit]   = 1'b0;
+`endif
+
+`ifndef NRV_IO_PS2
+   assign interrupt_bits[INT_PS2_bit]   = 1'b0;
+`endif
+
+   assign interrupt_bits[31:2]   = 30'b0;
+`endif
+
 /*********************** Four LEDs ************************/
 `ifdef NRV_IO_LEDS
    wire [31:0] leds_rdata;
@@ -527,7 +588,7 @@ HardwareConfig hwconfig(
    
 /********************* 7 Segment Display *************************************/
 /*
- * Directly wired to the buttons.
+ * 7 segment display device
  */
 `ifdef NRV_IO_SEGMENT
    SevenSegment segment_driver(
@@ -536,9 +597,59 @@ HardwareConfig hwconfig(
       .sel(io_word_address[IO_SEGMENT_bit]),
       .wdata(io_wdata),		  
       .segments(segments),
-      .seg_select(seg_select)		   
+      .seg_select(seg_select)
    );
 `endif
+
+
+/********************* Timer Device with Interupts *****************************/
+/*
+ * Timer device with interrupts
+ */
+`ifdef NRV_IO_TIMER
+   wire [31:0] timer_rdata;
+   ClockTimer timer_driver(
+      .clk(clk),
+      .wstrb(io_wstrb),			
+      .rstrb(io_rstrb),			
+      .sel(io_word_address[IO_TIMER_bit]),
+      .wdata(io_wdata),		  
+      .rdata(timer_rdata),
+`ifdef NRV_IO_INT_CONTROLLER
+      .complete(interrupt_bits[INT_TIMER_bit]),
+`else
+      .complete(interrupt_request),
+`endif
+      .running(D7)
+   );
+`endif
+
+
+/********************* PS2 Device with Interupts *****************************/
+/*
+ * PS2 device with interrupts
+ */
+`ifdef NRV_IO_PS2
+   wire [31:0] ps2_rdata;
+   wire [7:0] raw_value;
+   ps2_decoder_device #(
+      .CLK_FREQ_HZ(`NRV_FREQ * 1_000_000)
+   ) PS2(
+      .reset(reset),
+      .clk(clk),
+      .rstrb(io_rstrb),			
+      .rdata(ps2_rdata),
+      .sel(io_word_address[IO_PS2_bit]),
+`ifdef NRV_IO_INT_CONTROLLER
+      .interrupt(interrupt_bits[INT_PS2_bit]),
+`else
+      .interrupt(interrupt_request),
+`endif
+      .data_ready(D8),
+      .ps2_clk(ps2_clk),
+      .ps2_data(ps2_data)
+   );
+`endif 
 
 /************** io_rdata, io_rbusy and io_wbusy signals *************/
 
@@ -548,7 +659,7 @@ HardwareConfig hwconfig(
 always @(posedge clk) begin
    io_rdata <= 0
 `ifdef NRV_IO_HARDWARE_CONFIG	       
-            | hwconfig_rdata
+       | hwconfig_rdata
 `endif	       
 `ifdef NRV_IO_LEDS      
 	    | leds_rdata
@@ -564,6 +675,15 @@ always @(posedge clk) begin
 `endif
 `ifdef NRV_IO_FGA
 	    | FGA_rdata
+`endif
+`ifdef NRV_IO_TIMER
+	    | timer_rdata
+`endif
+`ifdef NRV_IO_INT_CONTROLLER
+	    | interrupt_rdata
+`endif
+`ifdef NRV_IO_PS2
+	    | ps2_rdata
 `endif
 	    ;
 end
@@ -604,13 +724,20 @@ end
     .mem_rbusy(mem_rbusy),
     .mem_wbusy(mem_wbusy),
 `ifdef NRV_INTERRUPTS
-    .interrupt_request(1'b0),	      
+`ifdef NRV_IO_INT_CONTROLLER
+    .interrupt_request(interrupt_request),	      
+`else
+    .interrupt_request(interrupt_request),	      
+`endif
 `endif     
     .reset(reset && !uart_brk)
   );
 
-`ifdef NRV_IO_LEDS  
+`ifdef NRV_IO_LEDS
    assign D5 = error;
+`ifdef NRV_INTERRUPTS
+   assign D6 = interrupt_request;
+`endif
  `ifdef FOMU
     SB_RGBA_DRV #(
         .CURRENT_MODE("0b1"),       // half current
