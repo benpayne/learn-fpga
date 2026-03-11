@@ -25,3 +25,10 @@ FemtoRV/femtosoc.txt
 FemtoRV/FIRMWARE/config.mk
 FemtoRV/TOOLS/environment.yml
 FemtoRV/TOOLS/requirements.txt
+FemtoRV/obj_dir/
+venv/
+__pycache__/
+*.pyc
+sim_build/
+*.fst
+*.vcd
