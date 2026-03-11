@@ -26,6 +26,9 @@ FemtoRV/FIRMWARE/config.mk
 FemtoRV/TOOLS/environment.yml
 FemtoRV/TOOLS/requirements.txt
 FemtoRV/obj_dir/
+FemtoRV/TEST/results.xml
+FemtoRV/TEST/sim_build_old/
+CLAUDE.md
 venv/
 __pycache__/
 *.pyc
