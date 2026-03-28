@@ -1,0 +1,35 @@
+# Colorlight i5 v7.0 + carrier board constraint file for FM Synth
+# Reference: https://github.com/wuxx/Colorlight-FPGA-Projects
+
+## Clock (25 MHz) ###################################
+
+LOCATE COMP "clk_i" SITE "P3";
+IOBUF  PORT "clk_i" IO_TYPE=LVCMOS33;
+FREQUENCY PORT "clk_i" 25 MHZ;
+
+## On-module LED ####################################
+
+LOCATE COMP "led_o" SITE "U16";
+IOBUF  PORT "led_o" IO_TYPE=LVCMOS25;
+
+## Buttons (active high, accent to 3.3V) ############
+# Wired to P2 header pins on carrier board.
+# ** Adjust these to match your actual wiring **
+
+LOCATE COMP "btn[0]" SITE "K18";   # P2_3  -> C4
+LOCATE COMP "btn[1]" SITE "T18";   # P2_4  -> E4
+LOCATE COMP "btn[2]" SITE "R17";   # P2_5  -> G4
+LOCATE COMP "btn[3]" SITE "M17";   # P2_6  -> C5
+
+IOBUF  PORT "btn[0]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+IOBUF  PORT "btn[1]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+IOBUF  PORT "btn[2]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+IOBUF  PORT "btn[3]" PULLMODE=DOWN IO_TYPE=LVCMOS33;
+
+## Audio PWM output #################################
+# P2_7 on carrier board header
+# Connect speaker/amp between this pin and GND
+# Use a series resistor (100-330 ohm) for a regular speaker
+
+LOCATE COMP "audio_out" SITE "U18";  # P2_7
+IOBUF  PORT "audio_out" IO_TYPE=LVCMOS33 DRIVE=4;

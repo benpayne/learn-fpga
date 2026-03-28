@@ -1,11 +1,23 @@
-// FM Synth Top-Level for ULX3S
-// 4 buttons play C major: C4, E4, G4, C5
-// PWM audio output on GPIO pin gp[0]
-// LEDs indicate which note is active
+// FM Synth Top-Level for Colorlight i5 + carrier board
+// 4 external buttons on P2 header play C major: C4, E4, G4, C5
+// PWM audio output on P2 header pin
+// On-module LED indicates note active
+//
+// Default button wiring (active high, accent to 3.3V with pull-down):
+//   P2_3  (K18) = button 0 -> C4
+//   P2_4  (T18) = button 1 -> E4
+//   P2_5  (R17) = button 2 -> G4
+//   P2_6  (M17) = button 3 -> C5
+//
+// Audio output:
+//   P2_7  (U18) = PWM audio -> connect to speaker/amp via series resistor
+//
+// Adjust pin assignments in colorlight_i5.lpf to match your wiring.
+
 module fm_synth_top (
-    input  wire       pclk,       // 25 MHz system clock
-    input  wire [5:0] buttons,    // ULX3S buttons [0]=pwr [1]=fire1 [2]=up [3]=down [4]=left [5]=right
-    output wire [4:0] leds,       // D1-D5
+    input  wire       clk_i,      // 25 MHz system clock
+    input  wire [3:0] btn,        // 4 external buttons (active high)
+    output wire       led_o,      // On-module LED (active low on i5)
     output wire       audio_out   // PWM audio on GPIO
 );
 
@@ -17,35 +29,30 @@ module fm_synth_top (
     localparam [31:0] PHASE_C5 = 32'h02CA6987;  // C5  523.25 Hz
 
     // ---- FM synthesis parameters ----
-    localparam [15:0] MOD_RATIO = 16'h0200;      // 2.0x carrier freq (8.8 fixed-point)
-    localparam [15:0] MOD_DEPTH = 16'd2048;       // Moderate FM depth
+    localparam [15:0] MOD_RATIO = 16'h0200;       // 2.0x carrier freq (8.8 fixed-point)
+    localparam [15:0] MOD_DEPTH = 16'd2048;        // Moderate FM depth
 
     // Carrier ADSR: fast attack, medium decay, high sustain, medium release
-    localparam [23:0] CAR_ATTACK  = 24'd69905;    // ~5ms
-    localparam [23:0] CAR_DECAY   = 24'd1748;     // ~200ms
-    localparam [23:0] CAR_SUSTAIN = 24'd13421773;  // ~80%
-    localparam [23:0] CAR_RELEASE = 24'd3495;      // ~100ms
+    localparam [23:0] CAR_ATTACK  = 24'd69905;     // ~5ms
+    localparam [23:0] CAR_DECAY   = 24'd1748;      // ~200ms
+    localparam [23:0] CAR_SUSTAIN = 24'd13421773;   // ~80%
+    localparam [23:0] CAR_RELEASE = 24'd3495;       // ~100ms
 
     // Modulator ADSR: fast attack, slow decay (timbre evolves), lower sustain
-    localparam [23:0] MOD_ATTACK  = 24'd69905;    // ~5ms
-    localparam [23:0] MOD_DECAY   = 24'd699;      // ~500ms
-    localparam [23:0] MOD_SUSTAIN = 24'd6710886;   // ~40%
-    localparam [23:0] MOD_RELEASE = 24'd3495;      // ~100ms
+    localparam [23:0] MOD_ATTACK  = 24'd69905;     // ~5ms
+    localparam [23:0] MOD_DECAY   = 24'd699;       // ~500ms
+    localparam [23:0] MOD_SUSTAIN = 24'd6710886;    // ~40%
+    localparam [23:0] MOD_RELEASE = 24'd3495;       // ~100ms
 
     // ---- Button debouncing ----
-    // Buttons 1-4 are active high (PULLMODE=DOWN)
-    wire [3:0] btn_raw = buttons[4:1];  // fire1=C4, up=E4, down=G4, left=C5
-
     reg [3:0] btn_sync1, btn_sync2;     // Double-flop synchronizer
     reg [3:0] btn_stable;
     reg [19:0] debounce_cnt;            // ~21ms at 25MHz
 
-    always @(posedge pclk) begin
-        // Synchronize async button inputs
-        btn_sync1 <= btn_raw;
+    always @(posedge clk_i) begin
+        btn_sync1 <= btn;
         btn_sync2 <= btn_sync1;
 
-        // Debounce: require stable input for ~21ms
         if (btn_sync2 != btn_stable) begin
             debounce_cnt <= debounce_cnt + 1;
             if (debounce_cnt[19]) begin
@@ -62,19 +69,15 @@ module fm_synth_top (
 
     reg [31:0] phase_inc;
     always @(*) begin
-        if (btn_stable[0])      phase_inc = PHASE_C4;  // fire1 -> C4
-        else if (btn_stable[1]) phase_inc = PHASE_E4;  // up    -> E4
-        else if (btn_stable[2]) phase_inc = PHASE_G4;  // down  -> G4
-        else if (btn_stable[3]) phase_inc = PHASE_C5;  // left  -> C5
+        if (btn_stable[0])      phase_inc = PHASE_C4;
+        else if (btn_stable[1]) phase_inc = PHASE_E4;
+        else if (btn_stable[2]) phase_inc = PHASE_G4;
+        else if (btn_stable[3]) phase_inc = PHASE_C5;
         else                    phase_inc = 32'd0;
     end
 
-    // ---- LED indicators ----
-    assign leds[0] = btn_stable[0];  // D1 = C4
-    assign leds[1] = btn_stable[1];  // D2 = E4
-    assign leds[2] = btn_stable[2];  // D3 = G4
-    assign leds[3] = btn_stable[3];  // D4 = C5
-    assign leds[4] = gate;           // D5 = any note active
+    // ---- LED indicator (active low on Colorlight i5) ----
+    assign led_o = ~gate;
 
     // ---- FM Synth core ----
     wire signed [15:0] pcm_out;
@@ -84,7 +87,7 @@ module fm_synth_top (
         .CLK_FREQ(25_000_000),
         .SAMPLE_RATE(48_000)
     ) synth (
-        .clk(pclk),
+        .clk(clk_i),
         .reset(1'b0),
         .gate(gate),
         .phase_inc(phase_inc),
@@ -104,12 +107,12 @@ module fm_synth_top (
 
     // ---- PWM DAC ----
     // Convert signed 16-bit PCM to unsigned 8-bit for PWM
-    wire [15:0] pcm_unsigned = pcm_out + 16'h8000;  // Flip sign to unsigned
-    wire [7:0]  pwm_level = pcm_unsigned[15:8];      // Top 8 bits
+    wire [15:0] pcm_unsigned = pcm_out + 16'h8000;
+    wire [7:0]  pwm_level = pcm_unsigned[15:8];
 
     // Free-running 8-bit counter at 25MHz -> PWM freq ~97.6 kHz
     reg [7:0] pwm_counter;
-    always @(posedge pclk)
+    always @(posedge clk_i)
         pwm_counter <= pwm_counter + 1;
 
     assign audio_out = (pwm_level > pwm_counter);
