@@ -110,23 +110,54 @@ module buart #(
     end
 
    /************* Transmitter ******************************/
+    // Modified: added TX holding register so writes during busy are
+    // buffered instead of corrupting the shift register mid-transmission.
 
     reg [divwidth:0] send_divcnt;
     wire send_baud_clk  = send_divcnt[divwidth];
 
     reg [9:0] send_pattern = 1;
     assign tx = send_pattern[0];
-    assign busy = |send_pattern[9:1];
 
-    // The transmitter shifts until the stop bit is on the wire, 
-    // and stops shifting then.
+    wire shifting = |send_pattern[9:1];
+
+    // TX holding register: buffers next byte while shift register is busy
+    reg [7:0] tx_hold;
+    reg       tx_hold_full = 0;
+
+    // busy = shift register active OR holding register full
+    // (tells software it can't accept another byte yet)
+    assign busy = shifting | tx_hold_full;
+
     always @(posedge clk) begin
-       if (wr) send_pattern <= {1'b1, tx_data[7:0], 1'b0};
-       else if (send_baud_clk & busy) send_pattern <= send_pattern >> 1;
-       /* verilator lint_off WIDTH */		    
-       if (wr | send_baud_clk) send_divcnt <= baud_init;
-                          else send_divcnt <= send_divcnt - 1;
-       /* verilator lint_on WIDTH */		           
+       // If shift register is idle and holding register has data, load it
+       if (!shifting && tx_hold_full) begin
+          send_pattern <= {1'b1, tx_hold[7:0], 1'b0};
+          tx_hold_full <= 0;
+          send_divcnt <= baud_init;
+       end
+       // CPU write: if shift register is idle, load directly; otherwise buffer
+       else if (wr) begin
+          if (!shifting) begin
+             send_pattern <= {1'b1, tx_data[7:0], 1'b0};
+             /* verilator lint_off WIDTH */
+             send_divcnt <= baud_init;
+             /* verilator lint_on WIDTH */
+          end else begin
+             tx_hold <= tx_data;
+             tx_hold_full <= 1;
+          end
+       end
+       // Normal shifting
+       else if (send_baud_clk & shifting) begin
+          send_pattern <= send_pattern >> 1;
+          /* verilator lint_off WIDTH */
+          send_divcnt <= baud_init;
+          /* verilator lint_on WIDTH */
+       end
+       else begin
+          send_divcnt <= send_divcnt - 1;
+       end
     end
 
 endmodule
