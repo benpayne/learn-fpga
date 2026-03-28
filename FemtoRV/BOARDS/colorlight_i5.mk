@@ -1,4 +1,4 @@
-YOSYS_COLORLIGHT_I5_OPT=-DCOLORLIGHT_I5 -DACTIVE_LOW_LEDS -q -p "read_verilog -Ilib/ps2-controller-lib -DCOLORLIGHT_I5 -DACTIVE_LOW_LEDS $(VERILOGS); synth_ecp5 -abc9 -top $(PROJECTNAME) -json $(PROJECTNAME).json"
+YOSYS_COLORLIGHT_I5_OPT=-DCOLORLIGHT_I5 -DACTIVE_LOW_LEDS -q -p "read_verilog -Ilib/ps2-controller-lib -Ilib/hdmi-display-lib/rtl/graphics -DCOLORLIGHT_I5 -DACTIVE_LOW_LEDS $(VERILOGS); synth_ecp5 -abc9 -top $(PROJECTNAME) -json $(PROJECTNAME).json"
 NEXTPNR_COLORLIGHT_I5_OPT=--force --timing-allow-fail --json $(PROJECTNAME).json --lpf BOARDS/colorlight_i5.lpf \
                   --textcfg $(PROJECTNAME)_out.config --25k --freq 25 --package CABGA381
 
@@ -11,6 +11,7 @@ colorlight_i5: colorlight_i5.firmware_config colorlight_i5.synth colorlight_i5.p
 colorlight_i5.fast: colorlight_i5.firmware_config colorlight_i5.synth colorlight_i5.prog_fast
 
 colorlight_i5.synth: FIRMWARE/firmware.hex
+	cp -f lib/hdmi-display-lib/data/font_data.hex font_data.hex
 	yosys $(YOSYS_COLORLIGHT_I5_OPT)
 	nextpnr-ecp5 $(NEXTPNR_COLORLIGHT_I5_OPT)
 	ecppack --compress --svf-rowsize 100000 --svf $(PROJECTNAME).svf $(PROJECTNAME)_out.config $(PROJECTNAME).bit

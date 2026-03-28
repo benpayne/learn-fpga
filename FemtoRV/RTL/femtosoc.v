@@ -26,7 +26,28 @@
 `include "DEVICES/timer.v"          // Timer
 `include "DEVICES/InterruptController.v" // Interrupt controller
 `include "DEVICES/Interrupt_bits.v" // Interrupt controller
-`include "DEVICES/PS2Decoder.v" // Interrupt controller
+`include "DEVICES/PS2Decoder.v" // PS2 keyboard decoder
+
+`ifdef NRV_IO_GPU
+// HDMI Display GPU library - character and graphics modes
+`include "lib/hdmi-display-lib/rtl/core/tmds_encoder.v"
+`include "lib/hdmi-display-lib/rtl/core/dvi_transmitter.v"
+`include "lib/hdmi-display-lib/rtl/core/vga_timing_generator.v"
+`include "lib/hdmi-display-lib/rtl/core/gpu_mux.v"
+`include "lib/hdmi-display-lib/rtl/character/font_rom.v"
+`include "lib/hdmi-display-lib/rtl/character/character_buffer.v"
+`include "lib/hdmi-display-lib/rtl/character/character_renderer.v"
+`include "lib/hdmi-display-lib/rtl/character/gpu_core.v"
+`include "lib/hdmi-display-lib/rtl/character/gpu_registers.v"
+`include "lib/hdmi-display-lib/rtl/graphics/gpu_graphics_core.v"
+`include "lib/hdmi-display-lib/rtl/graphics/gpu_graphics_registers.v"
+`include "lib/hdmi-display-lib/rtl/graphics/gpu_graphics_vram.v"
+`include "lib/hdmi-display-lib/rtl/graphics/gpu_graphics_palette.v"
+`include "lib/hdmi-display-lib/rtl/graphics/gpu_pixel_renderer.v"
+`include "lib/hdmi-display-lib/rtl/gpu_top.v"
+`include "lib/hdmi-display-lib/wrappers/fpga/gpu_femtorv_wrapper.v"
+`include "lib/hdmi-display-lib/clock/gpu_pll.v"
+`endif
 
 // The Ice40UP5K has ample quantities (128 KB) of single-ported RAM that can be
 // used as system RAM (but cannot be inferred, uses a special block).
@@ -91,7 +112,9 @@ module femtosoc(
 `ifdef FOMU
    output usb_dp, usb_dn, usb_dp_pu, 
 `endif
-`ifdef NRV_IO_FGA		
+`ifdef NRV_IO_FGA
+   output [3:0] gpdi_dp,
+`elsif NRV_IO_GPU
    output [3:0] gpdi_dp,
 `endif
 `ifdef NRV_IO_IRDA
@@ -429,7 +452,12 @@ HardwareConfig hwconfig(
    assign interrupt_bits[INT_PS2_bit]   = 1'b0;
 `endif
 
-   assign interrupt_bits[31:2]   = 30'b0;
+   assign interrupt_bits[31:5]   = 27'b0;
+`ifndef NRV_IO_GPU
+   assign interrupt_bits[INT_GPU_bit]   = 1'b0;
+`endif
+   assign interrupt_bits[INT_UART_bit]    = 1'b0;
+   assign interrupt_bits[INT_BUTTONS_bit] = 1'b0;
 `endif
 
 /*********************** Four LEDs ************************/
@@ -637,7 +665,7 @@ HardwareConfig hwconfig(
    ) PS2(
       .reset(reset),
       .clk(clk),
-      .rstrb(io_rstrb),			
+      .rstrb(io_rstrb),
       .rdata(ps2_rdata),
       .sel(io_word_address[IO_PS2_bit]),
 `ifdef NRV_IO_INT_CONTROLLER
@@ -649,7 +677,96 @@ HardwareConfig hwconfig(
       .ps2_clk(ps2_clk),
       .ps2_data(ps2_data)
    );
-`endif 
+`endif
+
+/********************* HDMI Display GPU *************************************/
+/*
+ * HDMI Display GPU with character and graphics modes.
+ * Uses ECP5 PLL for 25MHz pixel + 125MHz TMDS clocks.
+ * ODDRX1F DDR primitives for TMDS serialization.
+ */
+`ifdef NRV_IO_GPU
+   // GPU PLL: Generate pixel and TMDS clocks from system clock
+   wire clk_pixel;
+   wire clk_tmds;
+   wire gpu_pll_locked;
+
+   gpu_pll gpu_pll_inst(
+      .clk_25mhz(pclk),      // Use raw board clock (25 MHz)
+      .clk_pixel(clk_pixel),  // 25 MHz pixel clock
+      .clk_tmds(clk_tmds),    // 125 MHz TMDS clock
+      .locked(gpu_pll_locked)
+   );
+
+   // GPU wrapper instance
+   wire [31:0] gpu_rdata;
+   wire [1:0] tmds_clk_parallel;
+   wire [1:0] tmds_red_parallel;
+   wire [1:0] tmds_green_parallel;
+   wire [1:0] tmds_blue_parallel;
+   wire gpu_irq;
+
+   gpu_femtorv_wrapper gpu_inst(
+      .clk(clk),
+      .reset(reset & gpu_pll_locked),  // Hold GPU in reset until PLL locks
+      .wdata(io_wdata),
+      .rdata(gpu_rdata),
+      .wstrb(io_wstrb),
+      .rstrb(io_rstrb),
+      .sel(io_word_address[IO_GPU_bit]),
+
+      .clk_pixel(clk_pixel),
+      .clk_tmds(clk_tmds),
+
+      .tmds_clk_out(tmds_clk_parallel),
+      .tmds_red_out(tmds_red_parallel),
+      .tmds_green_out(tmds_green_parallel),
+      .tmds_blue_out(tmds_blue_parallel),
+
+      .gpu_irq(gpu_irq)
+   );
+
+ `ifdef NRV_IO_INT_CONTROLLER
+   assign interrupt_bits[INT_GPU_bit] = gpu_irq;
+ `endif
+
+ `ifndef BENCH
+   // ECP5 DDR output primitives for TMDS serialization
+   // Must be at top level, directly connected to output pins
+   ODDRX1F ddr_clk(
+      .D0(tmds_clk_parallel[0]),
+      .D1(tmds_clk_parallel[1]),
+      .Q(gpdi_dp[3]),
+      .SCLK(clk_tmds),
+      .RST(1'b0)
+   );
+
+   ODDRX1F ddr_red(
+      .D0(tmds_red_parallel[0]),
+      .D1(tmds_red_parallel[1]),
+      .Q(gpdi_dp[2]),
+      .SCLK(clk_tmds),
+      .RST(1'b0)
+   );
+
+   ODDRX1F ddr_green(
+      .D0(tmds_green_parallel[0]),
+      .D1(tmds_green_parallel[1]),
+      .Q(gpdi_dp[1]),
+      .SCLK(clk_tmds),
+      .RST(1'b0)
+   );
+
+   ODDRX1F ddr_blue(
+      .D0(tmds_blue_parallel[0]),
+      .D1(tmds_blue_parallel[1]),
+      .Q(gpdi_dp[0]),
+      .SCLK(clk_tmds),
+      .RST(1'b0)
+   );
+ `endif
+
+`endif
 
 /************** io_rdata, io_rbusy and io_wbusy signals *************/
 
@@ -684,6 +801,9 @@ always @(posedge clk) begin
 `endif
 `ifdef NRV_IO_PS2
 	    | ps2_rdata
+`endif
+`ifdef NRV_IO_GPU
+	    | gpu_rdata
 `endif
 	    ;
 end

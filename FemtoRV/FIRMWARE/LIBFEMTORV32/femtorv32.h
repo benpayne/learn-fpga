@@ -94,6 +94,55 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define IO_HW_CONFIG_DEVICES IO_BIT_TO_OFFSET(IO_HW_CONFIG_DEVICES_bit)
 #define IO_HW_CONFIG_CPUINFO IO_BIT_TO_OFFSET(IO_HW_CONFIG_CPUINFO_bit)
 
+/*
+ * GPU (HDMI Character + Graphics display)
+ *
+ * Uses a single 1-hot IO address. The GPU register index is packed
+ * into wdata[12:8] alongside the value in wdata[7:0]:
+ *
+ *   Write: IO_OUT(IO_GPU, (reg << 8) | value)
+ *   Read:  IO_OUT(IO_GPU, reg << 8); val = IO_IN(IO_GPU) & 0xFF;
+ */
+#define IO_GPU               IO_BIT_TO_OFFSET(IO_GPU_bit)
+
+/* GPU register addresses (packed into wdata[12:8]) */
+#define GPU_REG_CHAR_DATA    0x10  /* WO: write char at cursor, auto-advance */
+#define GPU_REG_CURSOR_ROW   0x11  /* RW: cursor row (0-29) */
+#define GPU_REG_CURSOR_COL   0x12  /* RW: cursor column (0-39/79) */
+#define GPU_REG_CONTROL      0x13  /* WO: bit0=clear, bit1=80col, bit2=cursor_en */
+#define GPU_REG_FG_COLOR     0x14  /* RW: foreground (3-bit RGB) */
+#define GPU_REG_BG_COLOR     0x15  /* RW: background (3-bit RGB) */
+#define GPU_REG_STATUS       0x16  /* RO: bit0=ready, bit1=vsync */
+
+/* GPU write helper: packs register + value into single IO write */
+#define GPU_WRITE(reg, val)  IO_OUT(IO_GPU, ((reg) << 8) | ((val) & 0xFF))
+
+/* GPU read helper: select register then read */
+#define GPU_READ(reg) (IO_OUT(IO_GPU, (reg) << 8), IO_IN(IO_GPU) & 0xFF)
+
+/* GPU control register bits */
+#define GPU_CTRL_CLEAR       0x01
+#define GPU_CTRL_80COL       0x02
+#define GPU_CTRL_CURSOR_EN   0x04
+
+/* GPU color values (4-bit IRGB, CGA 16-color palette) */
+#define GPU_BLACK          0x00
+#define GPU_BLUE           0x01
+#define GPU_GREEN          0x02
+#define GPU_CYAN           0x03
+#define GPU_RED            0x04
+#define GPU_MAGENTA        0x05
+#define GPU_BROWN          0x06
+#define GPU_LIGHT_GRAY     0x07
+#define GPU_DARK_GRAY      0x08
+#define GPU_BRIGHT_BLUE    0x09
+#define GPU_BRIGHT_GREEN   0x0A
+#define GPU_BRIGHT_CYAN    0x0B
+#define GPU_BRIGHT_RED     0x0C
+#define GPU_BRIGHT_MAGENTA 0x0D
+#define GPU_YELLOW         0x0E
+#define GPU_WHITE          0x0F
+
 #define IO_IN(port)       *(volatile uint32_t*)(IO_BASE + port)
 #define IO_OUT(port,val)  *(volatile uint32_t*)(IO_BASE + port)=(val)
 #define LEDS(val)         IO_OUT(IO_LEDS,val)

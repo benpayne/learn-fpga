@@ -15,6 +15,7 @@
 `define NRV_IO_TIMER
 `define NRV_IO_INT_CONTROLLER // Interrupt controller
 `define NRV_IO_PS2 // PS2 keyboard
+`define NRV_IO_GPU // HDMI display GPU (character + graphics)
 
 /************************* Frequency ********************************************************************************/
 
