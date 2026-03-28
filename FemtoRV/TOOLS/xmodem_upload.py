@@ -27,7 +27,7 @@ ACK = 0x06
 NAK = 0x15
 CAN = 0x18
 
-def send_packet(ser, packet_num, data):
+def send_packet(ser, packet_num, data, debug=False):
     """Send a single XMODEM packet, return True on ACK."""
     if len(data) < 128:
         data += b'\x00' * (128 - len(data))
@@ -37,20 +37,30 @@ def send_packet(ser, packet_num, data):
     packet = bytes([SOH, packet_num, complement]) + data + bytes([checksum])
 
     ser.write(packet)
+    ser.flush()
+    time.sleep(0.01)  # Allow USB CDC to flush final bytes
 
     # Wait for response
     start = time.time()
     while (time.time() - start) < 5.0:
         if ser.in_waiting:
             response = ser.read(1)[0]
+            if debug:
+                print(f"  [pkt {packet_num}] got 0x{response:02X}", end='')
             if response == ACK:
+                if debug: print(" ACK")
                 return True
             elif response == NAK:
+                if debug: print(" NAK")
                 return False
             elif response == CAN:
-                print("Transfer cancelled by receiver!")
+                print(" Transfer cancelled by receiver!")
                 return False
-        time.sleep(0.01)
+            else:
+                if debug: print(f" (ignoring)")
+                # Ignore unexpected bytes and keep waiting
+                continue
+        time.sleep(0.005)
 
     print("Timeout waiting for ACK/NAK")
     return False
@@ -109,9 +119,10 @@ def upload(port, filename, load_addr=0x10000, execute=True):
         chunk = data[offset:offset+128]
 
         for attempt in range(10):
-            if send_packet(ser, packet_num, chunk):
+            if send_packet(ser, packet_num, chunk, debug=(packet_num <= 3)):
                 packet_num = (packet_num + 1) & 0xFF
                 offset += 128
+                time.sleep(0.05)  # Let monitor finish processing before next packet
                 # Progress
                 pct = min(100, offset * 100 // len(data))
                 print(f"\r  {offset}/{len(data)} bytes ({pct}%)", end='', flush=True)

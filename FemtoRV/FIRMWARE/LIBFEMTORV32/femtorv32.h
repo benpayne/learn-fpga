@@ -125,6 +125,27 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define GPU_CTRL_80COL       0x02
 #define GPU_CTRL_CURSOR_EN   0x04
 
+/* Graphics GPU registers (offset from GPU base, addr 0x00-0x0D) */
+#define GPU_REG_VRAM_ADDR_LO  0x00  /* WO: VRAM address low byte */
+#define GPU_REG_VRAM_ADDR_HI  0x01  /* WO: VRAM address high byte (bits 14:8) */
+#define GPU_REG_VRAM_DATA     0x02  /* RW: VRAM data (auto-increment if burst) */
+#define GPU_REG_VRAM_CTRL     0x03  /* WO: bit 0 = burst mode enable */
+#define GPU_REG_FB_BASE_LO    0x04  /* WO: framebuffer base address low */
+#define GPU_REG_FB_BASE_HI    0x05  /* WO: framebuffer base address high */
+#define GPU_REG_GPU_MODE      0x06  /* WO: 0=1BPP, 1=2BPP, 2=4BPP */
+#define GPU_REG_CLUT_INDEX    0x07  /* WO: palette index (0-15) */
+#define GPU_REG_CLUT_DATA_R   0x08  /* WO: palette red (4 bits) */
+#define GPU_REG_CLUT_DATA_G   0x09  /* WO: palette green (4 bits) */
+#define GPU_REG_CLUT_DATA_B   0x0A  /* WO: palette blue (4 bits), triggers write */
+#define GPU_REG_GPU_STATUS    0x0B  /* RO: bit 0 = VBlank */
+#define GPU_REG_GPU_IRQ_CTRL  0x0C  /* WO: bit 0 = VBlank IRQ enable */
+#define GPU_REG_DISPLAY_MODE  0x0D  /* WO: 0=character, 1=graphics */
+
+/* Graphics mode values */
+#define GPU_GFX_MODE_1BPP     0x00  /* 320x200 monochrome */
+#define GPU_GFX_MODE_2BPP     0x01  /* 160x200, 4 colors */
+#define GPU_GFX_MODE_4BPP     0x02  /* 160x100, 16 colors */
+
 /* GPU color values (4-bit IRGB, CGA 16-color palette) */
 #define GPU_BLACK          0x00
 #define GPU_BLUE           0x01

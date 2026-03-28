@@ -850,7 +850,7 @@ end
     .interrupt_request(interrupt_request),	      
 `endif
 `endif     
-    .reset(reset && !uart_brk)
+    .reset(reset)
   );
 
 `ifdef NRV_IO_LEDS

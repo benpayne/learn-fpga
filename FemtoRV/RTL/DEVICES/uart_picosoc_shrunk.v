@@ -49,64 +49,71 @@ module buart #(
     parameter baud_init = divider;
     parameter half_baud_init = divider/2+1;
 
-   /************* Receiver ***********************************/
-
-    // Trick from Olof Kindgren: use n+1 bit and decrement instead of
-    // incrementing, and test the sign bit.
+   /************* Receiver with 16-byte FIFO ******************/
 
     reg [divwidth:0] recv_divcnt;
     wire recv_baud_clk = recv_divcnt[divwidth];
 
     reg recv_state;
     reg [8:0] recv_pattern;
-    reg [7:0] recv_buf_data;
-    reg recv_buf_valid;
 
-    assign rx_data = recv_buf_data;
-    assign valid = recv_buf_valid;
+    // 256-byte RX FIFO (must hold full XMODEM packet: 132 bytes)
+    reg [7:0] rx_fifo [0:255];
+    reg [7:0] rx_fifo_wr = 0;
+    reg [7:0] rx_fifo_rd = 0;
+    wire rx_fifo_empty = (rx_fifo_wr == rx_fifo_rd);
+    wire [7:0] rx_fifo_next_wr = rx_fifo_wr + 1;
+    wire rx_fifo_full = (rx_fifo_next_wr == rx_fifo_rd);
 
+    assign rx_data = rx_fifo[rx_fifo_rd];
+    assign valid = !rx_fifo_empty;
 
+    // FIFO read: advance read pointer when CPU reads
     always @(posedge clk) begin
+       if (!resetq) begin
+          rx_fifo_rd <= 0;
+       end else if (rd && !rx_fifo_empty) begin
+          rx_fifo_rd <= rx_fifo_rd + 1;
+       end
+    end
 
-       if (rd) recv_buf_valid <= 0;
- 
-       if (!resetq) recv_buf_valid <= 0;
-
-       case (recv_state)
-
-         0: begin
-               if (!rx) begin
-                 recv_state <= 1;
-		 /* verilator lint_off WIDTH */
-                 recv_divcnt <= half_baud_init;
-		 /* verilator lint_on WIDTH */
+    // Receiver shift register + FIFO write
+    always @(posedge clk) begin
+       if (!resetq) begin
+          recv_state <= 0;
+          recv_pattern <= 0;
+          rx_fifo_wr <= 0;
+       end else begin
+          case (recv_state)
+            0: begin
+                  if (!rx) begin
+                    recv_state <= 1;
+                    /* verilator lint_off WIDTH */
+                    recv_divcnt <= half_baud_init;
+                    /* verilator lint_on WIDTH */
+                  end
+                  recv_pattern <= 0;
                end
-               recv_pattern <= 0;
-            end
 
-         1: begin
-               if (recv_baud_clk) begin
-
-                 // Inverted start bit shifted through the whole register 
-		 // The idea is to use the start bit as marker 
-		 // for "reception complete", 
-		 // but as initialising registers to 10'b1_11111111_1 
-		 // is more costly than using zero, 
-		 // it is done with inverted logic. 
-                 if (recv_pattern[0]) begin
-                   recv_buf_data  <= ~recv_pattern[8:1];
-                   recv_buf_valid <= 1;
-                   recv_state <= 0;
-                 end else begin
-                   recv_pattern <= {~rx, recv_pattern[8:1]};
-		   /* verilator lint_off WIDTH */		    
-                   recv_divcnt <= baud_init;
-		   /* verilator lint_on WIDTH */
-                 end
-               end else recv_divcnt <= recv_divcnt - 1;
-            end
-
-       endcase
+            1: begin
+                  if (recv_baud_clk) begin
+                    if (recv_pattern[0]) begin
+                      // Byte complete - push to FIFO if not full
+                      if (!rx_fifo_full) begin
+                         rx_fifo[rx_fifo_wr] <= ~recv_pattern[8:1];
+                         rx_fifo_wr <= rx_fifo_next_wr;
+                      end
+                      recv_state <= 0;
+                    end else begin
+                      recv_pattern <= {~rx, recv_pattern[8:1]};
+                      /* verilator lint_off WIDTH */
+                      recv_divcnt <= baud_init;
+                      /* verilator lint_on WIDTH */
+                    end
+                  end else recv_divcnt <= recv_divcnt - 1;
+               end
+          endcase
+       end
     end
 
    /************* Transmitter ******************************/

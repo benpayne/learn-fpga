@@ -287,6 +287,10 @@ static int xmodem_receive(uint32_t load_addr) {
 
     gpu_set_fg(GPU_YELLOW);
     mon_puts("XMODEM ready. Start transfer from host...\n");
+
+    // Disable interrupts during XMODEM - the PS2 ISR can steal
+    // CPU cycles and cause UART RX byte loss
+    asm volatile ("csrci mstatus, 0x8");
     gpu_set_fg(GPU_LIGHT_GRAY);
 
     uart_putc(XMODEM_NAK);
@@ -297,6 +301,7 @@ static int xmodem_receive(uint32_t load_addr) {
         if (c < 0) {
             retries++;
             if (retries > 30) {
+                asm volatile ("csrsi mstatus, 0x8");
                 gpu_set_fg(GPU_BRIGHT_RED);
                 mon_puts("Transfer timeout!\n");
                 return -1;
@@ -307,6 +312,7 @@ static int xmodem_receive(uint32_t load_addr) {
 
         if (c == XMODEM_EOT) {
             uart_putc(XMODEM_ACK);
+            asm volatile ("csrsi mstatus, 0x8");
             gpu_set_fg(GPU_BRIGHT_GREEN);
             mon_puts("\nTransfer complete: ");
             mon_hex_word(total_bytes);
@@ -317,6 +323,7 @@ static int xmodem_receive(uint32_t load_addr) {
         }
 
         if (c == XMODEM_CAN) {
+            asm volatile ("csrsi mstatus, 0x8");
             gpu_set_fg(GPU_BRIGHT_RED);
             mon_puts("Cancelled by sender\n");
             return -1;
@@ -326,6 +333,7 @@ static int xmodem_receive(uint32_t load_addr) {
             retries++;
             if (retries > 10) {
                 uart_putc(XMODEM_CAN);
+                asm volatile ("csrsi mstatus, 0x8");
                 gpu_set_fg(GPU_BRIGHT_RED);
                 mon_puts("Too many errors!\n");
                 return -1;
@@ -335,12 +343,13 @@ static int xmodem_receive(uint32_t load_addr) {
         }
 
         int pkt_num = uart_getc_timeout(500000);
-        if (pkt_num < 0) { uart_putc(XMODEM_NAK); continue; }
+        if (pkt_num < 0) { gpu_putc('a'); uart_putc(XMODEM_NAK); continue; }
 
         int pkt_cpl = uart_getc_timeout(500000);
-        if (pkt_cpl < 0) { uart_putc(XMODEM_NAK); continue; }
+        if (pkt_cpl < 0) { gpu_putc('b'); uart_putc(XMODEM_NAK); continue; }
 
         if ((pkt_num + pkt_cpl) != 0xFF) {
+            gpu_putc('c');
             uart_putc(XMODEM_NAK);
             continue;
         }
@@ -348,18 +357,36 @@ static int xmodem_receive(uint32_t load_addr) {
         uint8_t checksum = 0;
         uint8_t data[128];
         int ok = 1;
-        for (int i = 0; i < 128; i++) {
-            int b = uart_getc_timeout(500000);
-            if (b < 0) { ok = 0; break; }
-            data[i] = b;
-            checksum += b;
+        int i;
+        // Read 128 data bytes with tight inline polling
+        for (i = 0; i < 128; i++) {
+            uint32_t uart;
+            int timeout = 5000000;  // ~1 second
+            do {
+                uart = IO_IN(IO_UART_DAT);
+                if (uart & 0x100) goto got_byte;
+            } while (--timeout > 0);
+            ok = 0;
+            break;
+          got_byte:
+            data[i] = uart & 0xFF;
+            checksum += data[i];
         }
-        if (!ok) { uart_putc(XMODEM_NAK); continue; }
+        if (!ok) {
+            gpu_putc('d');
+            // Show how many bytes we got before timeout
+            gpu_putc('0' + (i / 100) % 10);
+            gpu_putc('0' + (i / 10) % 10);
+            gpu_putc('0' + i % 10);
+            uart_putc(XMODEM_NAK);
+            continue;
+        }
 
         int recv_checksum = uart_getc_timeout(500000);
-        if (recv_checksum < 0) { uart_putc(XMODEM_NAK); continue; }
+        if (recv_checksum < 0) { gpu_putc('e'); uart_putc(XMODEM_NAK); continue; }
 
         if ((checksum & 0xFF) != (recv_checksum & 0xFF)) {
+            gpu_putc('f');
             uart_putc(XMODEM_NAK);
             continue;
         }
@@ -373,7 +400,7 @@ static int xmodem_receive(uint32_t load_addr) {
             total_bytes += 128;
             expected_pkt = (expected_pkt + 1) & 0xFF;
             retries = 0;
-            mon_putc('.');
+            gpu_putc('.');  // GPU only - don't send to UART during XMODEM
         }
 
         uart_putc(XMODEM_ACK);
