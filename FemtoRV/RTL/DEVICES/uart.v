@@ -74,7 +74,7 @@ buart #(
   .BAUDS(115200)
 ) the_buart (
    .clk(clk),
-   .resetq(!brk),
+   .resetq(1'b1),  // Never reset UART (brk caused reset on 0x03 during XMODEM)
    .tx(TXD),
    .rx(RXD),
    .tx_data(wdata[7:0]),
