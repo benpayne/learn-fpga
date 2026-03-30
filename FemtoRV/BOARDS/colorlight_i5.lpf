@@ -113,6 +113,89 @@ IOBUF PORT "gpdi_dn[2]" IO_TYPE=LVCMOS33D DRIVE=4;
 IOBUF PORT "gpdi_dp[3]" IO_TYPE=LVCMOS33D DRIVE=4;
 IOBUF PORT "gpdi_dn[3]" IO_TYPE=LVCMOS33D DRIVE=4;
 
+# SDRAM (using lower 16 bits of 32-bit bus) ####################
+# Pin mapping from LiteX Colorlight i5 target
+
+LOCATE COMP "sd_clk" SITE "B9";
+IOBUF  PORT "sd_clk" IO_TYPE=LVCMOS33;
+
+LOCATE COMP "sd_addr[0]"  SITE "B13"; # A0
+LOCATE COMP "sd_addr[1]"  SITE "C14"; # A1
+LOCATE COMP "sd_addr[2]"  SITE "A16"; # A2
+LOCATE COMP "sd_addr[3]"  SITE "A17"; # A3
+LOCATE COMP "sd_addr[4]"  SITE "B16"; # A4
+LOCATE COMP "sd_addr[5]"  SITE "B15"; # A5
+LOCATE COMP "sd_addr[6]"  SITE "A14"; # A6
+LOCATE COMP "sd_addr[7]"  SITE "A13"; # A7
+LOCATE COMP "sd_addr[8]"  SITE "A12"; # A8
+LOCATE COMP "sd_addr[9]"  SITE "A11"; # A9
+LOCATE COMP "sd_addr[10]" SITE "B12"; # A10 (auto-precharge / row addr MSB)
+IOBUF PORT "sd_addr[0]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[1]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[2]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[3]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[4]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[5]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[6]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[7]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[8]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[9]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[10]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_d[0]"  SITE "D15";
+LOCATE COMP "sd_d[1]"  SITE "E14";
+LOCATE COMP "sd_d[2]"  SITE "E13";
+LOCATE COMP "sd_d[3]"  SITE "D12";
+LOCATE COMP "sd_d[4]"  SITE "E12";
+LOCATE COMP "sd_d[5]"  SITE "D11";
+LOCATE COMP "sd_d[6]"  SITE "C10";
+LOCATE COMP "sd_d[7]"  SITE "B17";
+LOCATE COMP "sd_d[8]"  SITE "B8";
+LOCATE COMP "sd_d[9]"  SITE "A8";
+LOCATE COMP "sd_d[10]" SITE "C7";
+LOCATE COMP "sd_d[11]" SITE "A7";
+LOCATE COMP "sd_d[12]" SITE "A6";
+LOCATE COMP "sd_d[13]" SITE "B6";
+LOCATE COMP "sd_d[14]" SITE "A5";
+LOCATE COMP "sd_d[15]" SITE "B5";
+
+IOBUF PORT "sd_d[0]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[1]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[2]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[3]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[4]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[5]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[6]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[7]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[8]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[9]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[10]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[11]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[12]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[13]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[14]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[15]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_ba[0]" SITE "B11";
+LOCATE COMP "sd_ba[1]" SITE "C8";
+IOBUF PORT "sd_ba[0]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_ba[1]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_we" SITE "A10";
+LOCATE COMP "sd_ras" SITE "B10";
+LOCATE COMP "sd_cas" SITE "A9";
+IOBUF PORT "sd_we"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_ras" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_cas" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+# Note: CKE, CS, DQM appear to be hardwired on the Colorlight i5 PCB:
+# CKE = tied high (always enabled), CS = tied low (always selected),
+# DQM = tied low (no byte masking). The muchtoremember controller
+# drives these signals internally but they don't need external pins.
+# Only 11 address lines (A0-A10) are routed to FPGA.
+# Data bus: dq[15:0] = first 16-bit chip, dq[31:16] = second chip.
+# We use dq[15:0] only (16MB) with the 16-bit controller.
+
 # 7 Segment Display (PMOD_P4A) ##############################
 
 LOCATE COMP "seg_select" SITE "E1";
