@@ -13,6 +13,7 @@ localparam IO_BUTTONS_bit               = 9;  // R  buttons state
 localparam IO_FGA_CNTL_bit              = 10; // RW write: send command  read: get VSync/HSync/MemBusy/X/Y state (also used as GPU sel)
 localparam IO_FGA_DAT_bit               = 11; // W  write: write pixel data
 localparam IO_GPU_bit                   = 10; // RW GPU registers (reuses FGA bit, mutually exclusive)
+localparam IO_SYNTH_bit                 = 11; // W  FM synth registers (reuses FGA_DAT bit)
 localparam IO_SEGMENT_bit               = 12; // W write: 8 bits to display on 7-segment display
 localparam IO_TIMER_bit                 = 13; // RW read: 32-bit timer value, write: reset and start 32-bit timer
 localparam IO_INT_CONTROLLER_bit        = 14; // RW read: 32-bit interupts, write: reset interupts

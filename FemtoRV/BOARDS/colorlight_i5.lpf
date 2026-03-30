@@ -133,3 +133,17 @@ IOBUF PORT "segments[4]" IO_TYPE=LVCMOS33 DRIVE=4;
 IOBUF PORT "segments[5]" IO_TYPE=LVCMOS33 DRIVE=4;
 IOBUF PORT "segments[6]" IO_TYPE=LVCMOS33 DRIVE=4;
 
+# Audio output (FM Synth) ################################
+
+LOCATE COMP "audio_pwm" SITE "E18";
+IOBUF  PORT "audio_pwm" IO_TYPE=LVCMOS33 DRIVE=4;
+
+LOCATE COMP "i2s_sd"    SITE "J18";   # MAX98357A enable
+LOCATE COMP "i2s_din"   SITE "L4";
+LOCATE COMP "i2s_bclk"  SITE "N4";
+LOCATE COMP "i2s_lrck"  SITE "T3";
+IOBUF  PORT "i2s_sd"    IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF  PORT "i2s_din"   IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF  PORT "i2s_bclk"  IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF  PORT "i2s_lrck"  IO_TYPE=LVCMOS33 DRIVE=4;
+

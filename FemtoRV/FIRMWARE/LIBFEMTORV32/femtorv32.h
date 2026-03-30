@@ -95,6 +95,71 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define IO_HW_CONFIG_CPUINFO IO_BIT_TO_OFFSET(IO_HW_CONFIG_CPUINFO_bit)
 
 /*
+ * FM Synthesizer (4-voice, 4-operator FM)
+ * Single 1-hot IO address, register index in wdata[12:8], value in wdata[7:0]
+ */
+#define IO_SYNTH             IO_BIT_TO_OFFSET(IO_SYNTH_bit)
+#define SYNTH_WRITE(reg,val) IO_OUT(IO_SYNTH, ((reg) << 8) | ((val) & 0xFF))
+
+/* Synth registers */
+#define SYNTH_VOICE_SEL  0x00  /* Select voice 0-3 */
+#define SYNTH_NOTE_ON    0x01  /* Write MIDI note (0-127), triggers attack */
+#define SYNTH_NOTE_OFF   0x02  /* Triggers release on selected voice */
+#define SYNTH_PRESET     0x03  /* Set instrument 0-7 */
+#define SYNTH_VELOCITY   0x04  /* Set velocity 0-255 */
+#define SYNTH_ALL_OFF    0x05  /* Release all voices */
+
+/* Synth presets */
+#define SYNTH_EPIANO  0
+#define SYNTH_ORGAN   1
+#define SYNTH_BASS    2
+#define SYNTH_BRASS   3
+#define SYNTH_STRINGS 4
+#define SYNTH_BELL    5
+#define SYNTH_LEAD    6
+#define SYNTH_PLUCK   7
+
+/* MIDI note numbers */
+#define NOTE_C3  48
+#define NOTE_D3  50
+#define NOTE_E3  52
+#define NOTE_F3  53
+#define NOTE_G3  55
+#define NOTE_A3  57
+#define NOTE_B3  59
+#define NOTE_C4  60
+#define NOTE_D4  62
+#define NOTE_E4  64
+#define NOTE_F4  65
+#define NOTE_G4  67
+#define NOTE_A4  69
+#define NOTE_B4  71
+#define NOTE_C5  72
+#define NOTE_D5  74
+#define NOTE_E5  76
+#define NOTE_F5  77
+#define NOTE_G5  79
+#define NOTE_A5  81
+#define NOTE_B5  83
+#define NOTE_C6  84
+
+/* Helper macros */
+#define synth_note_on(voice, note, velocity) do { \
+    SYNTH_WRITE(SYNTH_VOICE_SEL, voice); \
+    SYNTH_WRITE(SYNTH_VELOCITY, velocity); \
+    SYNTH_WRITE(SYNTH_NOTE_ON, note); \
+} while(0)
+#define synth_note_off(voice) do { \
+    SYNTH_WRITE(SYNTH_VOICE_SEL, voice); \
+    SYNTH_WRITE(SYNTH_NOTE_OFF, 0); \
+} while(0)
+#define synth_set_preset(voice, preset) do { \
+    SYNTH_WRITE(SYNTH_VOICE_SEL, voice); \
+    SYNTH_WRITE(SYNTH_PRESET, preset); \
+} while(0)
+#define synth_all_off() SYNTH_WRITE(SYNTH_ALL_OFF, 0)
+
+/*
  * GPU (HDMI Character + Graphics display)
  *
  * Uses a single 1-hot IO address. The GPU register index is packed

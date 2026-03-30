@@ -28,6 +28,15 @@
 `include "DEVICES/Interrupt_bits.v" // Interrupt controller
 `include "DEVICES/PS2Decoder.v" // PS2 keyboard decoder
 
+`ifdef NRV_IO_SYNTH
+`include "DEVICES/synth/fm_synth_soc.v"
+`include "DEVICES/synth/fm_synth_registers.v"
+`include "DEVICES/synth/fm_synth_tdm.v"
+`include "DEVICES/synth/fm_sine_rom.v"
+`include "DEVICES/synth/fm_algorithm.v"
+`include "DEVICES/synth/i2s_tx.v"
+`endif
+
 `ifdef NRV_IO_GPU
 // HDMI Display GPU library - character and graphics modes
 `include "lib/hdmi-display-lib/rtl/core/tmds_encoder.v"
@@ -116,6 +125,13 @@ module femtosoc(
    output [3:0] gpdi_dp,
 `elsif NRV_IO_GPU
    output [3:0] gpdi_dp,
+`endif
+`ifdef NRV_IO_SYNTH
+   output audio_pwm,
+   output i2s_bclk,
+   output i2s_lrck,
+   output i2s_din,
+   output i2s_sd,
 `endif
 `ifdef NRV_IO_IRDA
    output irda_TXD,
@@ -766,6 +782,22 @@ HardwareConfig hwconfig(
    );
  `endif
 
+`endif
+
+/********************* FM Synthesizer *************************************/
+`ifdef NRV_IO_SYNTH
+   fm_synth_soc synth_inst(
+      .clk(clk),
+      .reset(reset),
+      .wdata(io_wdata),
+      .wstrb(io_wstrb),
+      .sel(io_word_address[IO_SYNTH_bit]),
+      .audio_pwm(audio_pwm),
+      .i2s_bclk(i2s_bclk),
+      .i2s_lrck(i2s_lrck),
+      .i2s_din(i2s_din)
+   );
+   assign i2s_sd = 1'b1;  // MAX98357A enable (active-high)
 `endif
 
 /************** io_rdata, io_rbusy and io_wbusy signals *************/

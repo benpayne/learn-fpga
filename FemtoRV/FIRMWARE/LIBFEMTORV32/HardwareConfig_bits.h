@@ -14,6 +14,7 @@
 #define IO_FGA_CNTL_bit 10
 #define IO_FGA_DAT_bit 11
 #define IO_GPU_bit 10
+#define IO_SYNTH_bit 11
 #define IO_SEGMENT_bit 12
 #define IO_TIMER_bit 13
 #define IO_INT_CONTROLLER_bit 14
