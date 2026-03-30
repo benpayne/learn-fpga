@@ -1,5 +1,5 @@
 PROJ = fm_synth_top
-SOURCES = fm_synth_top.v fm_synth.v fm_operator.v fm_envelope.v
+SOURCES = fm_synth_top.v fm_synth_tdm.v fm_sine_rom.v fm_algorithm.v i2s_tx.v
 
 # Colorlight i5: ECP5-25K, CABGA381, speed grade 6
 DEVICE  = --25k
