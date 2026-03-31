@@ -4,25 +4,24 @@
 
 A two-layer firmware architecture for the retro computing co-processor, designed to be portable across CPU architectures (RISC-V, 68k, 6502, Z80, 8086).
 
-```
-┌─────────────────────────────────────────────┐
-│              User Programs                   │
-│         (loaded from SD/serial)              │
-├─────────────────────────────────────────────┤
-│                  OS / Shell                  │
-│     (loaded into SDRAM, replaceable)         │
-│  - File system, program loader, shell        │
-│  - Calls BIOS via jump table                 │
-├─────────────────────────────────────────────┤
-│                    BIOS                      │
-│        (in ROM/BRAM, permanent)              │
-│  - Hardware abstraction layer                │
-│  - Boot, self-test, device init              │
-│  - Jump table at fixed addresses             │
-├─────────────────────────────────────────────┤
-│              Hardware                        │
-│  GPU, Synth, UART, PS2, Timer, SDRAM, SD    │
-└─────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph "User Programs"
+        UP["Loaded from SD card or serial upload"]
+    end
+    subgraph "OS / Shell (SDRAM, replaceable)"
+        OS["File system · Program loader · Shell"]
+    end
+    subgraph "BIOS (BRAM ROM, permanent)"
+        BIOS["Hardware abstraction layer · Boot & self-test · Jump table at fixed addresses"]
+    end
+    subgraph "Hardware"
+        HW["GPU · FM Synth · UART · PS2 · Timer · SDRAM · SD Card"]
+    end
+
+    UP -->|"OS system calls"| OS
+    OS -->|"BIOS jump table"| BIOS
+    BIOS -->|"Memory-mapped IO"| HW
 ```
 
 ## Design Principles
@@ -39,24 +38,34 @@ A two-layer firmware architecture for the retro computing co-processor, designed
 
 ## Memory Map
 
-```
-0x000000-0x003FFF   BRAM: BIOS ROM (16KB)
-  0x000000-0x0000FF   Jump table (64 entries × 4 bytes)
-  0x000100-0x003FFF   BIOS code + data
+```mermaid
+block-beta
+    columns 3
 
-0x400000+           IO: Memory-mapped devices
-  0x400004            UART
-  0x401000            GPU (character + graphics)
-  0x402000            FM Synth
-  0x404000            Timer
-  0x408000            Interrupt Controller
-  0x410000            PS2 Keyboard
-  0x420000            SD Card (future)
+    block:bram:3
+        columns 3
+        a1["0x000000"] b1["BRAM: BIOS ROM"] c1["16KB"]
+        a2["0x000000-0x0000FF"] b2["Jump Table"] c2["256B (64 entries)"]
+        a3["0x000100-0x003FFF"] b3["BIOS Code + Data"] c3["~15.7KB"]
+    end
 
-0x800000-0xFFFFFF   SDRAM: 8MB
-  0x800000-0x80FFFF   OS code + data (64KB reserved)
-  0x810000-0xEFFFFF   User program space (~7MB)
-  0xF00000-0xFFFFFF   Stack (1MB, grows downward)
+    block:io:3
+        columns 3
+        a4["0x400000+"] b4["IO: Memory-mapped devices"] c4[""]
+        a5["0x400004"] b5["UART"] c5[""]
+        a6["0x401000"] b6["GPU (char + graphics)"] c6[""]
+        a7["0x402000"] b7["FM Synth"] c7[""]
+        a8["0x404000 / 0x408000"] b8["Timer / Interrupt Ctrl"] c8[""]
+        a9["0x410000 / 0x420000"] b9["PS2 Keyboard / SD Card"] c9[""]
+    end
+
+    block:sdram:3
+        columns 3
+        a10["0x800000-0xFFFFFF"] b10["SDRAM"] c10["8MB"]
+        a11["0x800000-0x80FFFF"] b11["OS Code + Data"] c11["64KB reserved"]
+        a12["0x810000-0xEFFFFF"] b12["User Program Space"] c12["~7MB"]
+        a13["0xF00000-0xFFFFFF"] b13["Stack (grows down)"] c13["1MB"]
+    end
 ```
 
 ---
@@ -207,32 +216,23 @@ Programs call the OS via a trap or call table at a known address (e.g., 0x800000
 
 ## Boot Sequence
 
-```
-1. Power on → CPU starts at 0x000000 (BRAM)
-2. BIOS initializes:
-   a. Disable interrupts
-   b. Set stack pointer (BRAM top initially)
-   c. Initialize SDRAM controller (wait for init)
-   d. Move stack to SDRAM
-   e. Initialize GPU (clear screen, show banner)
-   f. Initialize UART
-   g. Initialize PS2 keyboard
-   h. Initialize FM synth (silence)
-   i. Initialize timer (system tick)
-   j. Enable interrupts
-3. BIOS self-test:
-   a. SDRAM quick test (write/read pattern)
-   b. Report memory size
-4. BIOS attempts to boot OS:
-   a. Check SD card for /BOOT/OS.BIN
-   b. If found: load to 0x800000, jump to entry
-   c. If not found: check serial for XMODEM upload
-   d. If nothing: drop to built-in monitor
-5. OS initializes:
-   a. Set up file system (mount SD card)
-   b. Set up memory allocator
-   c. Show OS banner
-   d. Enter shell loop
+```mermaid
+flowchart TD
+    A["Power On: CPU starts at 0x000000"] --> B["Disable interrupts<br/>Set stack to BRAM top"]
+    B --> C["Init SDRAM controller<br/>(wait ~400us for chip init)"]
+    C --> D["Move stack to SDRAM"]
+    D --> E["Init GPU, UART, PS2,<br/>FM Synth, Timer"]
+    E --> F["Enable interrupts<br/>Show BIOS banner"]
+    F --> G["SDRAM self-test<br/>Report memory size"]
+    G --> H{"SD card<br/>present?"}
+    H -->|Yes| I{"Found<br/>/BOOT/OS.BIN?"}
+    H -->|No| K{"Serial<br/>XMODEM?"}
+    I -->|Yes| J["Load OS to 0x800000<br/>Jump to OS entry"]
+    I -->|No| K
+    K -->|Yes| L["Receive OS via XMODEM<br/>Jump to OS entry"]
+    K -->|No| M["Drop to built-in<br/>BIOS monitor shell"]
+    J --> N["OS Init: mount FS,<br/>memory allocator,<br/>show banner,<br/>enter shell loop"]
+    L --> N
 ```
 
 ---
@@ -241,18 +241,24 @@ Programs call the OS via a trap or call table at a known address (e.g., 0x800000
 
 The BIOS jump table is the **hardware abstraction layer**. To port to a new CPU architecture:
 
-### What changes:
-- BIOS implementation (assembly/C for the target CPU)
-- Jump table format (4 bytes for 32-bit CPUs, 2 bytes for 16-bit)
-- Calling convention (registers vs stack)
-- Interrupt handling
-- Memory map (may differ by platform)
-
-### What stays the same:
-- Jump table function numbers and semantics
-- OS source code (if written in C, just recompile)
-- Application API (OS system calls)
-- File formats on SD card
+```mermaid
+graph LR
+    subgraph "Portable (same across CPUs)"
+        A["BIOS Function Numbers<br/>& Semantics"]
+        B["OS Source Code<br/>(C, recompile)"]
+        C["Application API<br/>(OS syscalls)"]
+        D["File Formats<br/>(SD card)"]
+    end
+    subgraph "Platform-specific (changes per CPU)"
+        E["BIOS Implementation<br/>(asm/C)"]
+        F["Jump Table Format<br/>(2 or 4 bytes)"]
+        G["Calling Convention<br/>(regs vs stack)"]
+        H["Interrupt Handling"]
+        I["Memory Map"]
+    end
+    A --- E
+    B --- G
+```
 
 ### Platform-Specific Examples:
 
@@ -283,6 +289,34 @@ BIOS_PUTCHAR = BIOS_BASE+0  ; JSR indirect
 ---
 
 ## Implementation Plan
+
+```mermaid
+gantt
+    title Implementation Phases
+    dateFormat X
+    axisFormat %s
+
+    section Phase 1: BIOS
+    Refactor monitor → BIOS with jump table    :p1a, 0, 2
+    Console/Display/Audio behind jump table     :p1b, 0, 2
+    System tick timer + SDRAM self-test         :p1c, 1, 3
+    Built-in monitor as fallback                :p1d, 2, 3
+
+    section Phase 2: Minimal OS
+    Shell with command parsing                  :p2a, 3, 5
+    Program loader (BIN from XMODEM)            :p2b, 3, 5
+    Memory allocator + OS syscall table         :p2c, 4, 5
+
+    section Phase 3: SD Card + FS
+    Enable SD card hardware                     :p3a, 5, 7
+    FAT16 filesystem library                    :p3b, 5, 7
+    DIR/TYPE/COPY + load from SD                :p3c, 6, 7
+
+    section Phase 4: Rich OS
+    Device driver framework                     :p4a, 7, 9
+    Multi-program / TSR support                 :p4b, 8, 9
+    Config files + autoexec                     :p4c, 8, 9
+```
 
 ### Phase 1: BIOS (current monitor → BIOS)
 - Refactor monitor.c into BIOS with jump table
