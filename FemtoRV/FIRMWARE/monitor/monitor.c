@@ -560,7 +560,7 @@ static void cmd_meminfo(void) {
     gpu_set_fg(GPU_WHITE);
     mon_puts("  ROM:   16KB BRAM (0x000000-0x003FFF)\n");
     mon_puts("  SDRAM: 8MB (0x800000-0xFFFFFF) cached\n");
-    mon_puts("  Stack: 0x003FFF (BRAM top)\n");
+    mon_puts("  Stack: 0xFFFFF0 (SDRAM top)\n");
     mon_puts("  IO:    0x400000+\n");
     mon_puts("  CPU:   RV32IMFC @ 25MHz\n");
     mon_puts("  Load:  default 0x800000 (SDRAM)\n");

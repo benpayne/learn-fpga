@@ -14,11 +14,9 @@ _start:
      csrw mstatus, zero
      csrw mie, zero
 
-     # Stack at top of BRAM for now (SDRAM byte writes need RMW cache support)
-     li   t0,IO_HW_CONFIG_RAM  # Read RAM size from hardware config
-     add  t0,t0,gp
-     lw   sp,0(t0)             # SP = top of BRAM
-     li   t0,0
+     # Stack at top of SDRAM (8MB: 0x800000-0xFFFFFF)
+     # RMW cache handles byte/halfword writes correctly
+     li   sp, 0xFFFFF0
 
 # TODO: clear BSS (for this we need a linker script that declares _edata)
 #     la t1,_edata
