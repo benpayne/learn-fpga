@@ -392,9 +392,13 @@ static int xmodem_receive(uint32_t load_addr) {
         }
 
         if (pkt_num == expected_pkt) {
-            volatile uint8_t *dest = (volatile uint8_t *)addr;
-            for (int i = 0; i < 128; i++) {
-                dest[i] = data[i];
+            // Write as 32-bit words (SDRAM doesn't support byte writes)
+            volatile uint32_t *dest32 = (volatile uint32_t *)addr;
+            for (int i = 0; i < 128; i += 4) {
+                dest32[i/4] = (uint32_t)data[i]
+                            | ((uint32_t)data[i+1] << 8)
+                            | ((uint32_t)data[i+2] << 16)
+                            | ((uint32_t)data[i+3] << 24);
             }
             addr += 128;
             total_bytes += 128;
