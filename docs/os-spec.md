@@ -1,8 +1,14 @@
-# RetroOS Specification v0.1
+# RetroKernel Specification v0.1
 
 ## Overview
 
-A minimal operating system for the FemtoRV retro co-processor. Loaded from SD card or serial into SDRAM by the BIOS. Provides a command shell, FAT filesystem access, program loading, and hardware abstraction through BIOS calls.
+A minimal kernel for the retro co-processor platform. Three layers:
+
+- **BIOS** — hardware-specific AND CPU-specific. One per board.
+- **Kernel** — CPU-specific but hardware-independent. One per CPU architecture (RISC-V, 68k, etc.). Same binary across all boards with the same CPU.
+- **Apps** — run on any system with the kernel. Call kernel syscalls, never touch hardware directly.
+
+The kernel is loaded from SD card (`/retrokernel.bin`) or serial into SDRAM by the BIOS. It provides a Unix-style shell, FAT filesystem, program loading, and hardware abstraction through BIOS calls.
 
 ```mermaid
 graph TD
@@ -11,7 +17,7 @@ graph TD
         P2["game.bin"]
         P3["synth.bin"]
     end
-    subgraph "RetroOS (loaded into SDRAM at 0x800000)"
+    subgraph "RetroKernel (loaded into SDRAM at 0x800000)"
         SHELL["Shell / Command Interpreter"]
         FS["FAT Filesystem Driver"]
         LOADER["Program Loader"]
@@ -58,7 +64,7 @@ block-beta
 
     block:os:2
         columns 2
-        o1["0x800000-0x80FFFF"] o2["RetroOS Code + Data (64KB)"]
+        o1["0x800000-0x80FFFF"] o2["RetroKernel Code + Data (64KB)"]
     end
 
     block:user:2
@@ -76,8 +82,8 @@ block-beta
 |--------|---------|------|----------|
 | BIOS ROM | 0x000000-0x003FFF | 16KB | Boot ROM, BIOS jump table, monitor |
 | IO | 0x400000+ | - | GPU, Synth, UART, Timer, PS2, SD |
-| OS Code | 0x800000-0x807FFF | 32KB | RetroOS executable |
-| OS Data | 0x808000-0x80FFFF | 32KB | OS heap, buffers, file tables |
+| Kernel Code | 0x800000-0x807FFF | 32KB | RetroKernel executable |
+| Kernel Data | 0x808000-0x80FFFF | 32KB | kernel heap, buffers, file tables |
 | Programs | 0x810000-0xEFFFFF | ~7MB | Loaded user programs |
 | Stack | 0xF00000-0xFFFFF0 | 1MB | System + program stack |
 
@@ -90,15 +96,15 @@ flowchart TD
     A["BIOS starts"] --> B["Init hardware"]
     B --> C["SDRAM self-test"]
     C --> D{"SD card<br/>present?"}
-    D -->|Yes| E{"retroos.bin<br/>on root?"}
+    D -->|Yes| E{"retrokernel.bin<br/>on root?"}
     D -->|No| H["BIOS Monitor"]
-    E -->|Yes| F["Load /retroos.bin<br/>to 0x800000"]
+    E -->|Yes| F["Load /retrokernel.bin<br/>to 0x800000"]
     E -->|No| G{"XMODEM<br/>upload?"}
     F --> I["Jump to 0x800000"]
-    G -->|Yes| F2["Receive OS via<br/>XMODEM to 0x800000"]
+    G -->|Yes| F2["Receive Kernel via<br/>XMODEM to 0x800000"]
     G -->|No| H
     F2 --> I
-    I --> J["OS Init:<br/>mount SD, init heap,<br/>show banner"]
+    I --> J["Kernel Init:<br/>mount SD, init heap,<br/>show banner"]
     J --> K["Shell prompt: $"]
     K --> L{"User types<br/>command"}
     L -->|"ls"| M["List directory"]
@@ -130,7 +136,7 @@ flowchart TD
 | `pwd` | `pwd` | Print working directory |
 | `mem` | `mem` | Show memory usage |
 | `clear` | `clear` | Clear screen |
-| `ver` | `ver` | Show OS version |
+| `ver` | `ver` | Show Kernel version |
 | `help` | `help` | List commands |
 | `load` | `load [addr]` | Receive file via XMODEM |
 | `play` | `play <file>` | Play a music/sound file |
@@ -153,18 +159,18 @@ $ /bin/synth
 
 ## System Call Interface
 
-Programs communicate with the OS through a system call table at a fixed address. On RISC-V, syscalls use `ecall` or a call to the table.
+Programs communicate with the kernel through a system call table at a fixed address. On RISC-V, syscalls use `ecall` or a call to the table.
 
 ```mermaid
 graph LR
     subgraph "Program"
         A["syscall(SYS_PUTCHAR, 'A')"]
     end
-    subgraph "OS Syscall Handler"
+    subgraph "Kernel Syscall Handler"
         B["Dispatch by syscall #"]
     end
     subgraph "Implementation"
-        C["OS handler or BIOS call"]
+        C["Kernel handler or BIOS call"]
     end
     A --> B --> C
 ```
@@ -172,7 +178,7 @@ graph LR
 ### Syscall Mechanism
 
 ```c
-// Program calls OS via fixed address jump table at 0x800000
+// Program calls Kernel via fixed address jump table at 0x800000
 // Register convention:
 //   a7 = syscall number
 //   a0-a3 = arguments
@@ -262,7 +268,7 @@ graph LR
 
 ## File Descriptors
 
-The OS supports up to 8 simultaneously open files:
+The Kernel supports up to 8 simultaneously open files:
 
 | FD | Default | Description |
 |----|---------|-------------|
@@ -293,26 +299,26 @@ Programs are flat binaries (.BIN) loaded at 0x810000 and executed:
 
 ```mermaid
 graph LR
-    A["Shell: RUN FOO.BIN"] --> B["OS: open file,<br/>read size"]
-    B --> C["OS: load to 0x810000"]
-    C --> D["OS: set up argc/argv<br/>in registers"]
-    D --> E["OS: jump to 0x810000"]
+    A["Shell: RUN FOO.BIN"] --> B["Kernel: open file,<br/>read size"]
+    B --> C["Kernel: load to 0x810000"]
+    C --> D["Kernel: set up argc/argv<br/>in registers"]
+    D --> E["Kernel: jump to 0x810000"]
     E --> F["Program runs,<br/>calls syscalls"]
     F --> G["Program: SYS_EXIT"]
-    G --> H["OS: restore state,<br/>return to shell"]
+    G --> H["Kernel: restore state,<br/>return to shell"]
 ```
 
 ### Program Requirements
 - Linked at address 0x810000 (using upload_sdram.ld or similar)
 - Entry point is the first instruction
-- Can use all syscalls via the OS call table
+- Can use all syscalls via the kernel call table
 - Must call SYS_EXIT to return cleanly
-- Stack is pre-set by the OS (top of SDRAM)
+- Stack is pre-set by the kernel (top of SDRAM)
 - `gp` register points to IO_BASE (0x400000)
 
 ### Passing Arguments
 ```c
-// OS sets before calling program:
+// Kernel sets before calling program:
 //   a0 = argc (argument count)
 //   a1 = argv (pointer to argument string array in SDRAM)
 int main(int argc, char **argv) {
@@ -323,17 +329,17 @@ int main(int argc, char **argv) {
 
 ---
 
-## OS Internal Structure
+## Kernel Internal Structure
 
 ```c
-// os.c - Main OS source file structure
+// os.c - Main kernel source file structure
 
 // ---- Data structures ----
 struct os_state {
     char     cwd[128];          // Current working directory
     uint8_t  open_files;        // Bitmask of open file descriptors
     void    *file_handles[8];   // FAT library file handles
-    uint32_t heap_start;        // Start of heap (after OS data)
+    uint32_t heap_start;        // Start of heap (after Kernel data)
     uint32_t heap_end;          // Current end of heap
     uint32_t ticks;             // System tick counter
 };
@@ -369,21 +375,21 @@ void  os_free(void *ptr);
 
 ```mermaid
 gantt
-    title RetroOS Implementation
+    title RetroKernel Implementation
     dateFormat X
     axisFormat %s
 
     section Phase 1: Boot + Shell
-    OS entry point + init          :p1a, 0, 1
+    kernel entry point + init          :p1a, 0, 1
     Syscall table + dispatcher     :p1b, 0, 1
     Shell command loop             :p1c, 1, 2
-    DIR / CD / CLS / MEM / VER    :p1d, 1, 2
+    ls / cd / clear / mem / ver    :p1d, 1, 2
     Program loader (BIN from SD)   :p1e, 2, 3
 
     section Phase 2: File I/O
     FAT filesystem integration     :p2a, 3, 4
     open / read / write / close    :p2b, 3, 4
-    TYPE / COPY / DEL / REN        :p2c, 4, 5
+    cat / cp / rm / mv             :p2c, 4, 5
     File descriptor management     :p2d, 4, 5
 
     section Phase 3: Rich Features
@@ -422,39 +428,39 @@ Files:
 ## Build System
 
 ```
-FemtoRV/FIRMWARE/retroos/
-  Makefile          # Build OS binary
+FemtoRV/FIRMWARE/retrokernel/
+  Makefile          # Build kernel binary
   os_main.c         # Entry point, init
   os_syscall.c      # Syscall dispatcher
   os_shell.c        # Shell commands
   os_loader.c       # Program loader
   os_file.c         # File I/O
-  os.h              # OS internal headers
-  retroos.ld        # Linker script (origin 0x800000)
+  os.h              # kernel internal headers
+  retrokernel.ld        # Linker script (origin 0x800000)
 
-Output: retroos.bin  (copied to SD card root as /retroos.bin)
+Output: retrokernel.bin  (copied to SD card root as /retrokernel.bin)
 ```
 
 ### BIOS Boot Loader
-The BIOS needs a minimal read-only FAT16/FAT32 reader (~2KB) to find and load `/retroos.bin` from the SD card root. This is a stripped-down single-file loader in ROM — the full read/write FAT library lives in the OS itself.
+The BIOS needs a minimal read-only FAT16/FAT32 reader (~2KB) to find and load `/retrokernel.bin` from the SD card root. This is a stripped-down single-file loader in ROM — the full read/write FAT library lives in the kernel itself.
 
 ### Design Principles
-- **ROM is minimal** — only hardware init, boot loader, and BIOS jump table. All policy lives in the OS.
-- **OS is hardware-agnostic** — never touches IO registers directly. All hardware access goes through BIOS syscalls. This allows the same OS binary to run on different CPU architectures with different BIOS implementations.
+- **ROM is minimal** — only hardware init, boot loader, and BIOS jump table. All policy lives in the kernel.
+- **kernel is hardware-agnostic** — never touches IO registers directly. All hardware access goes through BIOS syscalls. This allows the same kernel binary to run on different CPU architectures with different BIOS implementations.
 - **Single root filesystem** — SD card mounts as `/`. No drive letters. Unix-style paths with `/` separators.
-- **Full FAT16/FAT32 support** — read and write, long filenames, subdirectories. Provided by the OS, not the BIOS.
+- **Full FAT16/FAT32 support** — read and write, long filenames, subdirectories. Provided by the kernel, not the BIOS.
 
 ---
 
 ## Example Session
 
 ```
-RetroOS v0.1 - FemtoRV @ 25MHz
+RetroKernel v0.1 - FemtoRV @ 25MHz
 8MB SDRAM, SD card mounted
 Type 'help' for commands
 
 /$ ls
-retroos.bin    32768  2026-03-31
+retrokernel.bin    32768  2026-03-31
 hello.bin       4096  2026-03-31
 bounce.bin      4804  2026-03-31
 mario.bin       3364  2026-03-31
@@ -463,7 +469,7 @@ readme.txt      1024  2026-03-31
 5 file(s), 1 dir(s), 7980432 bytes free
 
 /$ cat readme.txt
-Welcome to RetroOS!
+Welcome to RetroKernel!
 This is the FemtoRV retro co-processor.
 
 /$ hello
