@@ -90,22 +90,21 @@ flowchart TD
     A["BIOS starts"] --> B["Init hardware"]
     B --> C["SDRAM self-test"]
     C --> D{"SD card<br/>present?"}
-    D -->|Yes| E{"RETROOS.BIN<br/>on root?"}
+    D -->|Yes| E{"retroos.bin<br/>on root?"}
     D -->|No| H["BIOS Monitor"]
-    E -->|Yes| F["Load RETROOS.BIN<br/>to 0x800000"]
+    E -->|Yes| F["Load /retroos.bin<br/>to 0x800000"]
     E -->|No| G{"XMODEM<br/>upload?"}
     F --> I["Jump to 0x800000"]
     G -->|Yes| F2["Receive OS via<br/>XMODEM to 0x800000"]
     G -->|No| H
     F2 --> I
     I --> J["OS Init:<br/>mount SD, init heap,<br/>show banner"]
-    J --> K["Shell prompt: A:\\>"]
+    J --> K["Shell prompt: $"]
     K --> L{"User types<br/>command"}
-    L -->|"DIR"| M["List directory"]
-    L -->|"CD path"| N["Change directory"]
-    L -->|"TYPE file"| O["Display file"]
-    L -->|"RUN file"| P["Load & execute"]
-    L -->|"other.BIN"| P
+    L -->|"ls"| M["List directory"]
+    L -->|"cd path"| N["Change directory"]
+    L -->|"cat file"| O["Display file"]
+    L -->|"program"| P["Load & execute"]
     M & N & O --> K
     P --> Q["Load program<br/>to 0x810000"]
     Q --> R["Execute program"]
@@ -121,29 +120,33 @@ flowchart TD
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `DIR` | `DIR [path]` | List directory contents |
-| `CD` | `CD <path>` | Change current directory |
-| `TYPE` | `TYPE <file>` | Display text file contents |
-| `COPY` | `COPY <src> <dst>` | Copy file |
-| `DEL` | `DEL <file>` | Delete file |
-| `REN` | `REN <old> <new>` | Rename file |
-| `MKDIR` | `MKDIR <dir>` | Create directory |
-| `MEM` | `MEM` | Show memory usage |
-| `CLS` | `CLS` | Clear screen |
-| `VER` | `VER` | Show OS version |
-| `HELP` | `HELP` | List commands |
-| `LOAD` | `LOAD [addr]` | Receive file via XMODEM |
-| `PLAY` | `PLAY <file>` | Play a music/sound file |
-| `MODE` | `MODE 40\|80` | Set display columns |
-| `COLOR` | `COLOR <fg> <bg>` | Set text colors |
-| `REBOOT` | `REBOOT` | Warm reboot to BIOS |
+| `ls` | `ls [path]` | List directory contents |
+| `cd` | `cd <path>` | Change current directory |
+| `cat` | `cat <file>` | Display file contents |
+| `cp` | `cp <src> <dst>` | Copy file |
+| `rm` | `rm <file>` | Delete file |
+| `mv` | `mv <old> <new>` | Move/rename file |
+| `mkdir` | `mkdir <dir>` | Create directory |
+| `pwd` | `pwd` | Print working directory |
+| `mem` | `mem` | Show memory usage |
+| `clear` | `clear` | Clear screen |
+| `ver` | `ver` | Show OS version |
+| `help` | `help` | List commands |
+| `load` | `load [addr]` | Receive file via XMODEM |
+| `play` | `play <file>` | Play a music/sound file |
+| `mode` | `mode 40\|80` | Set display columns |
+| `color` | `color <fg> <bg>` | Set text colors |
+| `reboot` | `reboot` | Warm reboot to BIOS |
+| `echo` | `echo <text>` | Print text |
+| `hexdump` | `hexdump <file> [n]` | Hex dump first n bytes |
 
 ### Running Programs
 
-Any filename ending in `.BIN` typed at the prompt is loaded and executed:
+Programs are executed by name (with or without `.bin` extension). The shell searches the current directory, then `/bin`:
 ```
-A:\> HELLO.BIN
-A:\> GAMES\TETRIS.BIN
+$ hello
+$ games/tetris
+$ /bin/synth
 ```
 
 ---
@@ -429,11 +432,17 @@ FemtoRV/FIRMWARE/retroos/
   os.h              # OS internal headers
   retroos.ld        # Linker script (origin 0x800000)
 
-Output: RETROOS.BIN  (copied to SD card root)
+Output: retroos.bin  (copied to SD card root as /retroos.bin)
 ```
 
 ### BIOS Boot Loader
-The BIOS needs a minimal FAT16/FAT32 reader (~2KB) to find and load `RETROOS.BIN` from the SD card. This is a stripped-down read-only single-file loader — NOT the full FAT library.
+The BIOS needs a minimal read-only FAT16/FAT32 reader (~2KB) to find and load `/retroos.bin` from the SD card root. This is a stripped-down single-file loader in ROM — the full read/write FAT library lives in the OS itself.
+
+### Design Principles
+- **ROM is minimal** — only hardware init, boot loader, and BIOS jump table. All policy lives in the OS.
+- **OS is hardware-agnostic** — never touches IO registers directly. All hardware access goes through BIOS syscalls. This allows the same OS binary to run on different CPU architectures with different BIOS implementations.
+- **Single root filesystem** — SD card mounts as `/`. No drive letters. Unix-style paths with `/` separators.
+- **Full FAT16/FAT32 support** — read and write, long filenames, subdirectories. Provided by the OS, not the BIOS.
 
 ---
 
@@ -441,37 +450,37 @@ The BIOS needs a minimal FAT16/FAT32 reader (~2KB) to find and load `RETROOS.BIN
 
 ```
 RetroOS v0.1 - FemtoRV @ 25MHz
-8MB SDRAM, SD Card mounted
-Type HELP for commands
+8MB SDRAM, SD card mounted
+Type 'help' for commands
 
-A:\> DIR
-  RETROOS  BIN    32768  2026-03-31
-  HELLO    BIN     4096  2026-03-31
-  BOUNCE   BIN     4804  2026-03-31
-  MARIO    BIN     3364  2026-03-31
-  GAMES        <DIR>     2026-03-31
-  README   TXT     1024  2026-03-31
+/$ ls
+retroos.bin    32768  2026-03-31
+hello.bin       4096  2026-03-31
+bounce.bin      4804  2026-03-31
+mario.bin       3364  2026-03-31
+games/
+readme.txt      1024  2026-03-31
 5 file(s), 1 dir(s), 7980432 bytes free
 
-A:\> TYPE README.TXT
+/$ cat readme.txt
 Welcome to RetroOS!
 This is the FemtoRV retro co-processor.
 
-A:\> HELLO.BIN
+/$ hello
 Hello from SDRAM!
-Program returned with exit code 0
+exit(0)
 
-A:\> CD GAMES
-A:\GAMES\> DIR
-  TETRIS   BIN    12800  2026-03-31
-  SNAKE    BIN     8192  2026-03-31
+/$ cd games
+/games$ ls
+tetris.bin     12800  2026-03-31
+snake.bin       8192  2026-03-31
 2 file(s), 0 dir(s)
 
-A:\GAMES\> TETRIS.BIN
+/games$ tetris
 [Tetris game runs, press ESC to exit]
-Program returned with exit code 0
+exit(0)
 
-A:\GAMES\> CD \
-A:\> REBOOT
+/games$ cd /
+/$ reboot
 Rebooting...
 ```
