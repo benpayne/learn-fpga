@@ -29,8 +29,48 @@ static void clear_bss(void) {
         *p++ = 0;
 }
 
+// Simple trap handler — catches exceptions and prints debug info
+// Note: petitbateau shares mtvec for both interrupts and exceptions.
+// The shell sets mtvec to the PS2 ISR. This is a fallback for
+// unhandled traps before the shell starts.
+static void trap_handler(void) __attribute__ ((interrupt ("machine")));
+static void trap_handler(void) {
+    uint32_t mepc, mcause;
+    asm volatile ("csrr %0, mepc" : "=r"(mepc));
+    asm volatile ("csrr %0, mcause" : "=r"(mcause));
+
+    // Restore gp for IO access
+    asm volatile (".option push\n.option norelax\nli gp, 0x400000\n.option pop\n");
+
+    // Force text mode
+    GPU_WRITE(GPU_REG_DISPLAY_MODE, 0);
+    wait_cycles(1000);
+
+    con_set_fg(GPU_BRIGHT_RED);
+    con_puts("\n*** TRAP ***\n");
+    con_puts("  mepc=0x");
+    for (int i = 28; i >= 0; i -= 4) {
+        int n = (mepc >> i) & 0xF;
+        con_putc(n < 10 ? '0' + n : 'a' + n - 10);
+    }
+    con_puts(" mcause=0x");
+    for (int i = 28; i >= 0; i -= 4) {
+        int n = (mcause >> i) & 0xF;
+        con_putc(n < 10 ? '0' + n : 'a' + n - 10);
+    }
+    con_putc('\n');
+
+    // Halt
+    con_puts("System halted. Reboot to continue.\n");
+    while(1);
+}
+
 void kernel_init(void) {
     clear_bss();
+
+    // Don't set mtvec here — mtvec is shared with interrupts.
+    // The shell's ISR will check mcause to distinguish interrupts from traps.
+
     con_clear();
     show_banner();
 

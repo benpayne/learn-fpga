@@ -11,6 +11,34 @@ static ps2_state_t ps2;
 
 static void irq_entry(void) __attribute__ ((interrupt ("machine")));
 void irq_entry(void) {
+    // Check mcause: bit 31 = interrupt (1) vs exception (0)
+    uint32_t mcause;
+    asm volatile ("csrr %0, mcause" : "=r"(mcause));
+
+    if (!(mcause & 0x80000000)) {
+        // Exception (not interrupt) — crash handler
+        uint32_t mepc;
+        asm volatile ("csrr %0, mepc" : "=r"(mepc));
+
+        // Restore gp for IO
+        asm volatile (".option push\n.option norelax\nli gp, 0x400000\n.option pop\n");
+
+        GPU_WRITE(GPU_REG_DISPLAY_MODE, 0);
+        wait_cycles(1000);
+
+        con_set_fg(GPU_BRIGHT_RED);
+        con_puts("\n*** CRASH ***\n");
+        con_puts("  PC=0x");
+        for (int i = 28; i >= 0; i -= 4) {
+            int n = (mepc >> i) & 0xF;
+            con_putc(n < 10 ? '0' + n : 'a' + n - 10);
+        }
+        con_putc('\n');
+        con_puts("System halted.\n");
+        while(1);
+    }
+
+    // Normal interrupt handling
     uint32_t flags = IO_IN(IO_INT_CONTROLLER);
     if (flags & (1 << INT_PS2_bit)) {
         uint32_t ps2_reg = IO_IN(IO_PS2);

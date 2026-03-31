@@ -88,6 +88,17 @@ run:
     void (*entry)(void) = (void (*)(void))PROGRAM_BASE;
     entry();
 
+    // Restore gp register (IO_BASE) — program may have clobbered it
+    asm volatile (
+        ".option push\n"
+        ".option norelax\n"
+        "li gp, 0x400000\n"
+        ".option pop\n"
+    );
+
+    // Debug: try UART-only output to see if we get here
+    putchar('!'); putchar('\r'); putchar('\n');
+
     // Program returned — restore text mode in case program left graphics mode
     GPU_WRITE(GPU_REG_DISPLAY_MODE, 0);  // Back to character mode
     wait_cycles(1000);
