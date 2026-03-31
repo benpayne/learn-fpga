@@ -4,9 +4,9 @@
 
 A minimal kernel for the retro co-processor platform. Three layers:
 
-- **BIOS** — hardware-specific AND CPU-specific. One per board.
-- **Kernel** — CPU-specific but hardware-independent. One per CPU architecture (RISC-V, 68k, etc.). Same binary across all boards with the same CPU.
-- **Apps** — run on any system with the kernel. Call kernel syscalls, never touch hardware directly.
+- **BIOS** — hardware-specific AND CPU-specific. One per board. Not portable.
+- **Kernel** — CPU-specific but hardware-independent. Same binary runs on any board with the same CPU. Recompile for new CPU arch, no code changes.
+- **Apps** — CPU-specific but kernel-independent. Same binary runs on any board with the same CPU. Recompile for new CPU arch, no code changes. Call kernel syscalls only, never touch hardware.
 
 The kernel is loaded from SD card (`/retrokernel.bin`) or serial into SDRAM by the BIOS. It provides a Unix-style shell, FAT filesystem, program loading, and hardware abstraction through BIOS calls.
 
