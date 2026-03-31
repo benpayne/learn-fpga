@@ -30,6 +30,7 @@
 
 `ifdef NRV_IO_SDRAM
 `include "SDRAM/muchtoremember_colorlight.v"
+`include "DEVICES/cache.v"
 `endif
 
 `ifdef NRV_IO_SYNTH
@@ -400,17 +401,43 @@ module femtosoc(
    wire [31:0] sdram_rdata;
    wire        sdram_busy;
 
-   // 32-bit SDRAM controller for EM638325
-   // Internal sd_addr[12:11] driven but only [10:0] connected to pins.
+   // SDRAM with cache
    wire [12:0] sd_addr_full;
    wire        sd_cs_unused;
    wire [3:0]  sd_dqm_unused;
    assign sd_addr = sd_addr_full[10:0];
 
+   // Cache <-> SDRAM wires
+   wire [3:0]  cache_sdram_wmask;
+   wire        cache_sdram_rd;
+   wire [25:0] cache_sdram_addr;
+   wire [31:0] cache_sdram_din;
+   wire [31:0] cache_sdram_dout;
+   wire        cache_sdram_busy;
+
+   // Cache between CPU and SDRAM
+   sdram_cache cache (
+      .clk(clk),
+      .resetn(reset),
+      // CPU side
+      .cpu_wmask(mem_address_is_sdram ? mem_wmask : 4'b0),
+      .cpu_rd(mem_address_is_sdram & mem_rstrb),
+      .cpu_addr(mem_address[22:0]),
+      .cpu_din(mem_wdata),
+      .cpu_dout(sdram_rdata),
+      .cpu_busy(sdram_busy),
+      // SDRAM side
+      .sdram_wmask(cache_sdram_wmask),
+      .sdram_rd(cache_sdram_rd),
+      .sdram_addr(cache_sdram_addr),
+      .sdram_din(cache_sdram_din),
+      .sdram_dout(cache_sdram_dout),
+      .sdram_busy(cache_sdram_busy)
+   );
+
    muchtoremember sdram_ctrl (
       .clk(clk),
       .resetn(reset),
-
       .sd_clk(sd_clk),
       .sd_d(sd_d),
       .sd_addr(sd_addr_full),
@@ -420,16 +447,12 @@ module femtosoc(
       .sd_we(sd_we),
       .sd_ras(sd_ras),
       .sd_cas(sd_cas),
-
-      // Processor interface
-      // Address: strip bit 23 (SDRAM select), pass [22:0] directly.
-      // Controller maps: addr[9:2]=col(8bit), addr[20:10]=row(11bit), addr[22:21]=bank(2bit)
-      .wmask(mem_address_is_sdram ? mem_wmask : 4'b0),
-      .rd(mem_address_is_sdram & mem_rstrb),
-      .addr({3'b000, mem_address[22:0]}),
-      .din(mem_wdata),
-      .dout(sdram_rdata),
-      .busy(sdram_busy)
+      .wmask(cache_sdram_wmask),
+      .rd(cache_sdram_rd),
+      .addr(cache_sdram_addr),
+      .din(cache_sdram_din),
+      .dout(cache_sdram_dout),
+      .busy(cache_sdram_busy)
    );
 `endif
 

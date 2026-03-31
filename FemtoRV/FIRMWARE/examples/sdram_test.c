@@ -45,7 +45,8 @@ int main(void) {
     out_puts("SDRAM Test - EM638325 (8MB, 32-bit)\n");
     out_puts("====================================\n\n");
 
-    volatile uint32_t *sdram = (volatile uint32_t *)SDRAM_BASE;
+    // Use offset 0x100000 (1MB) to avoid overwriting our own code at SDRAM_BASE
+    volatile uint32_t *sdram = (volatile uint32_t *)(SDRAM_BASE + 0x100000);
 
     // Test 1: Single word
     sdram[0] = 0xDEADBEEF;
@@ -65,7 +66,7 @@ int main(void) {
     test_result("256 sequential words", ok);
 
     // Test 4: 1K words at 1MB offset
-    volatile uint32_t *far = (volatile uint32_t *)(SDRAM_BASE + 0x100000);
+    volatile uint32_t *far = (volatile uint32_t *)(SDRAM_BASE + 0x200000);
     for (int i = 0; i < 1024; i++) far[i] = 0xCAFE0000 | i;
     ok = 1;
     for (int i = 0; i < 1024; i++) {
@@ -97,7 +98,7 @@ int main(void) {
 
     // Test 7: Large block write/verify (64KB)
     out_puts("  Writing 64KB...");
-    volatile uint32_t *block = (volatile uint32_t *)(SDRAM_BASE + 0x200000);
+    volatile uint32_t *block = (volatile uint32_t *)(SDRAM_BASE + 0x300000);
     for (int i = 0; i < 16384; i++) block[i] = i ^ 0x55AA55AA;
     out_puts(" verifying...");
     ok = 1;
