@@ -170,9 +170,7 @@ int fs_load_file(const char *path, void *dest, uint32_t max_size) {
     void *f = fl_fopen(fullpath, "r");
     if (!f) return -1;
 
-    // Read in chunks (fl_fgetc is too slow byte-by-byte)
     int total = fl_fread(dest, 1, max_size, f);
-
     fl_fclose(f);
     return total;
 }

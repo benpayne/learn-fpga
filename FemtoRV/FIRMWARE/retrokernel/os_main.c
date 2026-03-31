@@ -21,7 +21,16 @@ static void show_banner(void) {
     con_puts("8MB SDRAM, 16KB ROM\n");
 }
 
+// Zero BSS section (not done by CRT0 since we're loaded raw)
+extern uint32_t _bss_start, _bss_end;
+static void clear_bss(void) {
+    volatile uint32_t *p = &_bss_start;
+    while (p < &_bss_end)
+        *p++ = 0;
+}
+
 void kernel_init(void) {
+    clear_bss();
     con_clear();
     show_banner();
 
