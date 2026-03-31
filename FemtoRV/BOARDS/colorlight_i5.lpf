@@ -79,15 +79,18 @@ IOBUF PORT "spi_clk"   PULLMODE=NONE IO_TYPE=LVCMOS33 DRIVE=4;
 
 ## SD card ####################################################
 
-LOCATE COMP "sd_clk"  SITE "H2"; 
-LOCATE COMP "sd_mosi" SITE "J1"; 
-LOCATE COMP "sd_miso" SITE "J3";
-LOCATE COMP "sd_cs_n" SITE "K2"; 
+## SD Card (Digilent PMOD MicroSD on P2 right side)
+## If wrong orientation, swap to M17/R17/T18/K18 row
 
-IOBUF PORT "sd_clk"  PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "sd_cs_n" SITE "P17";   # PMOD pin 1: CS
+LOCATE COMP "sd_mosi" SITE "R18";   # PMOD pin 2: MOSI
+LOCATE COMP "sd_miso" SITE "C18";   # PMOD pin 3: MISO
+LOCATE COMP "sd_clk"  SITE "U16";   # PMOD pin 4: SCK
+
+IOBUF PORT "sd_cs_n" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
 IOBUF PORT "sd_mosi" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
 IOBUF PORT "sd_miso" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
-IOBUF PORT "sd_cs_n" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4; 
+IOBUF PORT "sd_clk"  PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4; 
 
 # GPDI differential interface (Video) #########################
 
@@ -116,8 +119,8 @@ IOBUF PORT "gpdi_dn[3]" IO_TYPE=LVCMOS33D DRIVE=4;
 # SDRAM (using lower 16 bits of 32-bit bus) ####################
 # Pin mapping from LiteX Colorlight i5 target
 
-LOCATE COMP "sd_clk" SITE "B9";
-IOBUF  PORT "sd_clk" IO_TYPE=LVCMOS33;
+LOCATE COMP "sdram_clk" SITE "B9";
+IOBUF  PORT "sdram_clk" IO_TYPE=LVCMOS33;
 
 LOCATE COMP "sd_addr[0]"  SITE "B13"; # A0
 LOCATE COMP "sd_addr[1]"  SITE "C14"; # A1

@@ -132,7 +132,7 @@ module femtosoc(
    output [3:0] gpdi_dp,
 `endif
 `ifdef NRV_IO_SDRAM
-   output        sd_clk,
+   output        sdram_clk,
    inout  [31:0] sd_d,
    output [10:0] sd_addr,
    output  [1:0] sd_ba,
@@ -438,7 +438,7 @@ module femtosoc(
    muchtoremember sdram_ctrl (
       .clk(clk),
       .resetn(reset),
-      .sd_clk(sd_clk),
+      .sd_clk(sdram_clk),
       .sd_d(sd_d),
       .sd_addr(sd_addr_full),
       .sd_ba(sd_ba),
