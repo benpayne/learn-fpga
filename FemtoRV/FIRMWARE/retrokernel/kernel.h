@@ -69,9 +69,16 @@ struct dirent {
 // These call through to the BIOS/hardware directly since we ARE the kernel
 
 static inline void con_putc(char c) {
-    GPU_WRITE(GPU_REG_CHAR_DATA, c);
-    if (c == '\n') { GPU_WRITE(GPU_REG_CHAR_DATA, '\r'); putchar('\r'); putchar('\n'); }
-    else putchar(c);
+    if (c == '\n') {
+        // CR before LF on GPU (scroll timing issue)
+        GPU_WRITE(GPU_REG_CHAR_DATA, '\r');
+        GPU_WRITE(GPU_REG_CHAR_DATA, '\n');
+        putchar('\r');
+        putchar('\n');
+    } else {
+        GPU_WRITE(GPU_REG_CHAR_DATA, c);
+        putchar(c);
+    }
 }
 
 static inline void con_puts(const char *s) {

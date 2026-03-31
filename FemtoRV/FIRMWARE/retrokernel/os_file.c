@@ -3,15 +3,10 @@
 #include "kernel.h"
 
 // FAT library
+#include "fat_io_lib/fat_filelib.h"
+
 typedef int (*fn_diskio_read)(uint32_t sector, uint8_t *buffer, uint32_t sector_count);
 typedef int (*fn_diskio_write)(uint32_t sector, uint8_t *buffer, uint32_t sector_count);
-extern void fl_init(void);
-extern int  fl_attach_media(fn_diskio_read rd, fn_diskio_write wr);
-extern void fl_listdirectory(const char *path);
-extern void *fl_fopen(const char *path, const char *mode);
-extern int  fl_fread(void *buffer, int size, int count, void *file);
-extern void fl_fclose(void *file);
-extern int  fl_fgetc(void *file);
 
 // SD card
 extern int sd_init(void);
@@ -42,15 +37,72 @@ int fs_list_dir(const char *path) {
         return 0;
     }
 
-    // If "." use cwd
-    const char *real_path = path;
-    if (path[0] == '.' && path[1] == '\0')
-        real_path = cwd;
+    // Build full path
+    char fullpath[MAX_PATH];
+    int fp = 0;
 
-    // fl_listdirectory outputs to printf (UART only)
-    // We use it for now — output goes to UART
+    if (path[0] == '.' && (path[1] == '\0' || path[1] == '/')) {
+        // Use cwd
+        int i = 0;
+        while (cwd[i] && fp < MAX_PATH - 1) fullpath[fp++] = cwd[i++];
+    } else if (path[0] == '/') {
+        while (path[fp] && fp < MAX_PATH - 1) { fullpath[fp] = path[fp]; fp++; }
+    } else {
+        int i = 0;
+        while (cwd[i] && fp < MAX_PATH - 1) fullpath[fp++] = cwd[i++];
+        if (fp > 0 && fullpath[fp-1] != '/') fullpath[fp++] = '/';
+        i = 0;
+        while (path[i] && fp < MAX_PATH - 1) fullpath[fp++] = path[i++];
+    }
+    fullpath[fp] = '\0';
+
+    // Use fl_opendir/fl_readdir for directory listing with dual output
+    FL_DIR dirstat;
+    fl_dirent dirent;
+
+    if (!fl_opendir(fullpath, &dirstat)) {
+        con_set_fg(GPU_BRIGHT_RED);
+        con_puts("ls: cannot open ");
+        con_puts(fullpath);
+        con_putc('\n');
+        return 0;
+    }
+
+    int files = 0, dirs = 0;
+    uint32_t total_size = 0;
+
+    while (fl_readdir(&dirstat, &dirent) == 0) {
+        if (dirent.is_dir) {
+            con_set_fg(GPU_BRIGHT_CYAN);
+            con_puts(dirent.filename);
+            con_puts("/\n");
+            dirs++;
+        } else {
+            con_set_fg(GPU_WHITE);
+            con_puts(dirent.filename);
+            // Pad to column 20
+            int len = 0;
+            const char *p = dirent.filename;
+            while (*p++) len++;
+            while (len < 20) { con_putc(' '); len++; }
+            con_set_fg(GPU_LIGHT_GRAY);
+            con_dec(dirent.size);
+            con_putc('\n');
+            files++;
+            total_size += dirent.size;
+        }
+    }
+
+    fl_closedir(&dirstat);
+
     con_set_fg(GPU_LIGHT_GRAY);
-    fl_listdirectory(real_path);
+    con_dec(files);
+    con_puts(" file(s), ");
+    con_dec(dirs);
+    con_puts(" dir(s), ");
+    con_dec(total_size);
+    con_puts(" bytes\n");
+
     return 1;
 }
 
