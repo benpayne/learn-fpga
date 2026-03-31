@@ -42,8 +42,8 @@ static void test_result(const char *name, int pass) {
 int main(void) {
     gpu_clear();
     gpu_set_fg(GPU_BRIGHT_CYAN); gpu_set_bg(GPU_BLACK);
-    out_puts("SDRAM Test - EM638325 (4MB via 16-bit)\n");
-    out_puts("======================================\n\n");
+    out_puts("SDRAM Test - EM638325 (8MB, 32-bit)\n");
+    out_puts("====================================\n\n");
 
     volatile uint32_t *sdram = (volatile uint32_t *)SDRAM_BASE;
 
@@ -81,15 +81,19 @@ int main(void) {
     }
     test_result("Walking ones (data bus)", ok);
 
-    // Test 6: Address uniqueness (all power-of-2 offsets)
-    for (int bit = 0; bit < 20; bit++) sdram[1U << bit] = 0xAA000000 | (1U << bit);
+    // Test 6: Address uniqueness (all power-of-2 offsets up to 8MB)
+    for (int bit = 0; bit < 21; bit++) sdram[1U << bit] = 0xAA000000 | (1U << bit);
     sdram[0] = 0xBB000000;
     ok = 1;
-    for (int bit = 0; bit < 20; bit++) {
+    for (int bit = 0; bit < 21; bit++) {
         uint32_t exp = 0xAA000000 | (1U << bit);
-        if (sdram[1U << bit] != exp) { ok = 0; break; }
+        if (sdram[1U << bit] != exp) {
+            ok = 0;
+            out_puts("    bit "); out_dec(bit); out_puts(" aliased\n");
+            break;
+        }
     }
-    test_result("Address uniqueness (20 bits)", ok);
+    test_result("Address uniqueness (21 bits = 8MB)", ok);
 
     // Test 7: Large block write/verify (64KB)
     out_puts("  Writing 64KB...");

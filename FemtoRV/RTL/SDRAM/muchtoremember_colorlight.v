@@ -1,33 +1,33 @@
 
-// SDRAM interface to AS4C32M16SB-7TCN
-// 512 Mbit Single-Data-Rate SDRAM, 32Mx16 (8M x 16 x 4 Banks)
-
-// Matthias Koch, January 2022
-
-// With a lot of inspiration from Mike Field, Hamsterworks:
-
-// https://web.archive.org/web/20190215130043/http://hamsterworks.co.nz/mediawiki/index.php/Simple_SDRAM_Controller
-// https://web.archive.org/web/20190215130043/http://hamsterworks.co.nz/mediawiki/index.php/File:Verilog_Memory_controller_v0.1.zip
-
-// Note: You may need to change all values marked with *** when changing clock frequency. This is for 40 MHz.
+// SDRAM interface for EM638325-6H on Colorlight i5
+// 2Mx32 (64Mbit), 32-bit data bus, single access (no burst)
+//
+// Based on muchtoremember by Matthias Koch (January 2022)
+// Modified for 32-bit data bus and EM638325 geometry:
+//   4 banks × 2048 rows × 256 columns × 32 bits = 8MB
+//
+// Address mapping (from FemtoRV):
+//   addr[1:0]   = byte within word (handled by wmask)
+//   addr[8:2]   = 7-bit column command (A0-A6, giving 128 positions)
+//                  With burst=1, full 256 columns need 8 command bits,
+//                  but controller LSB is addr[2] so column = addr[9:2] = 8 bits
+//   addr[20:9]  = 12-bit row (only 11 used: A0-A10)
+//   addr[22:21] = 2-bit bank (BA0-BA1)
 
 module muchtoremember (
 
-  // Interface to SDRAM chip, fully registered
-
-  output             sd_clk,        // Clock for SDRAM chip
-  output reg         sd_cke,        // Clock enabled
-  inout      [15:0]  sd_d,          // Bidirectional data lines to/from SDRAM
-  output reg [12:0]  sd_addr,       // Address bus, multiplexed, 13 bits
-  output reg  [1:0]  sd_ba,         // Bank select wires for 4 banks
-  output reg  [1:0]  sd_dqm,        // Byte mask
-  output reg         sd_cs,         // Chip select
-  output reg         sd_we,         // Write enable
-  output reg         sd_ras,        // Row address select
-  output reg         sd_cas,        // Columns address select
+  // Interface to SDRAM chip
+  output             sd_clk,
+  inout      [31:0]  sd_d,          // 32-bit bidirectional data
+  output reg [12:0]  sd_addr,       // Address bus (only A0-A10 connected)
+  output reg  [1:0]  sd_ba,         // Bank select
+  output reg  [3:0]  sd_dqm,        // Byte mask (4 bytes for 32-bit)
+  output reg         sd_cs,
+  output reg         sd_we,
+  output reg         sd_ras,
+  output reg         sd_cas,
 
   // Interface to processor
-
   input  clk,
   input  resetn,
   input  [3:0] wmask,
@@ -38,65 +38,49 @@ module muchtoremember (
   output reg busy
 );
 
-  parameter sdram_startup_cycles = 10100; // *** -- 100us, plus a little more, @ 100MHz
-  parameter sdram_refresh_cycles = 195;  // *** The refresh operation must be performed 8192 times within 64ms. --> One refresh every 7.8125 us.
-                                        // With a minimum clock of 25 MHz, this results in one refresh every 7.8125e-6 * 25e6 = 195 cycles.
+  parameter sdram_startup_cycles = 10100;
+  parameter sdram_refresh_cycles = 195;
 
-  // ----------------------------------------------------------
-  // -- Connections and buffer primitives
-  // ----------------------------------------------------------
+  assign sd_clk = ~clk;
 
-  assign sd_clk = ~clk;   // Supply memory chip with a clock.
-
-  wire [15:0] sd_data_in;     // Bidirectional data from SDRAM
-  reg  [15:0] sd_data_out;    // Bidirectional data to   SDRAM
-  reg         sd_data_drive;  // High: FPGA controls wires Low: SDRAM controls wires
-
+  wire [31:0] sd_data_in;
+  reg  [31:0] sd_data_out;
+  reg         sd_data_drive;
 
   `ifdef __ICARUS__
 
-  reg [15:0] sd_data_in_buffered;
-  assign sd_d = sd_data_drive ? sd_data_out : 16'bz;
+  reg [31:0] sd_data_in_buffered;
+  assign sd_d = sd_data_drive ? sd_data_out : 32'bz;
   always @(posedge clk) sd_data_in_buffered <= sd_d;
   assign sd_data_in = sd_data_in_buffered;
 
   `else
 
-  wire [15:0] sd_data_in_unbuffered;  // To connect primitives internally
+  wire [31:0] sd_data_in_unbuffered;
 
   TRELLIS_IO #(.DIR("BIDIR"))
-  sdio_tristate[15:0] (
+  sdio_tristate[31:0] (
     .B(sd_d),
     .I(sd_data_out),
     .O(sd_data_in_unbuffered),
     .T(!sd_data_drive)
   );
 
-  // Registering the input is important for stability and delays data arrival by one clock cycle.
-  IFS1P3BX dbi_ff[15:0] (.D(sd_data_in_unbuffered), .Q(sd_data_in), .SCLK(clk),  .PD({16{sd_data_drive}}));
+  IFS1P3BX dbi_ff[31:0] (.D(sd_data_in_unbuffered), .Q(sd_data_in), .SCLK(clk), .PD({32{sd_data_drive}}));
 
   `endif
-  // ----------------------------------------------------------
-  // -- Configuration to initialise the SDRAM chip
-  // ----------------------------------------------------------
 
-  // Taken from https://github.com/rxrbln/picorv32/blob/master/picosoc/sdram.v
-
-  localparam NO_WRITE_BURST = 1'b0;   // 0=write burst enabled, 1=only single access write
-  localparam OP_MODE        = 2'b00;  // only 00 (standard operation) allowed
-  localparam CAS_LATENCY    = 3'd2;   // 2 or 3 cycles allowed
-  localparam ACCESS_TYPE    = 1'b0;   // 0=sequential, 1=interleaved
-  localparam BURST_LENGTH   = 3'b001; // 000=1, 001=2, 010=4, 011=8
+  // Configuration: burst length 1 (single 32-bit access)
+  localparam NO_WRITE_BURST = 1'b0;
+  localparam OP_MODE        = 2'b00;
+  localparam CAS_LATENCY    = 3'd2;
+  localparam ACCESS_TYPE    = 1'b0;
+  localparam BURST_LENGTH   = 3'b000; // 000=1 (single access)
 
   localparam MODE = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_LENGTH};
 
-  // ----------------------------------------------------------
-  // -- All possible commands for the SDRAM chip
-  // ----------------------------------------------------------
-
   //                           CS, RAS, CAS, WE
   localparam CMD_INHIBIT         = 4'b1111;
-
   localparam CMD_NOP             = 4'b0111;
   localparam CMD_BURST_TERMINATE = 4'b0110;
   localparam CMD_READ            = 4'b0101;
@@ -106,34 +90,25 @@ module muchtoremember (
   localparam CMD_AUTO_REFRESH    = 4'b0001;
   localparam CMD_LOAD_MODE       = 4'b0000;
 
-  // ----------------------------------------------------------
-  // -- States of the SDRAM controller
-  // ----------------------------------------------------------
+  // States
+  localparam s_init_bit      = 0;  localparam s_init      = 1 << s_init_bit;
+  localparam s_idle_bit      = 1;  localparam s_idle      = 1 << s_idle_bit;
+  localparam s_activate_bit  = 2;  localparam s_activate  = 1 << s_activate_bit;
+  localparam s_read_1_bit    = 3;  localparam s_read_1    = 1 << s_read_1_bit;
+  localparam s_read_2_bit    = 4;  localparam s_read_2    = 1 << s_read_2_bit;
+  localparam s_read_3_bit    = 5;  localparam s_read_3    = 1 << s_read_3_bit;
+  localparam s_read_4_bit    = 6;  localparam s_read_4    = 1 << s_read_4_bit;
+  localparam s_write_1_bit   = 7;  localparam s_write_1   = 1 << s_write_1_bit;
 
-  localparam s_init_bit      = 0;  localparam s_init      = 1 << s_init_bit      ;
-  localparam s_idle_bit      = 1;  localparam s_idle      = 1 << s_idle_bit      ;
-  localparam s_activate_bit  = 2;  localparam s_activate  = 1 << s_activate_bit  ;
-  localparam s_read_1_bit    = 3;  localparam s_read_1    = 1 << s_read_1_bit    ;
-  localparam s_read_2_bit    = 4;  localparam s_read_2    = 1 << s_read_2_bit    ;
-  localparam s_read_3_bit    = 5;  localparam s_read_3    = 1 << s_read_3_bit    ;
-  localparam s_read_4_bit    = 6;  localparam s_read_4    = 1 << s_read_4_bit    ;
-  localparam s_read_5_bit    = 7;  localparam s_read_5    = 1 << s_read_5_bit    ;
-  localparam s_write_1_bit   = 8;  localparam s_write_1   = 1 << s_write_1_bit   ;
-  localparam s_write_2_bit   = 9;  localparam s_write_2   = 1 << s_write_2_bit   ;
-
-  localparam s_idle_in_6_bit = 10; localparam s_idle_in_6 = 1 << s_idle_in_6_bit ;
-  localparam s_idle_in_5_bit = 11; localparam s_idle_in_5 = 1 << s_idle_in_5_bit ;
-  localparam s_idle_in_4_bit = 12; localparam s_idle_in_4 = 1 << s_idle_in_4_bit ;
-  localparam s_idle_in_3_bit = 13; localparam s_idle_in_3 = 1 << s_idle_in_3_bit ;
-  localparam s_idle_in_2_bit = 14; localparam s_idle_in_2 = 1 << s_idle_in_2_bit ;
-  localparam s_idle_in_1_bit = 15; localparam s_idle_in_1 = 1 << s_idle_in_1_bit ;
+  localparam s_idle_in_6_bit = 8;  localparam s_idle_in_6 = 1 << s_idle_in_6_bit;
+  localparam s_idle_in_5_bit = 9;  localparam s_idle_in_5 = 1 << s_idle_in_5_bit;
+  localparam s_idle_in_4_bit = 10; localparam s_idle_in_4 = 1 << s_idle_in_4_bit;
+  localparam s_idle_in_3_bit = 11; localparam s_idle_in_3 = 1 << s_idle_in_3_bit;
+  localparam s_idle_in_2_bit = 12; localparam s_idle_in_2 = 1 << s_idle_in_2_bit;
+  localparam s_idle_in_1_bit = 13; localparam s_idle_in_1 = 1 << s_idle_in_1_bit;
 
   (* onehot *)
-  reg [15:0] state = s_init;
-
-  // ----------------------------------------------------------
-  // -- Access control wires
-  // ----------------------------------------------------------
+  reg [13:0] state = s_init;
 
   reg [14:0] reset_counter = sdram_startup_cycles;
   reg  [7:0] refresh_counter = 0;
@@ -141,141 +116,80 @@ module muchtoremember (
   reg           rd_sticky  = 0;
   reg  [3:0] wmask_sticky  = 4'b0000;
 
-  wire stillatwork = ~(state[s_read_5_bit] | state[s_write_2_bit]);
+  // Busy clears when read or write completes
+  wire stillatwork = ~(state[s_read_4_bit] | state[s_write_1_bit]);
   wire [8:0] refresh_counterN = refresh_counter - 1;
-
-  // ----------------------------------------------------------
-  // -- The memory controller
-  // ----------------------------------------------------------
 
   always @(posedge clk)
     if(!resetn) begin
       state         <= s_init;
-      reset_counter <= sdram_startup_cycles; // Counts backwards to zero
-      busy          <= 0;  // Technically, we are busy with initialisation, but there are no ongoing read or write requests
+      reset_counter <= sdram_startup_cycles;
+      busy          <= 0;
       rd_sticky     <= 0;
       wmask_sticky  <= 4'b0000;
-      sd_cke        <= 0;
     end else begin
 
-      // FemtoRV32 pulses read and write lines high for exactly one clock cycle.
-      // Address and data lines keep stable until busy is released.
-      // Therefore: Take note of the requested read or write, and assert busy flag immediately.
+      busy      <= ((|wmask) | rd) | (busy         &    stillatwork   );
+      rd_sticky <=             rd  | (rd_sticky    &    stillatwork   );
+      wmask_sticky <=    wmask     | (wmask_sticky & {4{stillatwork}} );
 
-         busy      <= ((|wmask) | rd) | (busy         &    stillatwork   );
-         rd_sticky <=             rd  | (rd_sticky    &    stillatwork   );
-      wmask_sticky <=    wmask        | (wmask_sticky & {4{stillatwork}} );
-
-      // Schedule refreshes regularly
       refresh_counter <= refresh_counterN[8] ? sdram_refresh_cycles : refresh_counterN[7:0];
       refresh_pending <= (refresh_pending & ~state[s_idle_bit]) | refresh_counterN[8];
 
       (* parallel_case *)
       case(1'b1)
 
-        // Processor can already request the first read or write here, but has to wait then:
-
         state[s_init_bit]: begin
+          sd_ba  <= 2'b00;
+          sd_dqm <= 4'b1111;
+          sd_data_drive <= 0;
 
-          //------------------------------------------------------------------------
-          //-- This is the initial startup state, where we wait for at least 100us
-          //-- before starting the start sequence
-          //--
-          //-- The initialisation is sequence is
-          //--  * de-assert SDRAM_CKE
-          //--  * 100us wait,
-          //--  * assert SDRAM_CKE
-          //--  * wait at least one cycle,
-          //--  * PRECHARGE
-          //--  * wait 2 cycles
-          //--  * REFRESH,
-          //--  * tREF wait
-          //--  * REFRESH,
-          //--  * tREF wait
-          //--  * LOAD_MODE_REG
-          //--  * 2 cycles wait
-          //------------------------------------------------------------------------
-
-          sd_ba  <= 2'b00;    // Reserved for future use in mode configuration
-          sd_dqm <= 2'b11;    // Data bus in High-Z state
-          sd_data_drive <= 0; // Do not drive the data bus now
-
-          case (reset_counter) // Counts from a large value down to zero
-
-            33: begin sd_cke <= 1; end
-
-            // Ensure all rows are closed
+          case (reset_counter)
+            33: begin sd_cs <= 0; end
             31: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_PRECHARGE; sd_addr <= 13'b0010000000000; end
-
-            // These refreshes need to be at least tRFC (63ns) apart
             23: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_AUTO_REFRESH; end
             15: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_AUTO_REFRESH; end
-
-            // Now load the mode register
             7:  begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_LOAD_MODE; sd_addr <= MODE; end
-
-            default:  {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
+            default: {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           endcase
 
           reset_counter <= reset_counter - 1;
           if (reset_counter == 0) state <= s_idle;
         end
 
-        // New read or write requests from the processor may arrive in these states:
-
-        //-----------------------------------------------------
-        //-- Additional NOPs to meet timing requirements
-        //-----------------------------------------------------
-
-        state[s_idle_in_6_bit]: begin state <= s_idle_in_5;  {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_5_bit]: begin state <= s_idle_in_4;  {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_4_bit]: begin state <= s_idle_in_3;  {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_3_bit]: begin state <= s_idle_in_2;  {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_2_bit]: begin state <= s_idle_in_1;  {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_1_bit]: begin state <= s_idle;       {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-
-        // Refresh cycle needs tRFC (63ns), so 6 idle cycles are needed @ 100MHz
-
-        //-----------------------------------------------------
-        //-- Dispatch all possible actions while idling (NOP)
-        //-----------------------------------------------------
+        state[s_idle_in_6_bit]: begin state <= s_idle_in_5; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_5_bit]: begin state <= s_idle_in_4; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_4_bit]: begin state <= s_idle_in_3; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_3_bit]: begin state <= s_idle_in_2; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_2_bit]: begin state <= s_idle_in_1; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_1_bit]: begin state <= s_idle;      {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
 
         state[s_idle_bit]: begin
-          sd_ba                          <= addr[23:22];                 // Bank select, 2 bits
-          sd_addr                        <= {addr[25:24], addr[21:11]} ; // RA0-RA12: 8192 Row address
+          // Row activate: bank and row address
+          sd_ba                          <= addr[22:21];                  // Bank select
+          sd_addr                        <= {2'b00, addr[20:10]} ;       // Row address (11 bits, A0-A10)
 
           {sd_cs, sd_ras, sd_cas, sd_we} <= refresh_pending             ? CMD_AUTO_REFRESH :
                                             (|wmask_sticky) | rd_sticky ? CMD_ACTIVE :
                                                                           CMD_NOP;
 
-          state                          <= refresh_pending             ? s_idle_in_2 : // *** Experimental result: Direct transition to s_idle does not work @ 40 MHz, s_idle_in_1 is unstable, sd_idle_in_2 is fine.
+          state                          <= refresh_pending             ? s_idle_in_2 :
                                             (|wmask_sticky) | rd_sticky ? s_activate :
                                                                           s_idle;
         end
 
-        // Busy flag is set while state machine is in the following states:
-
-        //-----------------------------------------------------
-        //-- Opening the row ready for reads or writes
-        //-----------------------------------------------------
-
         state[s_activate_bit]: begin
-          sd_data_drive                  <= ~rd_sticky;  // Drive or release bus early, before the SDRAM chip takes over to drive these lines
+          sd_data_drive                  <= ~rd_sticky;
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           state                          <= rd_sticky ? s_read_1 : s_write_1;
         end
 
-        // RAS-to-CAS delay, also necessary for precharge, used in this state machine: 2 cycles.
-        // Specification of AS4C32M16SB-7TCN: 21 ns --> Good for 1/(21e-9 / 2) = 95.23 MHz
-
-        //-----------------------------------------------------
-        //-- Processing the read transaction
-        //-----------------------------------------------------
+        // ---- Read: single 32-bit access ----
 
         state[s_read_1_bit]: begin
-          sd_dqm                         <= 2'b00; // SDRAM chip shall drive the bus lines
+          sd_dqm                         <= 4'b0000; // All bytes active
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_READ;
-          sd_addr                        <= {3'b001, addr[10:2], 1'b0}; // Bit 10: Auto-precharge. CA0-CA9: 1024 Column address.
+          sd_addr                        <= {3'b001, 2'b00, addr[9:2]}; // A10=auto-precharge, A7:A0=column
           state                          <= s_read_2;
         end
 
@@ -286,43 +200,22 @@ module muchtoremember (
 
         state[s_read_3_bit]: state       <= s_read_4;
 
-
+        // Busy clears here:
         state[s_read_4_bit]: begin
-          dout[15:0]                     <= sd_data_in;
-          state                          <= s_read_5;
+          dout                           <= sd_data_in; // All 32 bits at once
+          state                          <= s_idle;
         end
 
-        // Busy is cleared when reaching this state, fulfilling the request:
+        // ---- Write: single 32-bit access ----
 
-        state[s_read_5_bit]: begin
-          dout[31:16]                    <= sd_data_in;
-          state                          <= s_idle;  // *** Experimental result: Direct transition to s_idle is fine @ 40 MHz
-        end
-
-        // Precharge (which is automatic here) needs 21 ns, therefore 2 idle cycles need to be inserted
-
-        //-----------------------------------------------------
-        // -- Processing the write transaction
-        //-----------------------------------------------------
-
+        // Busy clears here:
         state[s_write_1_bit]: begin
-          sd_addr                        <= {3'b001, addr[10:2], 1'b0}; // Bit 10: Auto-precharge. CA0-CA9: 1024 Column address.
-          sd_data_out                    <= din[15:0];
-          sd_dqm                         <= ~wmask_sticky[1:0];
+          sd_addr                        <= {3'b001, 2'b00, addr[9:2]}; // A10=auto-precharge, A7:A0=column
+          sd_data_out                    <= din;
+          sd_dqm                         <= ~wmask_sticky;  // 4-bit byte mask
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_WRITE;
-          state                          <= s_write_2;
+          state                          <= s_idle_in_2;
         end
-
-        // Busy is cleared when reaching this state, fulfilling the request:
-
-        state[s_write_2_bit]: begin
-          sd_data_out                    <= din[31:16];
-          sd_dqm                         <= ~wmask_sticky[3:2];
-          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
-          state                          <= s_idle_in_2; // *** Experimental result: s_idle_in_1 does not work @ 40 MHz, s_idle_in_2 is fine.
-        end
-
-        // Write needs 14 ns internally, then Precharge needs 21 ns, therefore 3 idle cycles need to be inserted
 
       endcase
    end

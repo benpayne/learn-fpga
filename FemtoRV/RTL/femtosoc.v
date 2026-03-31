@@ -132,7 +132,7 @@ module femtosoc(
 `endif
 `ifdef NRV_IO_SDRAM
    output        sd_clk,
-   inout  [15:0] sd_d,
+   inout  [31:0] sd_d,
    output [10:0] sd_addr,
    output  [1:0] sd_ba,
    output        sd_we,
@@ -400,25 +400,18 @@ module femtosoc(
    wire [31:0] sdram_rdata;
    wire        sdram_busy;
 
-   // The controller uses 13-bit sd_addr internally but we only route 11 to pins.
-   // Internal sd_addr[12:11] are driven but not connected to anything (fine —
-   // the SDRAM chip ignores address lines it doesn't have).
+   // 32-bit SDRAM controller for EM638325
+   // Internal sd_addr[12:11] driven but only [10:0] connected to pins.
    wire [12:0] sd_addr_full;
-   assign sd_addr = sd_addr_full[10:0];  // Only route 11 lines to pins
-
-   // CKE, CS, DQM are hardwired on the Colorlight i5 PCB.
-   // The controller drives them but we don't connect them to pins.
-   wire        sd_cke_unused;
    wire        sd_cs_unused;
-   wire [1:0]  sd_dqm_unused;
+   wire [3:0]  sd_dqm_unused;
+   assign sd_addr = sd_addr_full[10:0];
 
    muchtoremember sdram_ctrl (
       .clk(clk),
       .resetn(reset),
 
-      // SDRAM chip interface
       .sd_clk(sd_clk),
-      .sd_cke(sd_cke_unused),
       .sd_d(sd_d),
       .sd_addr(sd_addr_full),
       .sd_ba(sd_ba),
@@ -429,14 +422,11 @@ module femtosoc(
       .sd_cas(sd_cas),
 
       // Processor interface
+      // Address: strip bit 23 (SDRAM select), pass [22:0] directly.
+      // Controller maps: addr[9:2]=col(8bit), addr[20:10]=row(11bit), addr[22:21]=bank(2bit)
       .wmask(mem_address_is_sdram ? mem_wmask : 4'b0),
       .rd(mem_address_is_sdram & mem_rstrb),
-      // Remap for EM638325: 8-bit column (burst=2: 7-bit in cmd), 11-bit row, 2-bit bank
-      // Controller uses: addr[10:2]=col(9), addr[21:11]=row(11), addr[23:22]=bank(2)
-      // Chip has 7 usable column cmd bits (CA0-CA6) + burst=2 = 256 columns
-      // Pack: CPU[8:2]->ctrl[8:2] (col 7bit), CPU[19:9]->ctrl[21:11] (row 11bit),
-      //       CPU[21:20]->ctrl[23:22] (bank 2bit), ctrl[10:9]=0 (unused col bits)
-      .addr({3'b000, mem_address[21:20], mem_address[19:9], 2'b00, mem_address[8:2], 2'b00}),
+      .addr({3'b000, mem_address[22:0]}),
       .din(mem_wdata),
       .dout(sdram_rdata),
       .busy(sdram_busy)
