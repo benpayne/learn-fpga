@@ -100,6 +100,7 @@ static void cmd_help(void) {
     con_puts("  ver           Version info\n");
     con_puts("  help          This help\n");
     con_puts("  reboot        Reboot to BIOS\n");
+    con_puts("  load <file>   Receive file via XMODEM to SD\n");
     con_set_fg(GPU_LIGHT_GRAY);
     con_puts("  <program>     Run .bin from SD card\n");
 }
@@ -216,6 +217,171 @@ static void cmd_hexdump(const char *args) {
     }
 }
 
+static void cmd_load(const char *args) {
+    args = skip_spaces(args);
+    if (!*args) {
+        con_puts("usage: load <filename>\n");
+        con_puts("  Receives file via XMODEM and saves to SD card\n");
+        return;
+    }
+
+    // Build full path
+    char fullpath[MAX_PATH];
+    int fp = 0;
+    if (args[0] == '/') {
+        while (args[fp] && fp < MAX_PATH - 1) { fullpath[fp] = args[fp]; fp++; }
+    } else {
+        const char *c = fs_getcwd();
+        while (*c && fp < MAX_PATH - 1) fullpath[fp++] = *c++;
+        if (fp > 0 && fullpath[fp-1] != '/') fullpath[fp++] = '/';
+        int i = 0;
+        while (args[i] && args[i] != ' ' && fp < MAX_PATH - 1) fullpath[fp++] = args[i++];
+    }
+    fullpath[fp] = '\0';
+
+    // Receive via XMODEM into a buffer in high SDRAM
+    uint8_t *buf = (uint8_t *)0xA00000;  // Temp buffer at 10MB mark
+    uint32_t max_size = 0x500000;         // 5MB max
+
+    con_set_fg(GPU_YELLOW);
+    con_puts("XMODEM ready. Send file from host...\n");
+
+    // Disable interrupts during XMODEM (PS2 ISR steals cycles)
+    asm volatile ("csrci mstatus, 0x8");
+
+    // XMODEM receive (simplified inline — reuse monitor's protocol)
+    #define XMODEM_SOH 0x01
+    #define XMODEM_EOT 0x04
+    #define XMODEM_ACK 0x06
+    #define XMODEM_NAK 0x15
+    #define XMODEM_CAN 0x18
+
+    // Send initial NAK
+    IO_OUT(IO_UART_DAT, XMODEM_NAK);
+    while (IO_IN(IO_UART_CNTL) & 0x200);
+
+    uint8_t expected_pkt = 1;
+    uint32_t total = 0;
+    int retries = 0;
+    int done = 0;
+
+    while (!done) {
+        // Wait for SOH or EOT
+        int timeout = 5000000;
+        int c = -1;
+        while (timeout-- > 0) {
+            uint32_t u = IO_IN(IO_UART_DAT);
+            if (u & 0x100) { c = u & 0xFF; break; }
+        }
+
+        if (c < 0) {
+            retries++;
+            if (retries > 30) { con_puts("Timeout!\n"); break; }
+            IO_OUT(IO_UART_DAT, XMODEM_NAK);
+            while (IO_IN(IO_UART_CNTL) & 0x200);
+            continue;
+        }
+
+        if (c == XMODEM_EOT) {
+            IO_OUT(IO_UART_DAT, XMODEM_ACK);
+            while (IO_IN(IO_UART_CNTL) & 0x200);
+            done = 1;
+            break;
+        }
+
+        if (c != XMODEM_SOH) {
+            IO_OUT(IO_UART_DAT, XMODEM_NAK);
+            while (IO_IN(IO_UART_CNTL) & 0x200);
+            continue;
+        }
+
+        // Read packet
+        int pkt = -1, cpl = -1;
+        uint8_t data[128];
+        uint8_t cs = 0;
+        int ok = 1;
+
+        // Pkt num
+        timeout = 500000;
+        while (timeout-- > 0) { uint32_t u = IO_IN(IO_UART_DAT); if (u & 0x100) { pkt = u & 0xFF; break; } }
+        if (pkt < 0) { IO_OUT(IO_UART_DAT, XMODEM_NAK); while (IO_IN(IO_UART_CNTL) & 0x200); continue; }
+
+        // Complement
+        timeout = 500000;
+        while (timeout-- > 0) { uint32_t u = IO_IN(IO_UART_DAT); if (u & 0x100) { cpl = u & 0xFF; break; } }
+        if (cpl < 0 || (pkt + cpl) != 0xFF) { IO_OUT(IO_UART_DAT, XMODEM_NAK); while (IO_IN(IO_UART_CNTL) & 0x200); continue; }
+
+        // 128 data bytes
+        for (int i = 0; i < 128; i++) {
+            timeout = 500000;
+            int b = -1;
+            while (timeout-- > 0) { uint32_t u = IO_IN(IO_UART_DAT); if (u & 0x100) { b = u & 0xFF; break; } }
+            if (b < 0) { ok = 0; break; }
+            data[i] = b;
+            cs += b;
+        }
+        if (!ok) { IO_OUT(IO_UART_DAT, XMODEM_NAK); while (IO_IN(IO_UART_CNTL) & 0x200); continue; }
+
+        // Checksum
+        int rcs = -1;
+        timeout = 500000;
+        while (timeout-- > 0) { uint32_t u = IO_IN(IO_UART_DAT); if (u & 0x100) { rcs = u & 0xFF; break; } }
+        if (rcs < 0 || (cs & 0xFF) != (rcs & 0xFF)) { IO_OUT(IO_UART_DAT, XMODEM_NAK); while (IO_IN(IO_UART_CNTL) & 0x200); continue; }
+
+        if (pkt == expected_pkt && total + 128 <= max_size) {
+            // Copy data to buffer (word writes for SDRAM)
+            volatile uint32_t *dst = (volatile uint32_t *)(buf + total);
+            for (int i = 0; i < 128; i += 4) {
+                dst[i/4] = (uint32_t)data[i] | ((uint32_t)data[i+1]<<8) |
+                           ((uint32_t)data[i+2]<<16) | ((uint32_t)data[i+3]<<24);
+            }
+            total += 128;
+            expected_pkt = (expected_pkt + 1) & 0xFF;
+            retries = 0;
+        }
+
+        IO_OUT(IO_UART_DAT, XMODEM_ACK);
+        while (IO_IN(IO_UART_CNTL) & 0x200);
+    }
+
+    // Re-enable interrupts
+    asm volatile ("csrsi mstatus, 0x8");
+
+    if (!done || total == 0) {
+        con_set_fg(GPU_BRIGHT_RED);
+        con_puts("Transfer failed\n");
+        return;
+    }
+
+    con_set_fg(GPU_BRIGHT_GREEN);
+    con_puts("Received ");
+    con_dec(total);
+    con_puts(" bytes\n");
+
+    // Write to SD card
+    con_puts("Saving to ");
+    con_puts(fullpath);
+    con_puts("...\n");
+
+    // Use FAT library to write file
+    extern void *fl_fopen(const char *path, const char *mode);
+    extern int fl_fwrite(const void *buffer, int size, int count, void *file);
+    extern void fl_fclose(void *file);
+
+    void *f = fl_fopen(fullpath, "w");
+    if (!f) {
+        con_set_fg(GPU_BRIGHT_RED);
+        con_puts("Error: cannot create file\n");
+        return;
+    }
+
+    fl_fwrite(buf, 1, total, f);
+    fl_fclose(f);
+
+    con_set_fg(GPU_BRIGHT_GREEN);
+    con_puts("Saved OK\n");
+}
+
 static void cmd_clear(void) {
     con_clear();
 }
@@ -264,6 +430,8 @@ void shell_loop(void) {
             cmd_hexdump(args);
         } else if (cmd_len == 3 && str_starts(cmd, "mem")) {
             cmd_mem();
+        } else if (cmd_len == 4 && str_starts(cmd, "load")) {
+            cmd_load(args);
         } else if (cmd_len == 5 && str_starts(cmd, "clear")) {
             cmd_clear();
         } else if (cmd_len == 3 && str_starts(cmd, "ver")) {
