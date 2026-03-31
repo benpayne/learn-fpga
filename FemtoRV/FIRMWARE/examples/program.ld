@@ -7,7 +7,9 @@ MEMORY
 }
 SECTIONS
 {
+    ENTRY(_progstart)
     .text : {
+        progstart.o (.text.startup)
         *(.text.startup)
         *(.text)
         *(.rodata*)

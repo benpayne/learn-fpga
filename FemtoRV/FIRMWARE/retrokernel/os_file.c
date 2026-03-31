@@ -170,14 +170,8 @@ int fs_load_file(const char *path, void *dest, uint32_t max_size) {
     void *f = fl_fopen(fullpath, "r");
     if (!f) return -1;
 
-    uint8_t *buf = (uint8_t *)dest;
-    int total = 0;
-    int c;
-    while (total < (int)max_size) {
-        c = fl_fgetc(f);
-        if (c < 0) break;  // EOF
-        buf[total++] = (uint8_t)c;
-    }
+    // Read in chunks (fl_fgetc is too slow byte-by-byte)
+    int total = fl_fread(dest, 1, max_size, f);
 
     fl_fclose(f);
     return total;
