@@ -28,7 +28,7 @@
 
 // ----- Constants -----
 
-#define DEFAULT_LOAD_ADDR  0x4000    // Default load address (16KB, above monitor code)
+#define DEFAULT_LOAD_ADDR  0x800000  // Default load address (SDRAM)
 #define INPUT_BUF_SIZE     80
 
 // XMODEM protocol constants
@@ -420,12 +420,12 @@ static void show_banner(void) {
 
     if (mode_80col) {
         mon_puts("===============================================================================\n");
-        mon_puts("  FemtoRV Monitor v1.0 | RV32IMFC @ 25MHz | 64KB RAM | UART 115200 | F5=40/80\n");
+        mon_puts("  FemtoRV Monitor v1.0 | RV32IMFC @ 25MHz | 16KB ROM + 8MB SDRAM | F5=40/80\n");
         mon_puts("===============================================================================\n");
     } else {
         mon_puts("========================================\n");
         mon_puts("  FemtoRV Monitor v1.0\n");
-        mon_puts("  RV32IMFC 25MHz 64KB | F5=40/80\n");
+        mon_puts("  RV32IMFC 25MHz 8MB SDRAM | F5=40/80\n");
         mon_puts("========================================\n");
     }
 
@@ -454,8 +454,8 @@ static void cmd_help(void) {
     mon_puts("  D <addr>     Dump 128 bytes\n");
     mon_puts("  E <addr>     Examine byte\n");
     mon_puts("  S <a> <v>    Store byte\n");
-    mon_puts("  L [addr]     Load via XMODEM (default 4000)\n");
-    mon_puts("  G [addr]     Go/execute (default 4000)\n");
+    mon_puts("  L [addr]     Load via XMODEM (default 800000)\n");
+    mon_puts("  G [addr]     Go/execute (default 800000)\n");
     mon_puts("  C            Clear screen\n");
     mon_puts("  M            Memory info\n");
     gpu_set_fg(GPU_LIGHT_GRAY);
@@ -473,7 +473,7 @@ static void cmd_dump(const char *args) {
     volatile uint8_t *p = (volatile uint8_t *)addr;
     for (int row = 0; row < 8; row++) {
         gpu_set_fg(GPU_CYAN);
-        mon_hex_half((addr + row * 16) & 0xFFFF);
+        mon_hex_word(addr + row * 16);
         mon_puts(": ");
         gpu_set_fg(GPU_LIGHT_GRAY);
 
@@ -501,7 +501,7 @@ static void cmd_examine(const char *args) {
 
     volatile uint8_t *p = (volatile uint8_t *)addr;
     gpu_set_fg(GPU_CYAN);
-    mon_hex_half(addr & 0xFFFF);
+    mon_hex_word(addr);
     mon_puts(": ");
     gpu_set_fg(GPU_WHITE);
     mon_hex_byte(*p);
@@ -558,12 +558,12 @@ static void cmd_meminfo(void) {
     gpu_set_fg(GPU_BRIGHT_CYAN);
     mon_puts("Memory:\n");
     gpu_set_fg(GPU_WHITE);
-    mon_puts("  RAM:   64KB (0x0000-0xFFFF)\n");
-    mon_puts("  Mon:   0x0000-0x3FFF (16KB)\n");
-    mon_puts("  User:  0x4000-0xBFFF (32KB)\n");
-    mon_puts("  Stack: 0xFFFF downward\n");
+    mon_puts("  ROM:   16KB BRAM (0x000000-0x003FFF)\n");
+    mon_puts("  SDRAM: 8MB (0x800000-0xFFFFFF) cached\n");
+    mon_puts("  Stack: 0x003FFF (BRAM top)\n");
     mon_puts("  IO:    0x400000+\n");
     mon_puts("  CPU:   RV32IMFC @ 25MHz\n");
+    mon_puts("  Load:  default 0x800000 (SDRAM)\n");
 
     gpu_set_fg(GPU_LIGHT_GRAY);
     mon_puts("  Mode:  ");
