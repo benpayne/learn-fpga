@@ -28,6 +28,10 @@
 `include "DEVICES/Interrupt_bits.v" // Interrupt controller
 `include "DEVICES/PS2Decoder.v" // PS2 keyboard decoder
 
+`ifdef NRV_IO_SDRAM
+`include "SDRAM/muchtoremember_colorlight.v"
+`endif
+
 `ifdef NRV_IO_SYNTH
 `include "DEVICES/synth/fm_synth_soc.v"
 `include "DEVICES/synth/fm_synth_registers.v"
@@ -125,6 +129,15 @@ module femtosoc(
    output [3:0] gpdi_dp,
 `elsif NRV_IO_GPU
    output [3:0] gpdi_dp,
+`endif
+`ifdef NRV_IO_SDRAM
+   output        sd_clk,
+   inout  [15:0] sd_d,
+   output [10:0] sd_addr,
+   output  [1:0] sd_ba,
+   output        sd_we,
+   output        sd_ras,
+   output        sd_cas,
 `endif
 `ifdef NRV_IO_SYNTH
    output audio_pwm,
@@ -280,8 +293,11 @@ module femtosoc(
 `endif				   
    );
 `else   
-   wire mem_address_is_io  =  mem_address[22];
-   wire mem_address_is_ram = !mem_address[22];
+   wire mem_address_is_io  =  mem_address[22] && !mem_address[23];
+   wire mem_address_is_ram = !mem_address[22] && !mem_address[23];
+`ifdef NRV_IO_SDRAM
+   wire mem_address_is_sdram = mem_address[23];  // 0x800000-0xFFFFFF
+`endif
 `endif
       
    reg  [31:0] io_rdata; 
@@ -294,11 +310,18 @@ module femtosoc(
    
    assign      mem_rbusy = io_rbusy
 `ifdef NRV_MAPPED_SPI_FLASH
-    | mapped_spi_flash_rbusy			   
-`endif 			   
+    | mapped_spi_flash_rbusy
+`endif
+`ifdef NRV_IO_SDRAM
+    | (mem_address_is_sdram & sdram_busy)
+`endif
     ;
-   
-   assign      mem_wbusy = io_wbusy; 
+
+   assign      mem_wbusy = io_wbusy
+`ifdef NRV_IO_SDRAM
+    | (mem_address_is_sdram & sdram_busy)
+`endif
+    ; 
 
 `ifdef NRV_IO_FGA
    wire mem_address_is_vram = mem_address[21];
@@ -371,12 +394,67 @@ module femtosoc(
    );
 `endif   
    
+`ifdef NRV_IO_SDRAM
+   // SDRAM controller (muchtoremember by Matthias Koch)
+   // Directly connected to FemtoRV memory bus when address bit 23 is set
+   wire [31:0] sdram_rdata;
+   wire        sdram_busy;
+
+   // The controller uses 13-bit sd_addr internally but we only route 11 to pins.
+   // Internal sd_addr[12:11] are driven but not connected to anything (fine —
+   // the SDRAM chip ignores address lines it doesn't have).
+   wire [12:0] sd_addr_full;
+   assign sd_addr = sd_addr_full[10:0];  // Only route 11 lines to pins
+
+   // CKE, CS, DQM are hardwired on the Colorlight i5 PCB.
+   // The controller drives them but we don't connect them to pins.
+   wire        sd_cke_unused;
+   wire        sd_cs_unused;
+   wire [1:0]  sd_dqm_unused;
+
+   muchtoremember sdram_ctrl (
+      .clk(clk),
+      .resetn(reset),
+
+      // SDRAM chip interface
+      .sd_clk(sd_clk),
+      .sd_cke(sd_cke_unused),
+      .sd_d(sd_d),
+      .sd_addr(sd_addr_full),
+      .sd_ba(sd_ba),
+      .sd_dqm(sd_dqm_unused),
+      .sd_cs(sd_cs_unused),
+      .sd_we(sd_we),
+      .sd_ras(sd_ras),
+      .sd_cas(sd_cas),
+
+      // Processor interface
+      .wmask(mem_address_is_sdram ? mem_wmask : 4'b0),
+      .rd(mem_address_is_sdram & mem_rstrb),
+      // Remap for EM638325: 8-bit column (burst=2: 7-bit in cmd), 11-bit row, 2-bit bank
+      // Controller uses: addr[10:2]=col(9), addr[21:11]=row(11), addr[23:22]=bank(2)
+      // Chip has 7 usable column cmd bits (CA0-CA6) + burst=2 = 256 columns
+      // Pack: CPU[8:2]->ctrl[8:2] (col 7bit), CPU[19:9]->ctrl[21:11] (row 11bit),
+      //       CPU[21:20]->ctrl[23:22] (bank 2bit), ctrl[10:9]=0 (unused col bits)
+      .addr({3'b000, mem_address[21:20], mem_address[19:9], 2'b00, mem_address[8:2], 2'b00}),
+      .din(mem_wdata),
+      .dout(sdram_rdata),
+      .busy(sdram_busy)
+   );
+`endif
+
 `ifdef NRV_MAPPED_SPI_FLASH
-   assign mem_rdata = mem_address_is_io  ? io_rdata  : 
-		      mem_address_is_ram ? ram_rdata : 
-		      mapped_spi_flash_rdata;   
-`else   
+   assign mem_rdata = mem_address_is_io  ? io_rdata  :
+		      mem_address_is_ram ? ram_rdata :
+		      mapped_spi_flash_rdata;
+`else
+ `ifdef NRV_IO_SDRAM
+   assign mem_rdata = mem_address_is_io    ? io_rdata :
+                      mem_address_is_sdram ? sdram_rdata :
+                      ram_rdata;
+ `else
    assign mem_rdata = mem_address_is_io ? io_rdata : ram_rdata;
+ `endif
 `endif   
    
 /***************************************************************************************************

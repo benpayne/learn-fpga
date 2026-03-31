@@ -17,6 +17,7 @@
 `define NRV_IO_PS2 // PS2 keyboard
 `define NRV_IO_GPU // HDMI display GPU (character + graphics)
 `define NRV_IO_SYNTH // FM synthesis audio
+`define NRV_IO_SDRAM // SDRAM (16MB via muchtoremember controller)
 
 /************************* Frequency ********************************************************************************/
 
