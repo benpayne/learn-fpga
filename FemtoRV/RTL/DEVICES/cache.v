@@ -72,9 +72,32 @@ module sdram_cache (
                     end
                 end else if (|cpu_wmask) begin
                     saved_addr  <= cpu_addr;
-                    sdram_wmask <= cpu_wmask;
-                    sdram_din   <= cpu_din;
-                    valid[addr_idx] <= 0;  // Invalidate
+                    // SDRAM has no byte masking (DQM hardwired).
+                    // For partial writes: merge with cached data, write full word.
+                    if (cpu_wmask == 4'b1111) begin
+                        sdram_din <= cpu_din;
+                    end else if (hit) begin
+                        // Merge partial write with cached word
+                        sdram_din <= {cpu_wmask[3] ? cpu_din[31:24] : data_mem[addr_idx][31:24],
+                                      cpu_wmask[2] ? cpu_din[23:16] : data_mem[addr_idx][23:16],
+                                      cpu_wmask[1] ? cpu_din[15:8]  : data_mem[addr_idx][15:8],
+                                      cpu_wmask[0] ? cpu_din[7:0]   : data_mem[addr_idx][7:0]};
+                    end else begin
+                        // Cache miss + partial write: need read-modify-write
+                        // For now: just write what we have (may corrupt other bytes)
+                        // TODO: implement RMW for cache-miss partial writes
+                        sdram_din <= cpu_din;
+                    end
+                    sdram_wmask <= 4'b1111;  // Always full word to SDRAM
+                    // Update cache
+                    if (hit) begin
+                        data_mem[addr_idx] <= {cpu_wmask[3] ? cpu_din[31:24] : data_mem[addr_idx][31:24],
+                                               cpu_wmask[2] ? cpu_din[23:16] : data_mem[addr_idx][23:16],
+                                               cpu_wmask[1] ? cpu_din[15:8]  : data_mem[addr_idx][15:8],
+                                               cpu_wmask[0] ? cpu_din[7:0]   : data_mem[addr_idx][7:0]};
+                    end else begin
+                        valid[addr_idx] <= 0;
+                    end
                     cpu_busy    <= 1;
                     wait_cnt    <= 4'd2;
                     state       <= 2'd2;

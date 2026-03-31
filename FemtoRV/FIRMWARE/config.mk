@@ -1,0 +1,6 @@
+ARCH=rv32imafc
+OPTIMIZE=-O3
+ABI=ilp32f
+RAM_SIZE=      16384
+DEVICES=
+BOARD=colorlight_i5

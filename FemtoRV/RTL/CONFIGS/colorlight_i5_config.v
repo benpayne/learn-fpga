@@ -34,7 +34,8 @@
 /************************* RAM (in bytes, needs to be a multiple of 4)***********************************************/
 
 //`define NRV_RAM 393216 // bigger config for COLORLIGHT_I5
-`define NRV_RAM 65536 // default for COLORLIGHT_I5
+//`define NRV_RAM 65536 // default for COLORLIGHT_I5
+`define NRV_RAM 16384 // 16KB BRAM boot ROM (main RAM is SDRAM at 0x800000)
 
 /************************* Advanced processor configuration *********************************************************/
 

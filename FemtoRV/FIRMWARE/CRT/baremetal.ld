@@ -1,13 +1,11 @@
 /*
  * linker control script for 'bare metal' executables.
- * Ensures that _start defined in LIB/crt0.S is put at address 0
- * Uses the first 64 kB of BRAM. It can be used for instance by
- * an OS. Standard ELF executables are implanted at address 0x10000,
- * so this ensures they won't collide.
+ * Boot ROM in 16KB BRAM at address 0. Main RAM is SDRAM at 0x800000.
+ * Stack is set in crt0_baremetal.S to top of SDRAM.
  */
 MEMORY
 {
-   BRAM (RWX) : ORIGIN = 0x0000, LENGTH = 0x10000
+   BRAM (RWX) : ORIGIN = 0x0000, LENGTH = 0x4000
 }
 SECTIONS
 {

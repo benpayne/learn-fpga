@@ -14,10 +14,11 @@ _start:
      csrw mstatus, zero
      csrw mie, zero
 
-     li   t0,IO_HW_CONFIG_RAM  # Can't use IO_HW_CONFIG_RAM(gp) (too far away !)
-     add  t0,t0,gp             # Read RAM size in hw config register and
-     lw   sp,0(t0)             # initialize SP at end of RAM
-     li   t0,0                 # reset t0 to 0
+     # Stack at top of BRAM for now (SDRAM byte writes need RMW cache support)
+     li   t0,IO_HW_CONFIG_RAM  # Read RAM size from hardware config
+     add  t0,t0,gp
+     lw   sp,0(t0)             # SP = top of BRAM
+     li   t0,0
 
 # TODO: clear BSS (for this we need a linker script that declares _edata)
 #     la t1,_edata
