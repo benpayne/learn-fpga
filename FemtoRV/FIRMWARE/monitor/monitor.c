@@ -78,19 +78,6 @@ static void gpu_set_mode(int wide) {
     wait_cycles(5000);
 }
 
-// Print string to GPU only
-static void gpu_puts(const char *s) {
-    while (*s) {
-        if (*s == '\n') {
-            gpu_putc('\r');  // CR before LF (see mon_putc comment)
-            gpu_putc('\n');
-        } else {
-            gpu_putc(*s);
-        }
-        s++;
-    }
-}
-
 // Print to both GPU and UART
 // The UART now has a hardware holding register, so back-to-back writes
 // are safe. putchar() calls UART_putchar which does write-then-wait-busy.
@@ -420,15 +407,13 @@ static void show_banner(void) {
 
     if (mode_80col) {
         mon_puts("===============================================================================\n");
-        mon_puts("  FemtoRV Monitor v1.0 | RV32IMFC @ 25MHz | 16KB ROM + 8MB SDRAM | F5=40/80\n");
+        mon_puts("  FemtoRV Monitor v1.0 | RV32IMFC @ 25MHz | 32KB ROM + 8MB SDRAM | F5=40/80\n");
         mon_puts("===============================================================================\n");
     } else {
         mon_puts("========================================\n");
-        mon_puts("  FemtoRV Monitor v1.0\n");
-        mon_puts("  RV32IMFC 25MHz 8MB SDRAM | F5=40/80\n");
+        mon_puts("  FemtoRV Monitor v1.0 | 25MHz 8MB\n");
         mon_puts("========================================\n");
     }
-
     gpu_set_fg(GPU_LIGHT_GRAY);
     mon_puts("Type H for help\n");
 }
@@ -450,16 +435,14 @@ static void cmd_help(void) {
     gpu_set_fg(GPU_BRIGHT_CYAN);
     mon_puts("Commands:\n");
     gpu_set_fg(GPU_WHITE);
-    mon_puts("  H            Help\n");
-    mon_puts("  D <addr>     Dump 128 bytes\n");
-    mon_puts("  E <addr>     Examine byte\n");
-    mon_puts("  S <a> <v>    Store byte\n");
-    mon_puts("  L [addr]     Load via XMODEM (default 800000)\n");
-    mon_puts("  G [addr]     Go/execute (default 800000)\n");
-    mon_puts("  C            Clear screen\n");
-    mon_puts("  M            Memory info\n");
-    gpu_set_fg(GPU_LIGHT_GRAY);
-    mon_puts("  F5           Toggle 40/80 column mode\n");
+    mon_puts("  H          Help\n");
+    mon_puts("  D <addr>   Dump 128 bytes\n");
+    mon_puts("  E <addr>   Examine byte\n");
+    mon_puts("  S <a> <v>  Store byte\n");
+    mon_puts("  L [addr]   Load XMODEM (default 800000)\n");
+    mon_puts("  G [addr]   Go/execute (default 800000)\n");
+    mon_puts("  C          Clear screen\n");
+    mon_puts("  M          Memory info\n");
 }
 
 static void cmd_dump(const char *args) {
@@ -558,17 +541,169 @@ static void cmd_meminfo(void) {
     gpu_set_fg(GPU_BRIGHT_CYAN);
     mon_puts("Memory:\n");
     gpu_set_fg(GPU_WHITE);
-    mon_puts("  ROM:   16KB BRAM (0x000000-0x003FFF)\n");
-    mon_puts("  SDRAM: 8MB (0x800000-0xFFFFFF) cached\n");
-    mon_puts("  Stack: 0xFFFFF0 (SDRAM top)\n");
+    mon_puts("  ROM:   32KB (0x000000-0x007FFF)\n");
+    mon_puts("  SDRAM: 8MB  (0x800000-0xFFFFFF)\n");
     mon_puts("  IO:    0x400000+\n");
-    mon_puts("  CPU:   RV32IMFC @ 25MHz\n");
-    mon_puts("  Load:  default 0x800000 (SDRAM)\n");
+}
 
-    gpu_set_fg(GPU_LIGHT_GRAY);
-    mon_puts("  Mode:  ");
-    mon_puts(mode_80col ? "80" : "40");
-    mon_puts("-col, 25 rows, 16 colors\n");
+// ----- Minimal FAT32 SD Boot -----
+// Tiny FAT32 reader — just enough to find and load one file from root dir.
+// No FAT library dependency (~800 bytes of code).
+
+extern int sd_init(void);
+extern int sd_readsector(uint32_t start_block, uint8_t *buffer, uint32_t sector_count);
+
+#define KERNEL_LOAD_ADDR  0x800000
+
+static uint8_t sector_buf[512];
+
+// Read 32-bit LE from buffer
+static uint32_t rd32(const uint8_t *p) {
+    return p[0] | (p[1]<<8) | (p[2]<<16) | (p[3]<<24);
+}
+static uint16_t rd16(const uint8_t *p) {
+    return p[0] | (p[1]<<8);
+}
+
+// FAT32 boot sector fields
+static uint32_t fat_begin;       // First sector of FAT
+static uint32_t cluster_begin;   // First sector of cluster 2
+static uint32_t root_cluster;    // Root directory cluster
+static uint8_t  sectors_per_cluster;
+
+// Convert cluster number to sector number
+static uint32_t cluster_to_sector(uint32_t cluster) {
+    return cluster_begin + (cluster - 2) * sectors_per_cluster;
+}
+
+// Read next cluster from FAT
+static uint32_t fat_next_cluster(uint32_t cluster) {
+    uint32_t fat_sector = fat_begin + (cluster * 4) / 512;
+    uint32_t fat_offset = (cluster * 4) % 512;
+    if (!sd_readsector(fat_sector, sector_buf, 1)) return 0x0FFFFFFF;
+    return rd32(sector_buf + fat_offset) & 0x0FFFFFFF;
+}
+
+// Compare 8.3 filename (11 chars, space-padded)
+static int name_match(const uint8_t *entry, const char *name83) {
+    for (int i = 0; i < 11; i++)
+        if (entry[i] != name83[i]) return 0;
+    return 1;
+}
+
+static int try_sd_boot(void) {
+    gpu_set_fg(GPU_YELLOW);
+    mon_puts("SD boot...");
+
+    if (sd_init()) {
+        gpu_set_fg(GPU_LIGHT_GRAY);
+        mon_puts("no card\n");
+        return 0;
+    }
+
+    // Read MBR to find partition
+    if (!sd_readsector(0, sector_buf, 1)) { mon_puts("read err\n"); return 0; }
+
+    uint32_t part_start = 0;
+    // Check for MBR (0x55AA signature)
+    if (sector_buf[510] == 0x55 && sector_buf[511] == 0xAA) {
+        // First partition entry at offset 446
+        part_start = rd32(sector_buf + 446 + 8);
+    }
+
+    // Read boot sector (VBR)
+    if (!sd_readsector(part_start, sector_buf, 1)) { mon_puts("VBR err\n"); return 0; }
+
+    // Verify FAT32 signature
+    uint16_t bytes_per_sector = rd16(sector_buf + 11);
+    if (bytes_per_sector != 512) { mon_puts("not 512\n"); return 0; }
+
+    sectors_per_cluster = sector_buf[13];
+    uint16_t reserved_sectors = rd16(sector_buf + 14);
+    uint8_t  num_fats = sector_buf[16];
+    uint32_t fat_size = rd32(sector_buf + 36);
+    root_cluster = rd32(sector_buf + 44);
+
+    fat_begin = part_start + reserved_sectors;
+    cluster_begin = fat_begin + num_fats * fat_size;
+
+    // Search root directory for KERNEL.BIN (8.3 format: "KERNEL  BIN")
+    // 8.3 names are space-padded: 8 chars name + 3 chars extension
+    const char target[] = "KERNEL  BIN";
+
+    uint32_t cluster = root_cluster;
+    uint32_t file_size = 0;
+    uint32_t file_cluster = 0;
+    int found = 0;
+
+    while (cluster < 0x0FFFFFF8 && !found) {
+        uint32_t sec = cluster_to_sector(cluster);
+        for (int s = 0; s < sectors_per_cluster && !found; s++) {
+            if (!sd_readsector(sec + s, sector_buf, 1)) break;
+            for (int e = 0; e < 512; e += 32) {
+                if (sector_buf[e] == 0x00) goto done_search; // End of dir
+                if (sector_buf[e] == 0xE5) continue; // Deleted
+                if (sector_buf[e + 11] & 0x08) continue; // Volume label
+                if (sector_buf[e + 11] & 0x0F == 0x0F) continue; // LFN entry
+                if (name_match(sector_buf + e, target)) {
+                    file_cluster = (rd16(sector_buf + e + 20) << 16) |
+                                    rd16(sector_buf + e + 26);
+                    file_size = rd32(sector_buf + e + 28);
+                    found = 1;
+                }
+            }
+        }
+        cluster = fat_next_cluster(cluster);
+    }
+done_search:
+
+    if (!found || file_size == 0) {
+        gpu_set_fg(GPU_LIGHT_GRAY);
+        mon_puts("no kernel\n");
+        return 0;
+    }
+
+    // Load file to SDRAM
+    volatile uint32_t *dest = (volatile uint32_t *)KERNEL_LOAD_ADDR;
+    uint32_t remaining = file_size;
+    cluster = file_cluster;
+    int total = 0;
+
+    while (cluster < 0x0FFFFFF8 && remaining > 0) {
+        uint32_t sec = cluster_to_sector(cluster);
+        for (int s = 0; s < sectors_per_cluster && remaining > 0; s++) {
+            if (!sd_readsector(sec + s, sector_buf, 1)) {
+                mon_puts("read err\n");
+                return 0;
+            }
+            // Copy as 32-bit words (SDRAM needs word writes)
+            int bytes = remaining > 512 ? 512 : remaining;
+            for (int i = 0; i < bytes; i += 4) {
+                dest[total/4] = sector_buf[i] | (sector_buf[i+1]<<8) |
+                               (sector_buf[i+2]<<16) | (sector_buf[i+3]<<24);
+                total += 4;
+            }
+            remaining -= bytes;
+        }
+        cluster = fat_next_cluster(cluster);
+    }
+
+    // Verify first word
+    uint32_t first = *(volatile uint32_t *)KERNEL_LOAD_ADDR;
+    if (first == 0x00000000 || first == 0xFFFFFFFF) {
+        mon_puts("bad image\n");
+        return 0;
+    }
+
+    gpu_set_fg(GPU_BRIGHT_GREEN);
+    mon_puts("OK\n");
+
+    // Jump to kernel
+    void (*entry)(void) = (void (*)(void))KERNEL_LOAD_ADDR;
+    entry();
+
+    // If kernel returns, fall through to monitor
+    return 1;
 }
 
 // ----- Main -----
@@ -585,6 +720,9 @@ int main(void) {
     gpu_set_mode(1);
 
     show_banner();
+
+    // Try SD card boot before dropping to monitor
+    try_sd_boot();
 
     while (1) {
         // Check F5 toggle between commands

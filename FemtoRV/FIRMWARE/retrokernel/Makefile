@@ -1,7 +1,7 @@
 
 include ../makefile.inc
 
-KERNEL_SRCS = os_main.c os_shell.c os_file.c os_loader.c
+KERNEL_SRCS = os_main.c os_shell.c os_file.c os_loader.c os_syscall.c
 KERNEL_OBJS = $(KERNEL_SRCS:.c=.o)
 
 KERNEL_LIBS = $(FIRMWARE_DIR)/CRT/syscalls.o \

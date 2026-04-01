@@ -17,15 +17,32 @@ LDFLAGS_UPLOAD=-T upload.ld
 %.upload.elf: %.o $(RV_BINARIES)
 	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD) $< -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
 
-%.bin: %.upload.elf
+# ---- Kernel-loadable programs (load at 0x810000) ----
+
+LDFLAGS_PROGRAM=-T program.ld
+
+PROGRAMS=hello.bin nop.bin bounce.bin mario.bin hello_gpu.bin gfx_test.bin args.bin edit.bin
+
+# Build progstart.o (entry stub that saves/restores ra)
+progstart.o: progstart.S
+	$(RVAS) $(RVASFLAGS) $< -o $@
+
+# Link a kernel-loadable program: progstart.o first, then the .o
+%.program.elf: %.o progstart.o $(RV_BINARIES)
+	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_PROGRAM) progstart.o $< -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
+
+%.bin: %.program.elf
 	$(RVOBJCOPY) -O binary $< $@
 	@echo "Built $@ ($$(stat -c%s $@) bytes)"
 
-all: hello_gpu.bin gfx_test.bin
+%.list: %.program.elf
+	$(RVOBJDUMP) -Mnumeric -D $< > $@
 
-upload_hello: hello_gpu.bin
-	python3 ../../TOOLS/xmodem_upload.py $< /dev/ttyACM0 4000
+all: $(PROGRAMS)
 
-upload_gfx: gfx_test.bin
-	python3 ../../TOOLS/xmodem_upload.py $< /dev/ttyACM0 4000
+# Upload a program to the board via XMODEM (to SDRAM for testing)
+upload_%: %.bin
+	python3 ../../TOOLS/xmodem_upload.py $< /dev/ttyACM0 810000
 
+clean:
+	rm -f *.o *.elf *.bin *.list

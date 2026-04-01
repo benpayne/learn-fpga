@@ -86,11 +86,22 @@ void kernel_init(void) {
         con_puts("No SD card - serial mode only\n");
     }
 
+    // Initialize syscall table for user programs
+    syscall_init();
+
     con_puts("\n");
 }
 
+// Defined in os_shell.c — sets up PS2 ISR
+void shell_init(void);
+
 int main(void) {
     kernel_init();
+    shell_init();
+
+    // Run autoexec script if it exists
+    shell_run_script("/autoexec.sh");
+
     shell_loop();
     return 0;
 }

@@ -7,6 +7,7 @@
 
 static volatile int ps2_char_ready = 0;
 static volatile char ps2_char_buf;
+static volatile uint8_t ps2_key_buf;  // For special keys (arrows, F-keys)
 static ps2_state_t ps2;
 
 static void irq_entry(void) __attribute__ ((interrupt ("machine")));
@@ -43,19 +44,42 @@ void irq_entry(void) {
     if (flags & (1 << INT_PS2_bit)) {
         uint32_t ps2_reg = IO_IN(IO_PS2);
         ps2_event_t ev = ps2_process_scancode(&ps2, ps2_reg & 0xFF);
-        if (ev.type == PS2_EVENT_PRESS && ev.ascii != 0) {
-            ps2_char_buf = ev.ascii;
-            ps2_char_ready = 1;
+        if (ev.type == PS2_EVENT_PRESS) {
+            if (ev.ascii != 0) {
+                ps2_char_buf = ev.ascii;
+                ps2_key_buf = 0;
+                ps2_char_ready = 1;
+            } else if (ev.keycode >= 0x80) {
+                ps2_char_buf = 0;
+                ps2_key_buf = ev.keycode;
+                ps2_char_ready = 1;
+            }
         }
         CLEAR_INT(INT_PS2_bit);
     }
 }
 
-static char get_char(void) {
+// Returns uint16_t: high byte = keycode (PS2_KEY_*), low byte = ascii
+// For normal keys: keycode=0, ascii=char
+// For special keys: keycode=PS2_KEY_*, ascii=0
+// Reads from PS2 keyboard only (via ISR)
+uint16_t get_key(void) {
     while (1) {
         if (ps2_char_ready) {
             ps2_char_ready = 0;
-            return ps2_char_buf;
+            if (ps2_key_buf >= 0x80)
+                return ((uint16_t)ps2_key_buf << 8);
+            return (uint16_t)(uint8_t)ps2_char_buf;
+        }
+    }
+}
+
+// Blocking read from PS2 keyboard or UART — for shell use
+char get_char(void) {
+    while (1) {
+        if (ps2_char_ready) {
+            ps2_char_ready = 0;
+            if (ps2_char_buf != 0) return ps2_char_buf;
         }
         uint32_t uart = IO_IN(IO_UART_DAT);
         if (uart & 0x100) {
@@ -67,17 +91,130 @@ static char get_char(void) {
 
 static char input_buf[INPUT_BUF_SIZE];
 
+// Command history
+#define HISTORY_SIZE 8
+static char history[HISTORY_SIZE][INPUT_BUF_SIZE];
+static int hist_count = 0;
+static int hist_write = 0;  // Next slot to write
+
+static void hist_add(const char *cmd) {
+    if (!cmd[0]) return;  // Don't save empty commands
+    // Don't save duplicates of the last command
+    int prev = (hist_write + HISTORY_SIZE - 1) % HISTORY_SIZE;
+    if (hist_count > 0) {
+        int i = 0;
+        while (cmd[i] && cmd[i] == history[prev][i]) i++;
+        if (!cmd[i] && !history[prev][i]) return;  // Same as last
+    }
+    int j = 0;
+    while (cmd[j] && j < INPUT_BUF_SIZE - 1) { history[hist_write][j] = cmd[j]; j++; }
+    history[hist_write][j] = '\0';
+    hist_write = (hist_write + 1) % HISTORY_SIZE;
+    if (hist_count < HISTORY_SIZE) hist_count++;
+}
+
+// Shell version — polls both PS2 (via ISR) and UART
+static uint16_t shell_get_key(void) {
+    while (1) {
+        if (ps2_char_ready) {
+            ps2_char_ready = 0;
+            if (ps2_key_buf >= 0x80)
+                return ((uint16_t)ps2_key_buf << 8);
+            if (ps2_char_buf != 0)
+                return (uint16_t)(uint8_t)ps2_char_buf;
+        }
+        uint32_t uart = IO_IN(IO_UART_DAT);
+        if (uart & 0x100) {
+            char c = uart & 0xFF;
+            if (c == '\033') {
+                // ANSI escape: ESC [ A/B/C/D for arrows
+                int timeout = 100000; int next = -1;
+                while (timeout-- > 0) { uint32_t u = IO_IN(IO_UART_DAT); if (u & 0x100) { next = u & 0xFF; break; } }
+                if (next == '[') {
+                    timeout = 100000; int code = -1;
+                    while (timeout-- > 0) { uint32_t u = IO_IN(IO_UART_DAT); if (u & 0x100) { code = u & 0xFF; break; } }
+                    if (code == 'A') return ((uint16_t)PS2_KEY_UP << 8);
+                    if (code == 'B') return ((uint16_t)PS2_KEY_DOWN << 8);
+                    if (code == 'C') return ((uint16_t)PS2_KEY_RIGHT << 8);
+                    if (code == 'D') return ((uint16_t)PS2_KEY_LEFT << 8);
+                }
+                return 0x1B;
+            }
+            if (c != '\n') return (uint16_t)(uint8_t)c;
+        }
+    }
+}
+
+// Erase typed text and optionally replace with new text
+// prompt_col: column where user input starts (after prompt)
+static void shell_replace_line(int *pos, int prompt_col,
+                               const char *new_text) {
+    // Move cursor back to prompt position and clear old text
+    GPU_WRITE(GPU_REG_CURSOR_COL, prompt_col);
+    for (int i = 0; i < *pos; i++)
+        GPU_WRITE(GPU_REG_CHAR_DATA, ' ');
+    // Move cursor back to prompt position
+    GPU_WRITE(GPU_REG_CURSOR_COL, prompt_col);
+
+    // Write new text
+    *pos = 0;
+    if (new_text) {
+        while (new_text[*pos] && *pos < INPUT_BUF_SIZE - 1) {
+            input_buf[*pos] = new_text[*pos];
+            con_putc(input_buf[*pos]);
+            (*pos)++;
+        }
+    }
+}
+
 static void read_line(void) {
     int pos = 0;
+    int hist_idx = -1;
+
+    // Remember where the prompt ends (where user input starts)
+    // Prompt is "cwd$ " — count length
+    int prompt_col = 0;
+    { const char *p = fs_getcwd(); while (*p++) prompt_col++; }
+    prompt_col += 2;  // "$ "
+
     while (pos < INPUT_BUF_SIZE - 1) {
-        char c = get_char();
-        if (c == '\r' || c == '\n') {
+        uint16_t k = shell_get_key();
+        uint8_t keycode = k >> 8;
+        char c = k & 0xFF;
+
+        if (keycode == PS2_KEY_UP) {
+            int target;
+            if (hist_idx < 0)
+                target = hist_count - 1;
+            else
+                target = hist_idx - 1;
+            if (target >= 0 && target < hist_count) {
+                hist_idx = target;
+                int slot = (hist_write - hist_count + hist_idx + HISTORY_SIZE) % HISTORY_SIZE;
+                shell_replace_line(&pos, prompt_col, history[slot]);
+            }
+        } else if (keycode == PS2_KEY_DOWN) {
+            if (hist_idx >= 0) {
+                hist_idx++;
+                if (hist_idx < hist_count) {
+                    int slot = (hist_write - hist_count + hist_idx + HISTORY_SIZE) % HISTORY_SIZE;
+                    shell_replace_line(&pos, prompt_col, history[slot]);
+                } else {
+                    hist_idx = -1;
+                    shell_replace_line(&pos, prompt_col, 0);
+                }
+            }
+        } else if (c == '\r' || c == '\n') {
             con_putc('\n');
             break;
         } else if (c == '\b' || c == 0x7F) {
             if (pos > 0) {
                 pos--;
-                con_putc('\b'); con_putc(' '); con_putc('\b');
+                // Erase char: move cursor back, write space, move back
+                GPU_WRITE(GPU_REG_CURSOR_COL, prompt_col + pos);
+                GPU_WRITE(GPU_REG_CHAR_DATA, ' ');
+                GPU_WRITE(GPU_REG_CURSOR_COL, prompt_col + pos);
+                putchar('\b'); putchar(' '); putchar('\b');
             }
         } else if (c == '\t') {
             // Tab completion could go here
@@ -87,6 +224,7 @@ static void read_line(void) {
         }
     }
     input_buf[pos] = '\0';
+    hist_add(input_buf);
 }
 
 // ---- String helpers ----
@@ -123,6 +261,9 @@ static void cmd_help(void) {
     con_puts("  pwd           Print working directory\n");
     con_puts("  cat <file>    Display file contents\n");
     con_puts("  hexdump <f>   Hex dump file\n");
+    con_puts("  cp <s> <d>    Copy file\n");
+    con_puts("  rm <file>     Delete file\n");
+    con_puts("  mkdir <dir>   Create directory\n");
     con_puts("  mem           Memory info\n");
     con_puts("  clear         Clear screen\n");
     con_puts("  ver           Version info\n");
@@ -391,23 +532,17 @@ static void cmd_load(const char *args) {
     con_puts(fullpath);
     con_puts("...\n");
 
-    // Use FAT library to write file
-    extern void *fl_fopen(const char *path, const char *mode);
-    extern int fl_fwrite(const void *buffer, int size, int count, void *file);
-    extern void fl_fclose(void *file);
-
-    void *f = fl_fopen(fullpath, "w");
-    if (!f) {
+    int written = fs_save_file(fullpath, buf, total);
+    if (written < 0) {
         con_set_fg(GPU_BRIGHT_RED);
         con_puts("Error: cannot create file\n");
         return;
     }
 
-    fl_fwrite(buf, 1, total, f);
-    fl_fclose(f);
-
     con_set_fg(GPU_BRIGHT_GREEN);
-    con_puts("Saved OK\n");
+    con_puts("Saved ");
+    con_dec(written);
+    con_puts(" bytes OK\n");
 }
 
 static void cmd_clear(void) {
@@ -416,13 +551,14 @@ static void cmd_clear(void) {
 
 // ---- Shell loop ----
 
-void shell_loop(void) {
-    // Set up PS2 keyboard interrupt
+void shell_init(void) {
     ps2_init(&ps2);
     asm volatile ("csrw mtvec, %0" :: "r"(&irq_entry));
     asm volatile ("csrw mie, %0" :: "r"(0xFFFFFFFF));
     asm volatile ("csrsi mstatus, 0x8");
+}
 
+void shell_loop(void) {
     con_set_fg(GPU_LIGHT_GRAY);
     con_puts("Type 'help' for commands\n\n");
 
@@ -434,16 +570,23 @@ void shell_loop(void) {
         con_set_fg(GPU_WHITE);
 
         read_line();
+        shell_exec(input_buf);
+    }
+}
 
-        const char *cmd = skip_spaces(input_buf);
-        if (*cmd == '\0') continue;
+// Execute a command string
+void shell_exec(const char *line) {
+    const char *cmd = skip_spaces(line);
+    if (*cmd == '\0') return;
+    if (*cmd == '#') return;  // Comment line
 
-        // Parse command and arguments
-        const char *args = cmd;
-        while (*args && *args != ' ' && *args != '\t') args++;
-        int cmd_len = args - cmd;
+    // Parse command and arguments
+    const char *args = cmd;
+    while (*args && *args != ' ' && *args != '\t') args++;
+    int cmd_len = args - cmd;
 
-        // Match commands
+    // Match commands
+    {
         if (cmd_len == 4 && str_starts(cmd, "help")) {
             cmd_help();
         } else if (cmd_len == 2 && str_starts(cmd, "ls")) {
@@ -456,8 +599,57 @@ void shell_loop(void) {
             cmd_cat(args);
         } else if (cmd_len == 7 && str_starts(cmd, "hexdump")) {
             cmd_hexdump(args);
+        } else if (cmd_len == 2 && str_starts(cmd, "rm")) {
+            args = skip_spaces(args);
+            if (!*args) {
+                con_puts("usage: rm <file>\n");
+            } else if (!fs_remove(args)) {
+                con_set_fg(GPU_BRIGHT_RED);
+                con_puts("rm: failed\n");
+            }
+        } else if (cmd_len == 2 && str_starts(cmd, "cp")) {
+            args = skip_spaces(args);
+            // Parse two args: src dst
+            const char *src = args;
+            while (*args && *args != ' ' && *args != '\t') args++;
+            if (*args) {
+                // Null-terminate src by copying to temp
+                char src_buf[MAX_PATH];
+                int si = 0;
+                while (src < args && si < MAX_PATH - 1) src_buf[si++] = *src++;
+                src_buf[si] = '\0';
+                const char *dst = skip_spaces(args);
+                if (*dst) {
+                    int rc = fs_copy(src_buf, dst);
+                    if (rc < 0) {
+                        con_set_fg(GPU_BRIGHT_RED);
+                        con_puts("cp: failed\n");
+                    } else {
+                        con_dec(rc);
+                        con_puts(" bytes\n");
+                    }
+                } else {
+                    con_puts("usage: cp <src> <dst>\n");
+                }
+            } else {
+                con_puts("usage: cp <src> <dst>\n");
+            }
         } else if (cmd_len == 3 && str_starts(cmd, "mem")) {
             cmd_mem();
+        } else if (cmd_len == 5 && str_starts(cmd, "mkdir")) {
+            args = skip_spaces(args);
+            if (!*args) {
+                con_puts("usage: mkdir <dir>\n");
+            } else {
+                int rc = fs_mkdir(args);
+                if (rc == -1) {
+                    con_set_fg(GPU_YELLOW);
+                    con_puts("mkdir: already exists\n");
+                } else if (rc == 0) {
+                    con_set_fg(GPU_BRIGHT_RED);
+                    con_puts("mkdir: failed\n");
+                }
+            }
         } else if (cmd_len == 4 && str_starts(cmd, "load")) {
             cmd_load(args);
         } else if (cmd_len == 5 && str_starts(cmd, "clear")) {
@@ -479,5 +671,41 @@ void shell_loop(void) {
                 con_putc('\n');
             }
         }
+    }
+}
+
+// Run commands from a script file
+void shell_run_script(const char *path) {
+    uint8_t *buf = (uint8_t *)0x900000;
+    int size = fs_load_file(path, buf, 0x100000);
+    if (size <= 0) return;
+
+    // Parse lines and execute each
+    char line[INPUT_BUF_SIZE];
+    int lp = 0;
+    for (int i = 0; i < size; i++) {
+        if (buf[i] == '\r') continue;
+        if (buf[i] == '\n' || lp >= INPUT_BUF_SIZE - 1) {
+            line[lp] = '\0';
+            if (lp > 0) {
+                con_set_fg(GPU_LIGHT_GRAY);
+                con_puts("> ");
+                con_puts(line);
+                con_putc('\n');
+                shell_exec(line);
+            }
+            lp = 0;
+        } else {
+            line[lp++] = buf[i];
+        }
+    }
+    // Last line without newline
+    if (lp > 0) {
+        line[lp] = '\0';
+        con_set_fg(GPU_LIGHT_GRAY);
+        con_puts("> ");
+        con_puts(line);
+        con_putc('\n');
+        shell_exec(line);
     }
 }

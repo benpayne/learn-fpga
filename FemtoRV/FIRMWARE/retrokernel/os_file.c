@@ -106,41 +106,79 @@ int fs_list_dir(const char *path) {
     return 1;
 }
 
+// Build a full path from cwd + relative path into dest buffer
+// Returns length of resulting path
+static int build_path(char *dest, const char *path) {
+    int fp = 0;
+    if (path[0] == '/') {
+        while (path[fp] && fp < MAX_PATH - 1) { dest[fp] = path[fp]; fp++; }
+    } else {
+        int i = 0;
+        while (cwd[i] && fp < MAX_PATH - 1) dest[fp++] = cwd[i++];
+        if (fp > 0 && dest[fp-1] != '/') dest[fp++] = '/';
+        i = 0;
+        while (path[i] && fp < MAX_PATH - 1) dest[fp++] = path[i++];
+    }
+    dest[fp] = '\0';
+    return fp;
+}
+
+// Verify a directory exists by trying to open it
+static int dir_exists(const char *path) {
+    FL_DIR dirstat;
+    if (fl_opendir(path, &dirstat)) {
+        fl_closedir(&dirstat);
+        return 1;
+    }
+    return 0;
+}
+
 int fs_chdir(const char *path) {
     if (!fs_mounted) return 0;
 
-    if (path[0] == '/') {
-        // Absolute path
-        // Verify it exists by trying to list it
-        // For now just set it
-        int i = 0;
-        while (path[i] && i < MAX_PATH - 1) { cwd[i] = path[i]; i++; }
-        cwd[i] = '\0';
-        // Ensure trailing /
-        if (i > 1 && cwd[i-1] != '/') { cwd[i] = '/'; cwd[i+1] = '\0'; }
-    } else if (path[0] == '.' && path[1] == '.') {
+    if (path[0] == '.' && path[1] == '.' && (path[2] == '\0' || path[2] == '/')) {
         // Go up
         int len = 0;
         while (cwd[len]) len++;
         if (len > 1) {
-            // Remove trailing /
             if (cwd[len-1] == '/') len--;
-            // Find previous /
             while (len > 0 && cwd[len-1] != '/') len--;
             if (len == 0) len = 1;
             cwd[len] = '\0';
         }
-    } else {
-        // Relative path — append to cwd
-        int len = 0;
-        while (cwd[len]) len++;
-        if (len > 0 && cwd[len-1] != '/') { cwd[len++] = '/'; }
-        int i = 0;
-        while (path[i] && len < MAX_PATH - 2) { cwd[len++] = path[i++]; }
-        cwd[len] = '/';
-        cwd[len+1] = '\0';
+        return 1;
     }
+
+    // Build candidate path
+    char newpath[MAX_PATH];
+    int len = build_path(newpath, path);
+
+    // Ensure trailing /
+    if (len > 1 && newpath[len-1] != '/') { newpath[len] = '/'; newpath[len+1] = '\0'; len++; }
+
+    // Verify directory exists (root always exists)
+    if (len > 1 && !dir_exists(newpath)) {
+        return 0;
+    }
+
+    // Set cwd
+    int i = 0;
+    while (newpath[i] && i < MAX_PATH - 1) { cwd[i] = newpath[i]; i++; }
+    cwd[i] = '\0';
     return 1;
+}
+
+// Returns: 1=created, 0=failed, -1=already exists
+int fs_mkdir(const char *path) {
+    if (!fs_mounted) return 0;
+
+    char fullpath[MAX_PATH];
+    build_path(fullpath, path);
+
+    if (dir_exists(fullpath))
+        return -1;  // Already exists
+
+    return fl_createdirectory(fullpath);
 }
 
 const char *fs_getcwd(void) {
@@ -173,6 +211,53 @@ int fs_load_file(const char *path, void *dest, uint32_t max_size) {
     int total = fl_fread(dest, 1, max_size, f);
     fl_fclose(f);
     return total;
+}
+
+int fs_save_file(const char *path, const void *data, uint32_t size) {
+    if (!fs_mounted) return -1;
+
+    // Build full path
+    char fullpath[MAX_PATH];
+    int fp = 0;
+
+    if (path[0] == '/') {
+        while (path[fp] && fp < MAX_PATH - 1) { fullpath[fp] = path[fp]; fp++; }
+    } else {
+        int i = 0;
+        while (cwd[i] && fp < MAX_PATH - 1) fullpath[fp++] = cwd[i++];
+        if (fp > 0 && fullpath[fp-1] != '/') fullpath[fp++] = '/';
+        i = 0;
+        while (path[i] && fp < MAX_PATH - 1) fullpath[fp++] = path[i++];
+    }
+    fullpath[fp] = '\0';
+
+    void *f = fl_fopen(fullpath, "w");
+    if (!f) return -1;
+
+    int written = fl_fwrite(data, 1, size, f);
+    fl_fclose(f);
+    return written;
+}
+
+int fs_remove(const char *path) {
+    if (!fs_mounted) return 0;
+
+    char fullpath[MAX_PATH];
+    build_path(fullpath, path);
+
+    return fl_remove(fullpath) == 0 ? 1 : 0;
+}
+
+int fs_copy(const char *src, const char *dst) {
+    if (!fs_mounted) return -1;
+
+    // Load source file into temp buffer
+    uint8_t *buf = (uint8_t *)0x900000;
+    int size = fs_load_file(src, buf, 0x500000); // 5MB max
+    if (size < 0) return -1;
+
+    // Save to destination
+    return fs_save_file(dst, buf, size);
 }
 
 int fs_file_size(const char *path) {

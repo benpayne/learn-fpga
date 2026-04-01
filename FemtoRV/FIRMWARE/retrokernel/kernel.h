@@ -10,6 +10,15 @@
 #define PROGRAM_MAX     0xF00000   // ~7MB for programs
 #define STACK_TOP       0xFFFFF0   // Stack starts here
 
+// Argument passing area (last 256 bytes of kernel space)
+// Layout: [argc (4B)] [argv[0] ptr] [argv[1] ptr] ... [argv[n]=NULL] [string data...]
+#define ARGS_BASE       0x80FF00   // 256 bytes for argument strings + pointers
+#define ARGS_MAX_SIZE   256
+
+// Syscall table — function pointer array at fixed address
+// User programs call these via: ((syscall_table_t *)SYSCALL_TABLE)->func(args)
+#define SYSCALL_TABLE   0x80FE00   // 256 bytes = 64 function pointers
+
 // ---- Syscall numbers ----
 // Process
 #define SYS_EXIT        0x00
@@ -93,6 +102,20 @@ static inline void con_clear(void) {
     wait_cycles(5000);
 }
 
+// Backspace: move cursor left, write space, move left again
+static inline void con_backspace(void) {
+    // Read current cursor col, move back, overwrite with space, move back
+    // GPU doesn't handle 0x08 as backspace — must use cursor register
+    uint32_t col = GPU_READ(GPU_REG_CURSOR_COL);
+    if (col > 0) {
+        GPU_WRITE(GPU_REG_CURSOR_COL, col - 1);
+        GPU_WRITE(GPU_REG_CHAR_DATA, ' ');
+        GPU_WRITE(GPU_REG_CURSOR_COL, col - 1);
+    }
+    // Also send backspace to UART
+    putchar('\b'); putchar(' '); putchar('\b');
+}
+
 // Hex output
 static inline void con_hex8(uint8_t v) {
     int hi = (v >> 4) & 0xF, lo = v & 0xF;
@@ -103,12 +126,52 @@ static inline void con_hex8(uint8_t v) {
 // Decimal output
 void con_dec(uint32_t v);
 
+// ---- Syscall table layout ----
+// Each entry is a function pointer. User programs call through this table.
+typedef struct {
+    // Console (0-7)
+    void (*putc)(char c);                                   // 0
+    char (*getc)(void);                                     // 1
+    void (*puts)(const char *s);                            // 2
+    void (*set_fg)(int color);                              // 3
+    void (*set_bg)(int color);                              // 4
+    void (*cls)(void);                                      // 5
+    void (*putdec)(uint32_t v);                             // 6
+    void (*puthex8)(uint8_t v);                             // 7
+
+    // File I/O (8-15)
+    int  (*fopen)(const char *path, const char *mode);      // 8  returns fd
+    void (*fclose)(int fd);                                 // 9
+    int  (*fread)(int fd, void *buf, int size);             // 10
+    int  (*fwrite)(int fd, const void *buf, int size);      // 11
+    int  (*fseek)(int fd, int offset, int whence);          // 12
+    int  (*load_file)(const char *path, void *dest, uint32_t max); // 13
+    int  (*save_file)(const char *path, const void *data, uint32_t size); // 14
+    int  (*list_dir)(const char *path);                     // 15
+
+    // Directory (16-19)
+    int  (*chdir)(const char *path);                        // 16
+    const char *(*getcwd)(void);                            // 17
+    uint16_t (*getkey)(void);                               // 18 keycode<<8|ascii
+    void *reserved19;                                       // 19
+
+    // Audio (20-23)
+    void *note_on;                                          // 20
+    void *note_off;                                         // 21
+    void *set_instr;                                        // 22
+    void *all_off;                                          // 23
+} syscall_table_t;
+
 // ---- Functions ----
 // os_main.c
 void kernel_init(void);
 
 // os_shell.c
 void shell_loop(void);
+void shell_exec(const char *line);
+void shell_run_script(const char *path);
+char get_char(void);      // Blocking read — ASCII only (PS2 + UART)
+uint16_t get_key(void);   // Blocking read — returns keycode<<8 | ascii
 
 // os_file.c
 int  fs_init(void);
@@ -116,7 +179,14 @@ int  fs_list_dir(const char *path);
 int  fs_chdir(const char *path);
 const char *fs_getcwd(void);
 int  fs_load_file(const char *path, void *dest, uint32_t max_size);
+int  fs_save_file(const char *path, const void *data, uint32_t size);
+int  fs_mkdir(const char *path);
+int  fs_remove(const char *path);
+int  fs_copy(const char *src, const char *dst);
 int  fs_file_size(const char *path);
+
+// os_syscall.c
+void syscall_init(void);
 
 // os_loader.c
 int  load_and_run(const char *path, const char *args);

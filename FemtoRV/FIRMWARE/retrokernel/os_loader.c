@@ -3,6 +3,42 @@
 
 #include "kernel.h"
 
+// Set up argc/argv at ARGS_BASE for the loaded program
+// Layout at ARGS_BASE:
+//   uint32_t argc
+//   char *argv[argc+1]  (NULL terminated)
+//   char string_data[]
+// Returns argc
+static int setup_args(const char *cmdline) {
+    volatile uint32_t *args = (volatile uint32_t *)ARGS_BASE;
+    char *strings = (char *)(ARGS_BASE + 128); // String data starts halfway
+    char *str_end = (char *)(ARGS_BASE + ARGS_MAX_SIZE);
+    int argc = 0;
+    int max_argv = 30; // room for 30 pointers + NULL in 128 bytes
+
+    const char *p = cmdline;
+
+    while (*p && argc < max_argv && strings < str_end - 1) {
+        // Skip whitespace
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+
+        // Record pointer to this arg
+        args[1 + argc] = (uint32_t)strings;
+        argc++;
+
+        // Copy arg string
+        while (*p && *p != ' ' && *p != '\t' && strings < str_end - 1)
+            *strings++ = *p++;
+        *strings++ = '\0';
+    }
+
+    args[0] = argc;
+    args[1 + argc] = 0; // NULL terminator for argv
+
+    return argc;
+}
+
 // Try to find and run a program
 // Returns 1 if program was found and executed, 0 if not found
 int load_and_run(const char *name, const char *args) {
@@ -77,14 +113,16 @@ run:
         return 1;  // Return 1 so shell doesn't print "unknown command"
     }
 
-    // Place a magic cookie after the program to detect stack overflow
-    // (if the program's stack grows into the program area, this gets overwritten)
+    // Set up argc/argv from the full command line (name + args)
+    // The full command line is in input_buf (shell's buffer)
+    // 'name' points to the start, 'args' points past the command name
+    setup_args(name);
 
     // Switch to graphics-safe state: ensure text mode is active on return
-    // Save current display state
     con_set_fg(GPU_WHITE);
 
     // Execute the loaded program
+    // progstart.S reads argc/argv from ARGS_BASE and passes to main
     void (*entry)(void) = (void (*)(void))PROGRAM_BASE;
     entry();
 
