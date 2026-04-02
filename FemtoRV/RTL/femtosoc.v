@@ -550,7 +550,7 @@ module femtosoc(
    video_fetch_engine #(
       .H_ACTIVE(640),
       .V_ACTIVE(400),
-      .STRIDE_WORDS(320),
+      .STRIDE_WORDS(512),  // 2KB per line, aligned to SDRAM row boundary
       .FB_BASE_PARAM(26'hA00000)
    ) video_fetch (
       .clk(clk), .resetn(reset),

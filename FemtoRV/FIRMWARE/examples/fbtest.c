@@ -13,7 +13,7 @@
 #define FB_BASE   0xA00000
 #define FB_WIDTH  640
 #define FB_HEIGHT 400
-#define FB_STRIDE 1280  // bytes per line (640 * 2)
+#define FB_STRIDE 2048  // bytes per line (512 words, 2KB-aligned for SDRAM rows)
 
 static inline void fb_pixel(int x, int y, uint16_t color) {
     volatile uint16_t *fb = (volatile uint16_t *)FB_BASE;
@@ -50,6 +50,7 @@ int main(void) {
 
     uint32_t colors[] = {red2, green2, blue2, yellow2, mag2, cyan2, white2, black2};
     int bar_width_words = FB_WIDTH / 2 / 8;  // 40 words per bar
+    int stride_words = FB_STRIDE / 4;       // 512 words per line
 
     GPU_WRITE(GPU_REG_CHAR_DATA, 'F');
     putchar('F');
@@ -57,7 +58,7 @@ int main(void) {
     for (int y = 0; y < FB_HEIGHT; y++) {
         for (int bar = 0; bar < 8; bar++) {
             for (int x = 0; x < bar_width_words; x++) {
-                fb32[y * (FB_WIDTH/2) + bar * bar_width_words + x] = colors[bar];
+                fb32[y * stride_words + bar * bar_width_words + x] = colors[bar];
             }
         }
     }

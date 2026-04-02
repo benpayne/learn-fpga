@@ -234,16 +234,14 @@ module gpu_top(
     wire [7:0] scan_rgb_blue;
     wire       scan_hblank_irq = 1'b0;
 
-    // Simple pixel unpacker: read FIFO word, output low pixel, then high pixel.
-    // Uses FIFO data directly (combinatorial) — may have 1-cycle alignment noise
-    // but proven to show color bars.
-    reg        pixel_phase;     // 0 = low pixel, 1 = high pixel
-    reg [15:0] pixel_high;      // Latched high pixel
+    // Simple pixel unpacker — combinatorial, proven to show color bars.
+    // Read FIFO word, output low pixel then high pixel.
+    reg        pixel_phase;
+    reg [15:0] pixel_high;
 
     wire fb_mode = (display_mode == 2'd2);
     wire [15:0] fb_current = pixel_phase ? pixel_high : fb_pixel_data[15:0];
 
-    // Read from FIFO every 2 pixels (on phase 0)
     assign fb_pixel_rd = fb_mode && video_active && !pixel_phase && fb_pixel_valid;
 
     always @(posedge clk_pixel) begin
@@ -259,7 +257,6 @@ module gpu_top(
         end
     end
 
-    // RGB565 to RGB888 conversion
     wire fb_visible = video_active && fb_mode;
     assign scan_rgb_red   = fb_visible ? {fb_current[15:11], fb_current[15:13]} : 8'd0;
     assign scan_rgb_green = fb_visible ? {fb_current[10:5],  fb_current[10:9]}  : 8'd0;
