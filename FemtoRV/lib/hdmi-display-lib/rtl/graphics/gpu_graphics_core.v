@@ -53,7 +53,7 @@ module gpu_graphics_core(
     output wire [7:0]  rgb_b_out,      // Blue component (8-bit)
 
     // Control outputs
-    output wire        display_mode,   // 0=Character, 1=Graphics
+    output wire [1:0]  display_mode,   // 0=Char, 1=Graphics, 2=Scanline
     output wire        gpu_irq         // VBlank interrupt output
 );
 

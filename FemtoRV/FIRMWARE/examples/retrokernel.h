@@ -7,6 +7,15 @@
 
 #include <femtorv32.h>
 
+// Undefine FAT library macros that conflict with our syscall names
+#undef fopen
+#undef fclose
+#undef fread
+#undef fwrite
+#undef fseek
+#undef mkdir
+#undef remove
+
 // Syscall table lives at this fixed address, set up by the kernel
 #define SYSCALL_TABLE   0x80FE00
 

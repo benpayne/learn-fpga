@@ -160,6 +160,30 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define synth_all_off() SYNTH_WRITE(SYNTH_ALL_OFF, 0)
 
 /*
+ * Sample Buffer (ring buffer for PCM playback, mixed with FM synth)
+ * Shares IO_SYNTH address. Bit 31=1 selects sample buffer, bits[30:29] = command.
+ * 1024 x 16-bit buffer (two 512-sample halves).
+ * Interrupt fires when read pointer crosses each half-boundary.
+ */
+#define SBUF_SET_ADDR(a)    IO_OUT(IO_SYNTH, 0x80000000 | ((a) & 0x3FF))
+#define SBUF_WRITE_SAMPLE(s) IO_OUT(IO_SYNTH, 0xA0000000 | ((s) & 0xFFFF))
+#define SBUF_CONTROL(c)     IO_OUT(IO_SYNTH, 0xC0000000 | ((c) & 0xFF))
+#define SBUF_READ_STATUS()  (IO_OUT(IO_SYNTH, 0xE0000000), IO_IN(IO_SYNTH))
+
+/* Control bits for SBUF_CONTROL */
+#define SBUF_ENABLE     0x01  /* Enable playback */
+#define SBUF_RESET      0x02  /* Reset read pointer to 0 */
+#define SBUF_VOL_SHIFT(n) (((n) & 7) << 2) /* Volume: 0=full, 1=-6dB, 2=-12dB... */
+
+/* Status bits from SBUF_READ_STATUS */
+#define SBUF_STATUS_ENABLED  0x001   /* bit 0: playback enabled */
+#define SBUF_STATUS_RDPTR    0xFFC   /* bits 11:1: current read pointer (10 bits, shifted by 1) */
+
+/* Buffer size */
+#define SBUF_SIZE       1024  /* Total samples */
+#define SBUF_HALF       512   /* Half-buffer size */
+
+/*
  * GPU (HDMI Character + Graphics display)
  *
  * Uses a single 1-hot IO address. The GPU register index is packed

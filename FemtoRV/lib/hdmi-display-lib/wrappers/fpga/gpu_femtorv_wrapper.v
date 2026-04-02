@@ -50,7 +50,8 @@ module gpu_femtorv_wrapper(
     output wire [1:0]  tmds_blue_out,  // TMDS blue channel
 
     // Optional: VBlank interrupt output
-    output wire        gpu_irq
+    output wire        gpu_irq,
+    output wire        scanline_irq
 );
 
     //==========================================================================
@@ -119,7 +120,8 @@ module gpu_femtorv_wrapper(
         .debug_display_mode(debug_display_mode),
         .debug_gfx_gpu_cs  (debug_gfx_gpu_cs),
         .debug_char_gpu_cs (debug_char_gpu_cs),
-        .debug_vsync       (debug_vsync)
+        .debug_vsync       (debug_vsync),
+        .scanline_hblank_irq(scanline_irq)
     );
 
     // VBlank interrupt

@@ -62,7 +62,7 @@ module gpu_graphics_registers(
     // Graphics control outputs
     output wire [14:0] fb_base_addr,   // Framebuffer base address
     output wire [1:0]  gpu_mode,       // Graphics mode
-    output wire        display_mode,   // 0=Character, 1=Graphics
+    output wire [1:0]  display_mode,   // 0=Char, 1=Graphics, 2=Scanline
 
     // Status inputs
     input  wire        vblank_flag,    // VBlank status from timing
@@ -84,7 +84,7 @@ module gpu_graphics_registers(
     reg [3:0]  clut_data_g_reg;        // Palette G component
     reg [3:0]  clut_data_b_reg;        // Palette B component
     reg        gpu_irq_ctrl_reg;       // VBlank interrupt enable
-    reg        display_mode_reg;       // Display mode select
+    reg [1:0]  display_mode_reg;       // Display mode select (2-bit)
 
     //=========================================================================
     // Register Write Logic
@@ -106,7 +106,7 @@ module gpu_graphics_registers(
             clut_data_g_reg   <= 4'h0;
             clut_data_b_reg   <= 4'h0;
             gpu_irq_ctrl_reg  <= 1'b0;           // Interrupts disabled
-            display_mode_reg  <= 1'b0;           // Character mode default
+            display_mode_reg  <= 2'b00;          // Character mode default
         end else if (reg_we) begin
             case (reg_addr)
                 REG_VRAM_ADDR_LO: vram_addr_ptr[7:0]  <= reg_data_in;
@@ -127,7 +127,7 @@ module gpu_graphics_registers(
                     // Read-only register, ignore writes
                 end
                 REG_GPU_IRQ_CTRL: gpu_irq_ctrl_reg <= reg_data_in[0];
-                REG_DISPLAY_MODE: display_mode_reg <= reg_data_in[0];
+                REG_DISPLAY_MODE: display_mode_reg <= reg_data_in[1:0];
                 default: begin
                     // Reserved registers, ignore writes
                 end
@@ -161,7 +161,7 @@ module gpu_graphics_registers(
             REG_CLUT_DATA_B: reg_data_out = {4'b0, clut_data_b_reg};
             REG_GPU_STATUS: reg_data_out = {7'b0, vblank_flag};  // VBlank status
             REG_GPU_IRQ_CTRL: reg_data_out = {7'b0, gpu_irq_ctrl_reg};
-            REG_DISPLAY_MODE: reg_data_out = {7'b0, display_mode_reg};
+            REG_DISPLAY_MODE: reg_data_out = {6'b0, display_mode_reg};
             default: reg_data_out = 8'h00;  // Reserved registers read as 0
         endcase
     end

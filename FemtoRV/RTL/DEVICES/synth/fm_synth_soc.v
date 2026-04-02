@@ -1,19 +1,23 @@
 // FM Synth SoC Peripheral
 // Wraps TDM engine with register interface, MIDI note table, and preset ROM
+// Includes sampled audio ring buffer mixed with FM output
 
 module fm_synth_soc (
     input  wire        clk,
     input  wire        reset,
     input  wire [31:0] wdata,
     input  wire        wstrb,
+    input  wire        rstrb,
     input  wire        sel,
+    output wire [31:0] rdata,
+    output wire        samplebuf_irq,
     output wire        audio_pwm,
     output wire        i2s_bclk,
     output wire        i2s_lrck,
     output wire        i2s_din
 );
 
-    // ---- Register interface ----
+    // ---- Register interface (FM synth — wdata[31]=0) ----
     wire [3:0]  voice_gate;
     wire [6:0]  voice_note_0, voice_note_1, voice_note_2, voice_note_3;
     wire [2:0]  voice_preset_0, voice_preset_1, voice_preset_2, voice_preset_3;
@@ -21,7 +25,8 @@ module fm_synth_soc (
 
     fm_synth_registers regs (
         .clk(clk), .reset(!reset),
-        .wdata(wdata), .wstrb(wstrb), .sel(sel),
+        .wdata(wdata), .wstrb(wstrb),
+        .sel(sel & ~wdata[31]),  // Only FM writes when bit 31 = 0
         .voice_gate(voice_gate), .voice_trigger(voice_trigger),
         .voice_note_0(voice_note_0), .voice_note_1(voice_note_1),
         .voice_note_2(voice_note_2), .voice_note_3(voice_note_3),
@@ -39,7 +44,6 @@ module fm_synth_soc (
     wire [31:0] v_phase_inc_3 = midi_table[voice_note_3];
 
     // ---- Preset selection (use voice 0's preset for all — simplification) ----
-    // Each preset: algorithm + 4 ops (ratio, depth, attack, decay, sustain, release)
     wire [2:0] active_preset = voice_preset_0;
 
     reg [2:0]  p_algorithm;
@@ -112,7 +116,7 @@ module fm_synth_soc (
     end
 
     // ---- TDM engine ----
-    wire signed [15:0] pcm_out;
+    wire signed [15:0] fm_pcm;
     wire sample_valid;
 
     fm_synth_tdm #(.CLK_FREQ(25_000_000), .SAMPLE_RATE(48_000)) engine (
@@ -139,11 +143,37 @@ module fm_synth_soc (
         .op_sustain_2(p_sustain_2), .op_sustain_3(p_sustain_3),
         .op_release_0(p_release_0), .op_release_1(p_release_1),
         .op_release_2(p_release_2), .op_release_3(p_release_3),
-        .pcm_out(pcm_out), .sample_valid(sample_valid)
+        .pcm_out(fm_pcm), .sample_valid(sample_valid)
     );
 
+    // ---- Sampled audio ring buffer ----
+    wire signed [15:0] buf_pcm;
+    wire buf_half_irq;
+    wire [31:0] buf_rdata;
+
+    audio_ringbuf ringbuf (
+        .clk(clk),
+        .reset(!reset),
+        .wdata(wdata),
+        .wr_en(sel & wstrb & wdata[31]),
+        .rd_en(sel & rstrb),
+        .rdata(buf_rdata),
+        .sample_tick(sample_valid),
+        .pcm_out(buf_pcm),
+        .half_irq(buf_half_irq)
+    );
+
+    assign rdata = buf_rdata;
+    assign samplebuf_irq = buf_half_irq;
+
+    // ---- Mix FM + sample buffer (saturating 17-bit add) ----
+    wire signed [16:0] mix = {fm_pcm[15], fm_pcm} + {buf_pcm[15], buf_pcm};
+    wire signed [15:0] mixed_pcm =
+        (mix[16:15] == 2'b00 || mix[16:15] == 2'b11) ? mix[15:0] :
+        mix[16] ? -16'sd32768 : 16'sd32767;
+
     // ---- PWM DAC ----
-    wire [15:0] pcm_unsigned = pcm_out + 16'h8000;
+    wire [15:0] pcm_unsigned = mixed_pcm + 16'h8000;
     wire [7:0]  pwm_level = pcm_unsigned[15:8];
     reg [7:0] pwm_counter;
     always @(posedge clk) pwm_counter <= pwm_counter + 1;
@@ -152,7 +182,7 @@ module fm_synth_soc (
     // ---- I2S output ----
     i2s_tx #(.CLK_FREQ(25_000_000), .SAMPLE_RATE(48_000)) i2s (
         .clk(clk), .reset(!reset),
-        .pcm_in(pcm_out), .sample_valid(sample_valid),
+        .pcm_in(mixed_pcm), .sample_valid(sample_valid),
         .bclk(i2s_bclk), .lrck(i2s_lrck), .din(i2s_din)
     );
 

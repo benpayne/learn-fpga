@@ -79,7 +79,8 @@ module gpu_top(
     output wire        debug_display_mode,  // Current display mode (0=char, 1=graphics)
     output wire        debug_gfx_gpu_cs,    // Graphics GPU chip select
     output wire        debug_char_gpu_cs,   // Character GPU chip select
-    output wire        debug_vsync          // VSync signal
+    output wire        debug_vsync,         // VSync signal
+    output wire        scanline_hblank_irq  // HBlank interrupt from scanline renderer
 );
 
     //==========================================================================
@@ -110,7 +111,7 @@ module gpu_top(
     wire [7:0] gfx_rgb_green;
     wire [7:0] gfx_rgb_blue;
     wire [7:0] gfx_data_out;
-    wire       display_mode;            // 0=Character, 1=Graphics (from graphics regs)
+    wire [1:0] display_mode;            // 0=Char, 1=Graphics, 2=Scanline (from graphics regs)
 
     //==========================================================================
     // Internal Signals - Muxed GPU Output to DVI Transmitter
@@ -213,22 +214,52 @@ module gpu_top(
     );
 
     //--------------------------------------------------------------------------
-    // 3. GPU Mux - Select between Character and Graphics modes
+    // 3. GPU Scanline Renderer - Hi-res 8bpp scanline mode
+    //    Double-buffered line buffer, CPU fills via IO, HBlank interrupt
+    //--------------------------------------------------------------------------
+    wire [7:0] scan_rgb_red;
+    wire [7:0] scan_rgb_green;
+    wire [7:0] scan_rgb_blue;
+    wire       scan_hblank_irq;
+
+    gpu_scanline_renderer gpu_scanline_inst(
+        .clk_pixel     (clk_pixel),
+        .clk_cpu       (clk_cpu),
+        .rst_n         (rst_n),
+        .h_count       (h_count),
+        .v_count       (v_count),
+        .video_active  (video_active),
+        .reg_addr      (addr[3:0]),
+        .reg_data_in   (data_in),
+        .reg_we        (gfx_gpu_cs && we && (addr[3:0] >= 4'hE)),
+        .rgb_r_out     (scan_rgb_red),
+        .rgb_g_out     (scan_rgb_green),
+        .rgb_b_out     (scan_rgb_blue),
+        .hblank_irq    (scan_hblank_irq)
+    );
+
+    //--------------------------------------------------------------------------
+    // 4. GPU Mux - Select between Character, Bitmap, and Scanline modes
     //    Controlled by DISPLAY_MODE register in graphics GPU
     //--------------------------------------------------------------------------
     gpu_mux gpu_mux_inst(
         // Display mode control
-        .display_mode  (display_mode),   // 0=Character, 1=Graphics
+        .display_mode  (display_mode),   // 0=Char, 1=Bitmap, 2=Scanline
 
         // Character GPU RGB inputs
         .char_rgb_r    (char_rgb_red),
         .char_rgb_g    (char_rgb_green),
         .char_rgb_b    (char_rgb_blue),
 
-        // Graphics GPU RGB inputs
+        // Bitmap Graphics GPU RGB inputs
         .gfx_rgb_r     (gfx_rgb_red),
         .gfx_rgb_g     (gfx_rgb_green),
         .gfx_rgb_b     (gfx_rgb_blue),
+
+        // Scanline GPU RGB inputs
+        .scan_rgb_r    (scan_rgb_red),
+        .scan_rgb_g    (scan_rgb_green),
+        .scan_rgb_b    (scan_rgb_blue),
 
         // Final RGB outputs (to DVI transmitter)
         .rgb_r_out     (rgb_red),
@@ -280,6 +311,7 @@ module gpu_top(
     assign debug_gfx_gpu_cs   = gfx_gpu_cs;    // Graphics GPU chip select
     assign debug_char_gpu_cs  = char_gpu_cs;   // Character GPU chip select
     assign debug_vsync        = vsync;         // VSync signal
+    assign scanline_hblank_irq = scan_hblank_irq; // HBlank from scanline renderer
 
     //==========================================================================
     // Notes on Signal Conversion

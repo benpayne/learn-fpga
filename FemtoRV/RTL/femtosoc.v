@@ -37,6 +37,7 @@
 `include "DEVICES/synth/fm_synth_soc.v"
 `include "DEVICES/synth/fm_synth_registers.v"
 `include "DEVICES/synth/fm_synth_tdm.v"
+`include "DEVICES/synth/audio_ringbuf.v"
 `include "DEVICES/synth/fm_sine_rom.v"
 `include "DEVICES/synth/fm_algorithm.v"
 `include "DEVICES/synth/i2s_tx.v"
@@ -58,6 +59,7 @@
 `include "lib/hdmi-display-lib/rtl/graphics/gpu_graphics_vram.v"
 `include "lib/hdmi-display-lib/rtl/graphics/gpu_graphics_palette.v"
 `include "lib/hdmi-display-lib/rtl/graphics/gpu_pixel_renderer.v"
+`include "lib/hdmi-display-lib/rtl/graphics/gpu_scanline_renderer.v"
 `include "lib/hdmi-display-lib/rtl/gpu_top.v"
 `include "lib/hdmi-display-lib/wrappers/fpga/gpu_femtorv_wrapper.v"
 `include "lib/hdmi-display-lib/clock/gpu_pll.v"
@@ -559,7 +561,17 @@ HardwareConfig hwconfig(
    assign interrupt_bits[INT_PS2_bit]   = 1'b0;
 `endif
 
-   assign interrupt_bits[31:5]   = 27'b0;
+   assign interrupt_bits[31:7]   = 25'b0;
+`ifdef NRV_IO_SYNTH
+   assign interrupt_bits[INT_SAMPLEBUF_bit] = samplebuf_irq;
+`else
+   assign interrupt_bits[INT_SAMPLEBUF_bit] = 1'b0;
+`endif
+`ifdef NRV_IO_GPU
+   assign interrupt_bits[INT_SCANLINE_bit] = scanline_irq;
+`else
+   assign interrupt_bits[INT_SCANLINE_bit] = 1'b0;
+`endif
 `ifndef NRV_IO_GPU
    assign interrupt_bits[INT_GPU_bit]   = 1'b0;
 `endif
@@ -812,6 +824,7 @@ HardwareConfig hwconfig(
    wire [1:0] tmds_green_parallel;
    wire [1:0] tmds_blue_parallel;
    wire gpu_irq;
+   wire scanline_irq;
 
    gpu_femtorv_wrapper gpu_inst(
       .clk(clk),
@@ -830,7 +843,8 @@ HardwareConfig hwconfig(
       .tmds_green_out(tmds_green_parallel),
       .tmds_blue_out(tmds_blue_parallel),
 
-      .gpu_irq(gpu_irq)
+      .gpu_irq(gpu_irq),
+      .scanline_irq(scanline_irq)
    );
 
  `ifdef NRV_IO_INT_CONTROLLER
@@ -877,12 +891,19 @@ HardwareConfig hwconfig(
 
 /********************* FM Synthesizer *************************************/
 `ifdef NRV_IO_SYNTH
+   wire [31:0] synth_rdata_raw;
+   wire samplebuf_irq;
+   wire synth_sel = io_word_address[IO_SYNTH_bit];
+   wire [31:0] synth_rdata = synth_sel ? synth_rdata_raw : 32'b0;
    fm_synth_soc synth_inst(
       .clk(clk),
       .reset(reset),
       .wdata(io_wdata),
       .wstrb(io_wstrb),
+      .rstrb(io_rstrb),
       .sel(io_word_address[IO_SYNTH_bit]),
+      .rdata(synth_rdata_raw),
+      .samplebuf_irq(samplebuf_irq),
       .audio_pwm(audio_pwm),
       .i2s_bclk(i2s_bclk),
       .i2s_lrck(i2s_lrck),
@@ -927,6 +948,9 @@ always @(posedge clk) begin
 `endif
 `ifdef NRV_IO_GPU
 	    | gpu_rdata
+`endif
+`ifdef NRV_IO_SYNTH
+	    | synth_rdata
 `endif
 	    ;
 end

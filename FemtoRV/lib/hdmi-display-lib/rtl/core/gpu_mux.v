@@ -1,56 +1,59 @@
+// gpu_mux.v - GPU Output Multiplexer (3-mode)
 //
-// gpu_mux.v - Graphics/Character GPU Output Multiplexer
-//
-// Selects between character mode GPU and graphics mode GPU outputs
-// based on DISPLAY_MODE register
-//
-// Author: RetroCPU Project
-// License: MIT
-// Created: 2026-01-04
-//
-// Features:
-// - Simple RGB888 multiplexer
-// - Controlled by DISPLAY_MODE register (from graphics registers)
-// - 0 = Character mode (from existing character GPU)
-// - 1 = Graphics mode (from new graphics GPU)
-// - Single-cycle combinational logic
-//
-// Design Note:
-//   Both GPUs run simultaneously. This mux simply selects which output
-//   drives the final RGB signals to the DVI transmitter. This allows
-//   instant switching between text and graphics with no state loss.
-//
+// Selects between character, bitmap graphics, and scanline graphics modes
+// based on DISPLAY_MODE register (2-bit):
+//   0 = Character mode (text)
+//   1 = Bitmap graphics mode (1/2/4 BPP VRAM)
+//   2 = Scanline hi-res mode (8bpp line buffer)
 
 module gpu_mux(
     // Display mode control
-    input  wire        display_mode,       // 0=Character, 1=Graphics
+    input  wire [1:0]  display_mode,       // 0=Char, 1=Bitmap, 2=Scanline
 
     // Character GPU RGB inputs
-    input  wire [7:0]  char_rgb_r,         // Character mode red
-    input  wire [7:0]  char_rgb_g,         // Character mode green
-    input  wire [7:0]  char_rgb_b,         // Character mode blue
+    input  wire [7:0]  char_rgb_r,
+    input  wire [7:0]  char_rgb_g,
+    input  wire [7:0]  char_rgb_b,
 
-    // Graphics GPU RGB inputs
-    input  wire [7:0]  gfx_rgb_r,          // Graphics mode red
-    input  wire [7:0]  gfx_rgb_g,          // Graphics mode green
-    input  wire [7:0]  gfx_rgb_b,          // Graphics mode blue
+    // Bitmap Graphics GPU RGB inputs
+    input  wire [7:0]  gfx_rgb_r,
+    input  wire [7:0]  gfx_rgb_g,
+    input  wire [7:0]  gfx_rgb_b,
+
+    // Scanline GPU RGB inputs
+    input  wire [7:0]  scan_rgb_r,
+    input  wire [7:0]  scan_rgb_g,
+    input  wire [7:0]  scan_rgb_b,
 
     // Final RGB outputs (to DVI transmitter)
-    output wire [7:0]  rgb_r_out,          // Selected red output
-    output wire [7:0]  rgb_g_out,          // Selected green output
-    output wire [7:0]  rgb_b_out           // Selected blue output
+    output reg  [7:0]  rgb_r_out,
+    output reg  [7:0]  rgb_g_out,
+    output reg  [7:0]  rgb_b_out
 );
 
-    //=========================================================================
-    // RGB Multiplexer (Combinational)
-    //=========================================================================
-
-    // Simple 2:1 mux for each color channel
-    // display_mode = 0 → character GPU output
-    // display_mode = 1 → graphics GPU output
-
-    assign rgb_r_out = display_mode ? gfx_rgb_r : char_rgb_r;
-    assign rgb_g_out = display_mode ? gfx_rgb_g : char_rgb_g;
-    assign rgb_b_out = display_mode ? gfx_rgb_b : char_rgb_b;
+    always @(*) begin
+        case (display_mode)
+            2'd0: begin // Character mode
+                rgb_r_out = char_rgb_r;
+                rgb_g_out = char_rgb_g;
+                rgb_b_out = char_rgb_b;
+            end
+            2'd1: begin // Bitmap graphics
+                rgb_r_out = gfx_rgb_r;
+                rgb_g_out = gfx_rgb_g;
+                rgb_b_out = gfx_rgb_b;
+            end
+            2'd2: begin // Scanline hi-res
+                rgb_r_out = scan_rgb_r;
+                rgb_g_out = scan_rgb_g;
+                rgb_b_out = scan_rgb_b;
+            end
+            default: begin
+                rgb_r_out = char_rgb_r;
+                rgb_g_out = char_rgb_g;
+                rgb_b_out = char_rgb_b;
+            end
+        endcase
+    end
 
 endmodule
