@@ -60,7 +60,10 @@ module gpu_femtorv_wrapper(
     // Framebuffer pixel input (from video FIFO)
     input  wire [31:0] fb_pixel_data,  // 2x RGB565 pixels from FIFO
     input  wire        fb_pixel_valid, // FIFO has data
-    output wire        fb_pixel_rd     // Request next word from FIFO
+    output wire        fb_pixel_rd,    // Request next word from FIFO
+
+    // Display mode output (for enabling video fetch)
+    output wire [1:0]  display_mode_out
 );
 
     //==========================================================================
@@ -100,7 +103,7 @@ module gpu_femtorv_wrapper(
     // GPU Top Instance
     //==========================================================================
 
-    wire debug_display_mode;
+    wire [1:0] debug_display_mode;
     wire debug_gfx_gpu_cs;
     wire debug_char_gpu_cs;
     wire debug_vsync;
@@ -159,5 +162,6 @@ module gpu_femtorv_wrapper(
     end
     assign hsync_start = (gpu_h_count == 10'd640) && (h_count_prev == 10'd639);
     assign vsync_start = (gpu_v_count == 10'd400) && (v_count_prev == 10'd399);
+    assign display_mode_out = debug_display_mode;
 
 endmodule

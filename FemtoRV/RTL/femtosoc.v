@@ -538,9 +538,8 @@ module femtosoc(
    );
 
    // Video fetch engine — only active when display_mode == 2 (framebuffer)
-   // gpu_inst.gpu_inst.display_mode comes from graphics registers
-   // For safety, gate hsync_start so fetch engine does nothing in modes 0/1
-   wire fetch_enabled = 0; // TODO: connect to display_mode == 2 when ready to test
+   wire [1:0] gpu_display_mode;
+   wire fetch_enabled = (gpu_display_mode == 2'd2);
    wire gated_hsync = gpu_hsync_start & fetch_enabled;
    wire gated_vsync = gpu_vsync_start & fetch_enabled;
 
@@ -975,7 +974,8 @@ HardwareConfig hwconfig(
       .vsync_start(gpu_vsync_start),
       .fb_pixel_data(fifo_rd_data),
       .fb_pixel_valid(!fifo_empty),
-      .fb_pixel_rd(fifo_rd_en)
+      .fb_pixel_rd(fifo_rd_en),
+      .display_mode_out(gpu_display_mode)
    );
 
  `ifdef NRV_IO_INT_CONTROLLER

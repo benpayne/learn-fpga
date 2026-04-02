@@ -76,7 +76,7 @@ module gpu_top(
     output wire [1:0]  tmds_blue_out,  // TMDS blue channel DDR data
 
     // Debug outputs for LED indicators
-    output wire        debug_display_mode,  // Current display mode (0=char, 1=graphics)
+    output wire [1:0]  debug_display_mode,  // Current display mode (0=char, 1=gfx, 2=fb)
     output wire        debug_gfx_gpu_cs,    // Graphics GPU chip select
     output wire        debug_char_gpu_cs,   // Character GPU chip select
     output wire        debug_vsync,         // VSync signal
