@@ -35,7 +35,10 @@ module sdram_burst_reader (
     output reg         sd_cas,
 
     // SDRAM data input (directly from SDRAM chip via input register)
-    input  wire [31:0] sd_data_in
+    input  wire [31:0] sd_data_in,
+
+    // Original controller busy signal — must wait for idle before taking over
+    input  wire        ctrl_busy
 );
 
     localparam CMD_NOP        = 4'b0111;
@@ -44,11 +47,13 @@ module sdram_burst_reader (
     localparam CMD_PRECHARGE  = 4'b0010;
 
     // States
-    localparam S_IDLE      = 0;
-    localparam S_ACTIVATE  = 1;  // Row activate issued, wait tRCD
-    localparam S_READING   = 2;  // Issuing READs and collecting data
-    localparam S_DRAIN     = 3;  // Draining CAS pipeline after last READ
-    localparam S_PRECHARGE = 4;  // Precharge issued, wait tRP
+    localparam S_IDLE        = 0;
+    localparam S_WAIT_IDLE   = 1;  // Wait for original controller to finish
+    localparam S_WAIT_SETTLE = 2;  // Extra settle cycles
+    localparam S_ACTIVATE    = 3;  // Row activate issued, wait tRCD
+    localparam S_READING     = 4;  // Issuing READs and collecting data
+    localparam S_DRAIN       = 5;  // Draining CAS pipeline after last READ
+    localparam S_PRECHARGE   = 6;  // Precharge issued, wait tRP
 
     reg [2:0] state;
 
@@ -78,16 +83,34 @@ module sdram_burst_reader (
                 active <= 0;
                 if (burst_rd && !burst_busy) begin
                     burst_busy <= 1;
-                    active     <= 1;
-                    // Issue ACTIVATE command
-                    sd_ba   <= burst_addr[22:21];
-                    sd_addr <= {2'b00, burst_addr[20:10]};  // Row address
-                    {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
-                    sd_dqm  <= 4'b0000;
+                    // Latch burst parameters
                     col     <= burst_addr[9:2];
                     reads_remaining <= burst_len;
                     data_remaining  <= burst_len;
                     cas_pipe <= 0;
+                    state   <= S_WAIT_IDLE;
+                end
+            end
+
+            S_WAIT_IDLE: begin
+                // Wait for original controller to be idle, then wait 2 extra
+                // cycles for it to settle in IDLE state before taking over pins.
+                if (!ctrl_busy) begin
+                    pre_wait <= 2;
+                    state <= S_WAIT_SETTLE;
+                end
+            end
+
+            S_WAIT_SETTLE: begin
+                // Extra settle time after controller goes idle
+                if (pre_wait > 0) begin
+                    pre_wait <= pre_wait - 1;
+                end else begin
+                    active  <= 1;
+                    sd_ba   <= burst_addr[22:21];
+                    sd_addr <= {2'b00, burst_addr[20:10]};
+                    {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
+                    sd_dqm  <= 4'b0000;
                     state   <= S_ACTIVATE;
                 end
             end

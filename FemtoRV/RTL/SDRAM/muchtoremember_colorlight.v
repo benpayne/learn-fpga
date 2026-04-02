@@ -19,13 +19,13 @@ module muchtoremember (
   // Interface to SDRAM chip
   output             sd_clk,
   inout      [31:0]  sd_d,          // 32-bit bidirectional data
-  output reg [12:0]  sd_addr,       // Address bus (only A0-A10 connected)
-  output reg  [1:0]  sd_ba,         // Bank select
-  output reg  [3:0]  sd_dqm,        // Byte mask (4 bytes for 32-bit)
-  output reg         sd_cs,
-  output reg         sd_we,
-  output reg         sd_ras,
-  output reg         sd_cas,
+  output     [12:0]  sd_addr,       // Address bus (only A0-A10 connected)
+  output      [1:0]  sd_ba,         // Bank select
+  output      [3:0]  sd_dqm,        // Byte mask (4 bytes for 32-bit)
+  output             sd_cs,
+  output             sd_we,
+  output             sd_ras,
+  output             sd_cas,
 
   // Interface to processor
   input  clk,
@@ -37,8 +37,8 @@ module muchtoremember (
   output reg [31:0] dout,
   output reg busy,
 
-  // Command override for burst reader (active-high)
-  input         ovr_active,         // When 1, override command pins
+  // Burst reader override — muxes command outputs when active
+  input         ovr_active,
   input  [12:0] ovr_addr,
   input   [1:0] ovr_ba,
   input   [3:0] ovr_dqm,
@@ -50,6 +50,21 @@ module muchtoremember (
   // Data input exposed for burst reader
   output wire [31:0] sd_data_in_out
 );
+
+  // Internal command registers (state machine drives these)
+  reg [12:0] int_sd_addr;
+  reg  [1:0] int_sd_ba;
+  reg  [3:0] int_sd_dqm;
+  reg        int_sd_cs, int_sd_we, int_sd_ras, int_sd_cas;
+
+  // Output mux: burst reader overrides when active
+  assign sd_addr = ovr_active ? ovr_addr : int_sd_addr;
+  assign sd_ba   = ovr_active ? ovr_ba   : int_sd_ba;
+  assign sd_dqm  = ovr_active ? ovr_dqm  : int_sd_dqm;
+  assign sd_cs   = ovr_active ? ovr_cs   : int_sd_cs;
+  assign sd_we   = ovr_active ? ovr_we   : int_sd_we;
+  assign sd_ras  = ovr_active ? ovr_ras  : int_sd_ras;
+  assign sd_cas  = ovr_active ? ovr_cas  : int_sd_cas;
 
   parameter sdram_startup_cycles = 10100;
   parameter sdram_refresh_cycles = 195;
@@ -156,36 +171,36 @@ module muchtoremember (
       case(1'b1)
 
         state[s_init_bit]: begin
-          sd_ba  <= 2'b00;
-          sd_dqm <= 4'b1111;
+          int_sd_ba  <= 2'b00;
+          int_sd_dqm <= 4'b1111;
           sd_data_drive <= 0;
 
           case (reset_counter)
-            33: begin sd_cs <= 0; end
-            31: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_PRECHARGE; sd_addr <= 13'b0010000000000; end
-            23: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_AUTO_REFRESH; end
-            15: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_AUTO_REFRESH; end
-            7:  begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_LOAD_MODE; sd_addr <= MODE; end
-            default: {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
+            33: begin int_sd_cs <= 0; end
+            31: begin {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_PRECHARGE; int_sd_addr <= 13'b0010000000000; end
+            23: begin {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_AUTO_REFRESH; end
+            15: begin {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_AUTO_REFRESH; end
+            7:  begin {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_LOAD_MODE; int_sd_addr <= MODE; end
+            default: {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP;
           endcase
 
           reset_counter <= reset_counter - 1;
           if (reset_counter == 0) state <= s_idle;
         end
 
-        state[s_idle_in_6_bit]: begin state <= s_idle_in_5; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_5_bit]: begin state <= s_idle_in_4; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_4_bit]: begin state <= s_idle_in_3; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_3_bit]: begin state <= s_idle_in_2; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_2_bit]: begin state <= s_idle_in_1; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        state[s_idle_in_1_bit]: begin state <= s_idle;      {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_6_bit]: begin state <= s_idle_in_5; {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP; end
+        state[s_idle_in_5_bit]: begin state <= s_idle_in_4; {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP; end
+        state[s_idle_in_4_bit]: begin state <= s_idle_in_3; {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP; end
+        state[s_idle_in_3_bit]: begin state <= s_idle_in_2; {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP; end
+        state[s_idle_in_2_bit]: begin state <= s_idle_in_1; {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP; end
+        state[s_idle_in_1_bit]: begin state <= s_idle;      {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP; end
 
         state[s_idle_bit]: begin
           // Row activate: bank and row address
-          sd_ba                          <= addr[22:21];                  // Bank select
-          sd_addr                        <= {2'b00, addr[20:10]} ;       // Row address (11 bits, A0-A10)
+          int_sd_ba                          <= addr[22:21];                  // Bank select
+          int_sd_addr                        <= {2'b00, addr[20:10]} ;       // Row address (11 bits, A0-A10)
 
-          {sd_cs, sd_ras, sd_cas, sd_we} <= refresh_pending             ? CMD_AUTO_REFRESH :
+          {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= refresh_pending             ? CMD_AUTO_REFRESH :
                                             (|wmask_sticky) | rd_sticky ? CMD_ACTIVE :
                                                                           CMD_NOP;
 
@@ -196,21 +211,21 @@ module muchtoremember (
 
         state[s_activate_bit]: begin
           sd_data_drive                  <= ~rd_sticky;
-          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
+          {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP;
           state                          <= rd_sticky ? s_read_1 : s_write_1;
         end
 
         // ---- Read: single 32-bit access ----
 
         state[s_read_1_bit]: begin
-          sd_dqm                         <= 4'b0000; // All bytes active
-          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_READ;
-          sd_addr                        <= {3'b001, 2'b00, addr[9:2]}; // A10=auto-precharge, A7:A0=column
+          int_sd_dqm                         <= 4'b0000; // All bytes active
+          {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_READ;
+          int_sd_addr                        <= {3'b001, 2'b00, addr[9:2]}; // A10=auto-precharge, A7:A0=column
           state                          <= s_read_2;
         end
 
         state[s_read_2_bit]: begin
-          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
+          {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_NOP;
           state                          <= s_read_3;
         end
 
@@ -226,29 +241,15 @@ module muchtoremember (
 
         // Busy clears here:
         state[s_write_1_bit]: begin
-          sd_addr                        <= {3'b001, 2'b00, addr[9:2]}; // A10=auto-precharge, A7:A0=column
+          int_sd_addr                        <= {3'b001, 2'b00, addr[9:2]}; // A10=auto-precharge, A7:A0=column
           sd_data_out                    <= din;
-          sd_dqm                         <= ~wmask_sticky;  // 4-bit byte mask
-          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_WRITE;
+          int_sd_dqm                         <= ~wmask_sticky;  // 4-bit byte mask
+          {int_sd_cs, int_sd_ras, int_sd_cas, int_sd_we} <= CMD_WRITE;
           state                          <= s_idle_in_2;
         end
 
       endcase
 
-      // Command override: burst reader takes over SDRAM pins when active
-      // This happens AFTER the state machine sets the registers, so the
-      // override values win. The state machine continues to run but its
-      // command outputs are overridden.
-      if (ovr_active) begin
-         sd_addr <= ovr_addr;
-         sd_ba   <= ovr_ba;
-         sd_dqm  <= ovr_dqm;
-         sd_cs   <= ovr_cs;
-         sd_we   <= ovr_we;
-         sd_ras  <= ovr_ras;
-         sd_cas  <= ovr_cas;
-         sd_data_drive <= 0;  // Burst reader only reads
-      end
    end
 
 endmodule

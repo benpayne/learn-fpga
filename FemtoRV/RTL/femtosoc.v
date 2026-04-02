@@ -424,7 +424,8 @@ module femtosoc(
    wire [31:0] cache_sdram_din;
    wire [31:0] cache_sdram_dout;
    wire        cache_sdram_busy_raw;  // From controller
-   wire        cache_sdram_busy = cache_sdram_busy_raw | burst_active;  // Stall CPU during burst
+   wire        vid_burst_busy;       // From burst reader (high from request to completion)
+   wire        cache_sdram_busy = cache_sdram_busy_raw | vid_burst_busy;  // Stall CPU during entire burst sequence
 
    // Arbiter <-> Original controller wires
    wire [3:0]  arb_ctrl_wmask;
@@ -441,7 +442,7 @@ module femtosoc(
    wire [31:0] vid_burst_dout;
    wire        vid_burst_valid;
    wire        vid_burst_done;
-   wire        vid_burst_busy;
+   // vid_burst_busy declared above (used for CPU stall)
 
    // Video FIFO wires
    wire [31:0] fifo_wdata;
@@ -498,8 +499,8 @@ module femtosoc(
       .sd_ras(sd_ras),
       .sd_cas(sd_cas),
       // CPU port (blocked during burst)
-      .wmask(burst_active ? 4'b0000 : cache_sdram_wmask),
-      .rd(burst_active ? 1'b0 : cache_sdram_rd),
+      .wmask(vid_burst_busy ? 4'b0000 : cache_sdram_wmask),
+      .rd(vid_burst_busy ? 1'b0 : cache_sdram_rd),
       .addr(cache_sdram_addr),
       .din(cache_sdram_din),
       .dout(cache_sdram_dout),
@@ -534,11 +535,14 @@ module femtosoc(
       .sd_we(burst_sd_we),
       .sd_ras(burst_sd_ras),
       .sd_cas(burst_sd_cas),
-      .sd_data_in(ctrl_sd_data_in)  // From controller's input register
+      .sd_data_in(ctrl_sd_data_in), // From controller's input register
+      .ctrl_busy(cache_sdram_busy_raw)  // Wait for controller idle before starting
    );
 
    // Video fetch engine — only active when display_mode == 2 (framebuffer)
    wire [1:0] gpu_display_mode;
+   // Enable video fetch when display_mode == 2
+   // Note: fetch engine reads from SDRAM, CPU is stalled during bursts
    wire fetch_enabled = (gpu_display_mode == 2'd2);
    wire gated_hsync = gpu_hsync_start & fetch_enabled;
    wire gated_vsync = gpu_vsync_start & fetch_enabled;
@@ -547,12 +551,12 @@ module femtosoc(
       .H_ACTIVE(640),
       .V_ACTIVE(400),
       .STRIDE_WORDS(320),
-      .FB_BASE_PARAM(26'h810000)
+      .FB_BASE_PARAM(26'hA00000)
    ) video_fetch (
       .clk(clk), .resetn(reset),
       .hsync_start(gated_hsync),
       .vsync_start(gated_vsync),
-      .fb_base(26'h810000),
+      .fb_base(26'hA00000),
       .burst_rd(vid_burst_rd),
       .burst_addr(vid_burst_addr),
       .burst_len(vid_burst_len),

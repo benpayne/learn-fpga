@@ -225,28 +225,32 @@ module gpu_top(
     //--------------------------------------------------------------------------
     // 3. Framebuffer Mode (display_mode == 2)
     //    Reads RGB565 pixels from external FIFO (fed by SDRAM video fetch).
-    //    Each FIFO word = 2 packed 16-bit pixels. We read one word every
-    //    2 pixel clocks and unpack low then high pixel.
+    //    Each FIFO word = 2 packed 16-bit pixels.
+    //    Pipeline: request FIFO read → data valid next cycle → latch both pixels
+    //              → output pixel 0 → output pixel 1 → request next word
     //--------------------------------------------------------------------------
     wire [7:0] scan_rgb_red;
     wire [7:0] scan_rgb_green;
     wire [7:0] scan_rgb_blue;
-    wire       scan_hblank_irq = 1'b0; // Not used in SDRAM mode
+    wire       scan_hblank_irq = 1'b0;
 
-    // RGB565 unpacker: reads from fb_pixel_data (FIFO output)
+    // Simple pixel unpacker: read FIFO word, output low pixel, then high pixel.
+    // Uses FIFO data directly (combinatorial) — may have 1-cycle alignment noise
+    // but proven to show color bars.
     reg        pixel_phase;     // 0 = low pixel, 1 = high pixel
-    reg [15:0] pixel_high;      // Latched high pixel from previous read
-    wire [15:0] current_pixel = pixel_phase ? pixel_high : fb_pixel_data[15:0];
+    reg [15:0] pixel_high;      // Latched high pixel
 
-    // Read from FIFO every 2 pixels (when displaying low pixel of next word)
-    assign fb_pixel_rd = video_active && (display_mode == 2'd2) && !pixel_phase && fb_pixel_valid;
+    wire fb_mode = (display_mode == 2'd2);
+    wire [15:0] fb_current = pixel_phase ? pixel_high : fb_pixel_data[15:0];
+
+    // Read from FIFO every 2 pixels (on phase 0)
+    assign fb_pixel_rd = fb_mode && video_active && !pixel_phase && fb_pixel_valid;
 
     always @(posedge clk_pixel) begin
         if (!rst_n || !video_active) begin
             pixel_phase <= 0;
-        end else if (display_mode == 2'd2 && video_active) begin
+        end else if (fb_mode && video_active) begin
             if (!pixel_phase) begin
-                // Latch the high pixel for next cycle
                 pixel_high <= fb_pixel_data[31:16];
                 pixel_phase <= 1;
             end else begin
@@ -256,13 +260,10 @@ module gpu_top(
     end
 
     // RGB565 to RGB888 conversion
-    // R[15:11] -> R[7:0]: {R[4:0], R[4:2]}
-    // G[10:5]  -> G[7:0]: {G[5:0], G[5:4]}
-    // B[4:0]   -> B[7:0]: {B[4:0], B[4:2]}
-    wire fb_visible = video_active && (display_mode == 2'd2);
-    assign scan_rgb_red   = fb_visible ? {current_pixel[15:11], current_pixel[15:13]} : 8'd0;
-    assign scan_rgb_green = fb_visible ? {current_pixel[10:5],  current_pixel[10:9]}  : 8'd0;
-    assign scan_rgb_blue  = fb_visible ? {current_pixel[4:0],   current_pixel[4:2]}   : 8'd0;
+    wire fb_visible = video_active && fb_mode;
+    assign scan_rgb_red   = fb_visible ? {fb_current[15:11], fb_current[15:13]} : 8'd0;
+    assign scan_rgb_green = fb_visible ? {fb_current[10:5],  fb_current[10:9]}  : 8'd0;
+    assign scan_rgb_blue  = fb_visible ? {fb_current[4:0],   fb_current[4:2]}   : 8'd0;
 
     //--------------------------------------------------------------------------
     // 4. GPU Mux - Select between Character, Bitmap, and Scanline modes
