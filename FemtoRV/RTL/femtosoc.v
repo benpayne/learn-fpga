@@ -29,6 +29,7 @@
 `include "DEVICES/PS2Decoder.v" // PS2 keyboard decoder
 
 `ifdef NRV_IO_SDRAM
+`include "SDRAM/muchtoremember_colorlight.v"
 `include "SDRAM/muchtoremember_burst.v"
 `include "SDRAM/sdram_arbiter.v"
 `include "SDRAM/video_fetch_engine.v"
@@ -473,41 +474,9 @@ module femtosoc(
       .sdram_busy(cache_sdram_busy)
    );
 
-   // Arbiter: video gets priority, CPU gets remaining cycles
-   sdram_arbiter arbiter (
-      .clk(clk),
-      .resetn(reset),
-      // Video port
-      .vid_burst_rd(vid_burst_rd),
-      .vid_burst_addr(vid_burst_addr),
-      .vid_burst_len(vid_burst_len),
-      .vid_burst_dout(vid_burst_dout),
-      .vid_burst_valid(vid_burst_valid),
-      .vid_burst_busy(vid_burst_busy),
-      // CPU port (from cache)
-      .cpu_wmask(cache_sdram_wmask),
-      .cpu_rd(cache_sdram_rd),
-      .cpu_addr(cache_sdram_addr),
-      .cpu_din(cache_sdram_din),
-      .cpu_dout(cache_sdram_dout),
-      .cpu_busy(cache_sdram_busy),
-      // Controller port
-      .ctrl_wmask(arb_ctrl_wmask),
-      .ctrl_rd(arb_ctrl_rd),
-      .ctrl_addr(arb_ctrl_addr),
-      .ctrl_din(arb_ctrl_din),
-      .ctrl_dout(arb_ctrl_dout),
-      .ctrl_busy(arb_ctrl_busy),
-      .ctrl_burst_rd(arb_ctrl_burst_rd),
-      .ctrl_burst_addr(arb_ctrl_burst_addr),
-      .ctrl_burst_len(arb_ctrl_burst_len),
-      .ctrl_burst_dout(arb_ctrl_burst_dout),
-      .ctrl_burst_valid(arb_ctrl_burst_valid),
-      .ctrl_burst_busy(arb_ctrl_burst_busy)
-   );
-
-   // SDRAM controller with burst support
-   muchtoremember_burst sdram_ctrl (
+   // SDRAM controller — original single-word controller
+   // (Video fetch pipeline disabled until burst controller busy signal is fixed)
+   muchtoremember sdram_ctrl (
       .clk(clk),
       .resetn(reset),
       .sd_clk(sdram_clk),
@@ -519,24 +488,25 @@ module femtosoc(
       .sd_we(sd_we),
       .sd_ras(sd_ras),
       .sd_cas(sd_cas),
-      // Single-word port (from arbiter)
-      .wmask(arb_ctrl_wmask),
-      .rd(arb_ctrl_rd),
-      .addr(arb_ctrl_addr),
-      .din(arb_ctrl_din),
-      .dout(arb_ctrl_dout),
-      .busy(arb_ctrl_busy),
-      // Burst port (from arbiter)
-      .burst_rd(arb_ctrl_burst_rd),
-      .burst_addr(arb_ctrl_burst_addr),
-      .burst_len(arb_ctrl_burst_len),
-      .burst_dout(arb_ctrl_burst_dout),
-      .burst_valid(arb_ctrl_burst_valid),
-      .burst_done(arb_ctrl_burst_done),
-      .burst_busy(arb_ctrl_burst_busy)
+      .wmask(cache_sdram_wmask),
+      .rd(cache_sdram_rd),
+      .addr(cache_sdram_addr),
+      .din(cache_sdram_din),
+      .dout(cache_sdram_dout),
+      .busy(cache_sdram_busy)
    );
 
-   // Video fetch engine: reads scanlines from SDRAM into FIFO
+   // Stub out video fetch signals (disabled for now)
+   assign vid_burst_dout = 0;
+   assign vid_burst_valid = 0;
+   assign vid_burst_busy = 0;
+
+   // Video fetch engine: DISABLED until burst controller is integrated
+   // Stub: no fetching, FIFO stays empty, display_mode=2 shows black
+   assign fifo_wdata = 0;
+   assign fifo_wen = 0;
+
+   /* Video fetch engine (disabled):
    video_fetch_engine #(
       .H_ACTIVE(640),
       .V_ACTIVE(400),
@@ -559,6 +529,7 @@ module femtosoc(
       .fifo_full(fifo_full),
       .line_num()
    );
+   */
 
    // Video line FIFO: bridges SDRAM fetch (sys clock) to GPU (pixel clock)
    video_line_fifo fifo (
