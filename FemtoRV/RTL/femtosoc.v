@@ -30,8 +30,7 @@
 
 `ifdef NRV_IO_SDRAM
 `include "SDRAM/muchtoremember_colorlight.v"
-`include "SDRAM/muchtoremember_burst.v"
-`include "SDRAM/sdram_arbiter.v"
+`include "SDRAM/sdram_burst_reader.v"
 `include "SDRAM/video_fetch_engine.v"
 `include "SDRAM/video_line_fifo.v"
 `include "DEVICES/cache.v"
@@ -413,35 +412,35 @@ module femtosoc(
    wire [3:0]  sd_dqm_unused;
    assign sd_addr = sd_addr_full[10:0];
 
-   // Cache <-> Arbiter <-> SDRAM controller wires
+   // ---- SDRAM with video fetch pipeline ----
+   // Architecture: original muchtoremember (unchanged) for CPU single-word access.
+   // Separate sdram_burst_reader for video burst reads.
+   // sdram_arbiter muxes SDRAM pins between the two.
+
+   // Cache <-> Arbiter wires
    wire [3:0]  cache_sdram_wmask;
    wire        cache_sdram_rd;
    wire [25:0] cache_sdram_addr;
    wire [31:0] cache_sdram_din;
    wire [31:0] cache_sdram_dout;
-   wire        cache_sdram_busy;
+   wire        cache_sdram_busy_raw;  // From controller
+   wire        cache_sdram_busy = cache_sdram_busy_raw | burst_active;  // Stall CPU during burst
 
-   // Arbiter <-> SDRAM controller wires
+   // Arbiter <-> Original controller wires
    wire [3:0]  arb_ctrl_wmask;
    wire        arb_ctrl_rd;
    wire [25:0] arb_ctrl_addr;
    wire [31:0] arb_ctrl_din;
    wire [31:0] arb_ctrl_dout;
    wire        arb_ctrl_busy;
-   wire        arb_ctrl_burst_rd;
-   wire [25:0] arb_ctrl_burst_addr;
-   wire [8:0]  arb_ctrl_burst_len;
-   wire [31:0] arb_ctrl_burst_dout;
-   wire        arb_ctrl_burst_valid;
-   wire        arb_ctrl_burst_done;
-   wire        arb_ctrl_burst_busy;
 
-   // Video fetch <-> Arbiter wires
+   // Video fetch <-> burst reader wires
    wire        vid_burst_rd;
    wire [25:0] vid_burst_addr;
    wire [8:0]  vid_burst_len;
    wire [31:0] vid_burst_dout;
    wire        vid_burst_valid;
+   wire        vid_burst_done;
    wire        vid_burst_busy;
 
    // Video FIFO wires
@@ -452,14 +451,16 @@ module femtosoc(
    wire        fifo_rd_en;
    wire        fifo_empty;
 
-   // GPU timing pulses (from GPU wrapper, pixel clock domain)
+   // GPU timing pulses
    wire        gpu_hsync_start;
    wire        gpu_vsync_start;
 
-   // Cache between CPU and arbiter
+   // SDRAM data input (shared between both controllers)
+   wire [31:0] sd_data_in_shared;
+
+   // Cache
    sdram_cache cache (
-      .clk(clk),
-      .resetn(reset),
+      .clk(clk), .resetn(reset),
       .cpu_wmask(mem_address_is_sdram ? mem_wmask : 4'b0),
       .cpu_rd(mem_address_is_sdram & mem_rstrb),
       .cpu_addr(mem_address[22:0]),
@@ -474,11 +475,19 @@ module femtosoc(
       .sdram_busy(cache_sdram_busy)
    );
 
-   // SDRAM controller — original single-word controller
-   // (Video fetch pipeline disabled until burst controller busy signal is fixed)
+   // Burst reader command wires
+   wire        burst_active;
+   wire [12:0] burst_sd_addr;
+   wire [1:0]  burst_sd_ba;
+   wire [3:0]  burst_sd_dqm;
+   wire        burst_sd_cs, burst_sd_we, burst_sd_ras, burst_sd_cas;
+   wire [31:0] ctrl_sd_data_in;
+
+   // Original SDRAM controller with burst override
+   // Stays directly connected to SDRAM pins (preserves IOLOGIC)
+   // Burst reader overrides command registers when active
    muchtoremember sdram_ctrl (
-      .clk(clk),
-      .resetn(reset),
+      .clk(clk), .resetn(reset),
       .sd_clk(sdram_clk),
       .sd_d(sd_d),
       .sd_addr(sd_addr_full),
@@ -488,36 +497,63 @@ module femtosoc(
       .sd_we(sd_we),
       .sd_ras(sd_ras),
       .sd_cas(sd_cas),
-      .wmask(cache_sdram_wmask),
-      .rd(cache_sdram_rd),
+      // CPU port (blocked during burst)
+      .wmask(burst_active ? 4'b0000 : cache_sdram_wmask),
+      .rd(burst_active ? 1'b0 : cache_sdram_rd),
       .addr(cache_sdram_addr),
       .din(cache_sdram_din),
       .dout(cache_sdram_dout),
-      .busy(cache_sdram_busy)
+      .busy(cache_sdram_busy_raw),
+      // Burst override
+      .ovr_active(burst_active),
+      .ovr_addr(burst_sd_addr),
+      .ovr_ba(burst_sd_ba),
+      .ovr_dqm(burst_sd_dqm),
+      .ovr_cs(burst_sd_cs),
+      .ovr_we(burst_sd_we),
+      .ovr_ras(burst_sd_ras),
+      .ovr_cas(burst_sd_cas),
+      .sd_data_in_out(ctrl_sd_data_in)
    );
 
-   // Stub out video fetch signals (disabled for now)
-   assign vid_burst_dout = 0;
-   assign vid_burst_valid = 0;
-   assign vid_burst_busy = 0;
+   // Burst reader — generates burst SDRAM commands, reads data via controller
+   sdram_burst_reader burst_reader (
+      .clk(clk), .resetn(reset),
+      .burst_rd(vid_burst_rd),
+      .burst_addr(vid_burst_addr),
+      .burst_len(vid_burst_len),
+      .burst_dout(vid_burst_dout),
+      .burst_valid(vid_burst_valid),
+      .burst_done(vid_burst_done),
+      .burst_busy(vid_burst_busy),
+      .active(burst_active),
+      .sd_addr(burst_sd_addr),
+      .sd_ba(burst_sd_ba),
+      .sd_dqm(burst_sd_dqm),
+      .sd_cs(burst_sd_cs),
+      .sd_we(burst_sd_we),
+      .sd_ras(burst_sd_ras),
+      .sd_cas(burst_sd_cas),
+      .sd_data_in(ctrl_sd_data_in)  // From controller's input register
+   );
 
-   // Video fetch engine: DISABLED until burst controller is integrated
-   // Stub: no fetching, FIFO stays empty, display_mode=2 shows black
-   assign fifo_wdata = 0;
-   assign fifo_wen = 0;
+   // Video fetch engine — only active when display_mode == 2 (framebuffer)
+   // gpu_inst.gpu_inst.display_mode comes from graphics registers
+   // For safety, gate hsync_start so fetch engine does nothing in modes 0/1
+   wire fetch_enabled = 0; // TODO: connect to display_mode == 2 when ready to test
+   wire gated_hsync = gpu_hsync_start & fetch_enabled;
+   wire gated_vsync = gpu_vsync_start & fetch_enabled;
 
-   /* Video fetch engine (disabled):
    video_fetch_engine #(
       .H_ACTIVE(640),
       .V_ACTIVE(400),
       .STRIDE_WORDS(320),
       .FB_BASE_PARAM(26'h810000)
    ) video_fetch (
-      .clk(clk),
-      .resetn(reset),
-      .hsync_start(gpu_hsync_start),
-      .vsync_start(gpu_vsync_start),
-      .fb_base(26'h810000),    // TODO: make configurable via register
+      .clk(clk), .resetn(reset),
+      .hsync_start(gated_hsync),
+      .vsync_start(gated_vsync),
+      .fb_base(26'h810000),
       .burst_rd(vid_burst_rd),
       .burst_addr(vid_burst_addr),
       .burst_len(vid_burst_len),
@@ -529,7 +565,6 @@ module femtosoc(
       .fifo_full(fifo_full),
       .line_num()
    );
-   */
 
    // Video line FIFO: bridges SDRAM fetch (sys clock) to GPU (pixel clock)
    video_line_fifo fifo (

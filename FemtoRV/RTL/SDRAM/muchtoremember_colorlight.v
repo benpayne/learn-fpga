@@ -35,7 +35,20 @@ module muchtoremember (
   input  [25:0] addr,
   input  [31:0] din,
   output reg [31:0] dout,
-  output reg busy
+  output reg busy,
+
+  // Command override for burst reader (active-high)
+  input         ovr_active,         // When 1, override command pins
+  input  [12:0] ovr_addr,
+  input   [1:0] ovr_ba,
+  input   [3:0] ovr_dqm,
+  input         ovr_cs,
+  input         ovr_we,
+  input         ovr_ras,
+  input         ovr_cas,
+
+  // Data input exposed for burst reader
+  output wire [31:0] sd_data_in_out
 );
 
   parameter sdram_startup_cycles = 10100;
@@ -46,6 +59,9 @@ module muchtoremember (
   wire [31:0] sd_data_in;
   reg  [31:0] sd_data_out;
   reg         sd_data_drive;
+
+  // Expose sd_data_in for burst reader
+  assign sd_data_in_out = sd_data_in;
 
   `ifdef __ICARUS__
 
@@ -218,6 +234,21 @@ module muchtoremember (
         end
 
       endcase
+
+      // Command override: burst reader takes over SDRAM pins when active
+      // This happens AFTER the state machine sets the registers, so the
+      // override values win. The state machine continues to run but its
+      // command outputs are overridden.
+      if (ovr_active) begin
+         sd_addr <= ovr_addr;
+         sd_ba   <= ovr_ba;
+         sd_dqm  <= ovr_dqm;
+         sd_cs   <= ovr_cs;
+         sd_we   <= ovr_we;
+         sd_ras  <= ovr_ras;
+         sd_cas  <= ovr_cas;
+         sd_data_drive <= 0;  // Burst reader only reads
+      end
    end
 
 endmodule
