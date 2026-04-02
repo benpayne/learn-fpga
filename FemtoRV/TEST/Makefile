@@ -9,7 +9,10 @@ LIB_DIR = ../lib/ps2-controller-lib
 # Or use convenience targets below
 
 # PS2 decoder (default)
-ifeq ($(MODULE),sdram_burst_tb)
+ifeq ($(MODULE),video_fetch_tb)
+  VERILOG_SOURCES = video_fetch_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v ../RTL/SDRAM/sdram_arbiter.v ../RTL/SDRAM/video_fetch_engine.v ../RTL/SDRAM/video_line_fifo.v
+  TOPLEVEL := video_fetch_wrapper
+else ifeq ($(MODULE),sdram_burst_tb)
   VERILOG_SOURCES = sdram_burst_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v
   TOPLEVEL := sdram_burst_wrapper
 else ifeq ($(MODULE),ic_tb)
@@ -38,6 +41,9 @@ test-ic:
 
 test-timer:
 	$(MAKE) MODULE=timer_tb SIM=$(SIM)
+
+test-video-fetch:
+	$(MAKE) MODULE=video_fetch_tb SIM=$(SIM)
 
 test-sdram-burst:
 	$(MAKE) MODULE=sdram_burst_tb SIM=$(SIM)
