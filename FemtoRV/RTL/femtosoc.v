@@ -29,7 +29,10 @@
 `include "DEVICES/PS2Decoder.v" // PS2 keyboard decoder
 
 `ifdef NRV_IO_SDRAM
-`include "SDRAM/muchtoremember_colorlight.v"
+`include "SDRAM/muchtoremember_burst.v"
+`include "SDRAM/sdram_arbiter.v"
+`include "SDRAM/video_fetch_engine.v"
+`include "SDRAM/video_line_fifo.v"
 `include "DEVICES/cache.v"
 `endif
 
@@ -409,7 +412,7 @@ module femtosoc(
    wire [3:0]  sd_dqm_unused;
    assign sd_addr = sd_addr_full[10:0];
 
-   // Cache <-> SDRAM wires
+   // Cache <-> Arbiter <-> SDRAM controller wires
    wire [3:0]  cache_sdram_wmask;
    wire        cache_sdram_rd;
    wire [25:0] cache_sdram_addr;
@@ -417,18 +420,51 @@ module femtosoc(
    wire [31:0] cache_sdram_dout;
    wire        cache_sdram_busy;
 
-   // Cache between CPU and SDRAM
+   // Arbiter <-> SDRAM controller wires
+   wire [3:0]  arb_ctrl_wmask;
+   wire        arb_ctrl_rd;
+   wire [25:0] arb_ctrl_addr;
+   wire [31:0] arb_ctrl_din;
+   wire [31:0] arb_ctrl_dout;
+   wire        arb_ctrl_busy;
+   wire        arb_ctrl_burst_rd;
+   wire [25:0] arb_ctrl_burst_addr;
+   wire [8:0]  arb_ctrl_burst_len;
+   wire [31:0] arb_ctrl_burst_dout;
+   wire        arb_ctrl_burst_valid;
+   wire        arb_ctrl_burst_done;
+   wire        arb_ctrl_burst_busy;
+
+   // Video fetch <-> Arbiter wires
+   wire        vid_burst_rd;
+   wire [25:0] vid_burst_addr;
+   wire [8:0]  vid_burst_len;
+   wire [31:0] vid_burst_dout;
+   wire        vid_burst_valid;
+   wire        vid_burst_busy;
+
+   // Video FIFO wires
+   wire [31:0] fifo_wdata;
+   wire        fifo_wen;
+   wire        fifo_full;
+   wire [31:0] fifo_rd_data;
+   wire        fifo_rd_en;
+   wire        fifo_empty;
+
+   // GPU timing pulses (from GPU wrapper, pixel clock domain)
+   wire        gpu_hsync_start;
+   wire        gpu_vsync_start;
+
+   // Cache between CPU and arbiter
    sdram_cache cache (
       .clk(clk),
       .resetn(reset),
-      // CPU side
       .cpu_wmask(mem_address_is_sdram ? mem_wmask : 4'b0),
       .cpu_rd(mem_address_is_sdram & mem_rstrb),
       .cpu_addr(mem_address[22:0]),
       .cpu_din(mem_wdata),
       .cpu_dout(sdram_rdata),
       .cpu_busy(sdram_busy),
-      // SDRAM side
       .sdram_wmask(cache_sdram_wmask),
       .sdram_rd(cache_sdram_rd),
       .sdram_addr(cache_sdram_addr),
@@ -437,7 +473,41 @@ module femtosoc(
       .sdram_busy(cache_sdram_busy)
    );
 
-   muchtoremember sdram_ctrl (
+   // Arbiter: video gets priority, CPU gets remaining cycles
+   sdram_arbiter arbiter (
+      .clk(clk),
+      .resetn(reset),
+      // Video port
+      .vid_burst_rd(vid_burst_rd),
+      .vid_burst_addr(vid_burst_addr),
+      .vid_burst_len(vid_burst_len),
+      .vid_burst_dout(vid_burst_dout),
+      .vid_burst_valid(vid_burst_valid),
+      .vid_burst_busy(vid_burst_busy),
+      // CPU port (from cache)
+      .cpu_wmask(cache_sdram_wmask),
+      .cpu_rd(cache_sdram_rd),
+      .cpu_addr(cache_sdram_addr),
+      .cpu_din(cache_sdram_din),
+      .cpu_dout(cache_sdram_dout),
+      .cpu_busy(cache_sdram_busy),
+      // Controller port
+      .ctrl_wmask(arb_ctrl_wmask),
+      .ctrl_rd(arb_ctrl_rd),
+      .ctrl_addr(arb_ctrl_addr),
+      .ctrl_din(arb_ctrl_din),
+      .ctrl_dout(arb_ctrl_dout),
+      .ctrl_busy(arb_ctrl_busy),
+      .ctrl_burst_rd(arb_ctrl_burst_rd),
+      .ctrl_burst_addr(arb_ctrl_burst_addr),
+      .ctrl_burst_len(arb_ctrl_burst_len),
+      .ctrl_burst_dout(arb_ctrl_burst_dout),
+      .ctrl_burst_valid(arb_ctrl_burst_valid),
+      .ctrl_burst_busy(arb_ctrl_burst_busy)
+   );
+
+   // SDRAM controller with burst support
+   muchtoremember_burst sdram_ctrl (
       .clk(clk),
       .resetn(reset),
       .sd_clk(sdram_clk),
@@ -449,12 +519,62 @@ module femtosoc(
       .sd_we(sd_we),
       .sd_ras(sd_ras),
       .sd_cas(sd_cas),
-      .wmask(cache_sdram_wmask),
-      .rd(cache_sdram_rd),
-      .addr(cache_sdram_addr),
-      .din(cache_sdram_din),
-      .dout(cache_sdram_dout),
-      .busy(cache_sdram_busy)
+      // Single-word port (from arbiter)
+      .wmask(arb_ctrl_wmask),
+      .rd(arb_ctrl_rd),
+      .addr(arb_ctrl_addr),
+      .din(arb_ctrl_din),
+      .dout(arb_ctrl_dout),
+      .busy(arb_ctrl_busy),
+      // Burst port (from arbiter)
+      .burst_rd(arb_ctrl_burst_rd),
+      .burst_addr(arb_ctrl_burst_addr),
+      .burst_len(arb_ctrl_burst_len),
+      .burst_dout(arb_ctrl_burst_dout),
+      .burst_valid(arb_ctrl_burst_valid),
+      .burst_done(arb_ctrl_burst_done),
+      .burst_busy(arb_ctrl_burst_busy)
+   );
+
+   // Video fetch engine: reads scanlines from SDRAM into FIFO
+   video_fetch_engine #(
+      .H_ACTIVE(640),
+      .V_ACTIVE(400),
+      .STRIDE_WORDS(320),
+      .FB_BASE_PARAM(26'h810000)
+   ) video_fetch (
+      .clk(clk),
+      .resetn(reset),
+      .hsync_start(gpu_hsync_start),
+      .vsync_start(gpu_vsync_start),
+      .fb_base(26'h810000),    // TODO: make configurable via register
+      .burst_rd(vid_burst_rd),
+      .burst_addr(vid_burst_addr),
+      .burst_len(vid_burst_len),
+      .burst_dout(vid_burst_dout),
+      .burst_valid(vid_burst_valid),
+      .burst_busy(vid_burst_busy),
+      .fifo_wdata(fifo_wdata),
+      .fifo_wen(fifo_wen),
+      .fifo_full(fifo_full),
+      .line_num()
+   );
+
+   // Video line FIFO: bridges SDRAM fetch (sys clock) to GPU (pixel clock)
+   video_line_fifo fifo (
+      .clk_w(clk),
+      .rst_w(!reset),
+      .wr_data(fifo_wdata),
+      .wr_en(fifo_wen),
+      .full(fifo_full),
+      .almost_full(),
+      .clk_r(clk_pixel),
+      .rst_r(!reset),
+      .rd_data(fifo_rd_data),
+      .rd_en(fifo_rd_en),
+      .empty(fifo_empty),
+      .almost_empty(),
+      .wr_fill()
    );
 `endif
 
@@ -844,7 +964,12 @@ HardwareConfig hwconfig(
       .tmds_blue_out(tmds_blue_parallel),
 
       .gpu_irq(gpu_irq),
-      .scanline_irq(scanline_irq)
+      .scanline_irq(scanline_irq),
+      .hsync_start(gpu_hsync_start),
+      .vsync_start(gpu_vsync_start),
+      .fb_pixel_data(fifo_rd_data),
+      .fb_pixel_valid(!fifo_empty),
+      .fb_pixel_rd(fifo_rd_en)
    );
 
  `ifdef NRV_IO_INT_CONTROLLER

@@ -51,7 +51,16 @@ module gpu_femtorv_wrapper(
 
     // Optional: VBlank interrupt output
     output wire        gpu_irq,
-    output wire        scanline_irq
+    output wire        scanline_irq,
+
+    // Video timing pulses for framebuffer fetch engine
+    output wire        hsync_start,    // 1-cycle pulse at start of HBlank
+    output wire        vsync_start,    // 1-cycle pulse at start of VBlank
+
+    // Framebuffer pixel input (from video FIFO)
+    input  wire [31:0] fb_pixel_data,  // 2x RGB565 pixels from FIFO
+    input  wire        fb_pixel_valid, // FIFO has data
+    output wire        fb_pixel_rd     // Request next word from FIFO
 );
 
     //==========================================================================
@@ -121,10 +130,34 @@ module gpu_femtorv_wrapper(
         .debug_gfx_gpu_cs  (debug_gfx_gpu_cs),
         .debug_char_gpu_cs (debug_char_gpu_cs),
         .debug_vsync       (debug_vsync),
-        .scanline_hblank_irq(scanline_irq)
+        .scanline_hblank_irq(scanline_irq),
+
+        // Timing counters for video fetch
+        .out_h_count   (gpu_h_count),
+        .out_v_count   (gpu_v_count),
+
+        // Framebuffer pixel input
+        .fb_pixel_data (fb_pixel_data),
+        .fb_pixel_valid(fb_pixel_valid),
+        .fb_pixel_rd   (fb_pixel_rd)
     );
 
     // VBlank interrupt
     assign gpu_irq = debug_vsync;
+
+    // ---- Video timing pulses for framebuffer fetch engine ----
+    wire [9:0] gpu_h_count;
+    wire [9:0] gpu_v_count;
+
+    // Generate 1-cycle pulses at the start of HBlank and VBlank
+    // HBlank starts when h_count transitions from 639 to 640
+    // VBlank starts when v_count transitions from 399 to 400
+    reg [9:0] h_count_prev, v_count_prev;
+    always @(posedge clk_pixel) begin
+        h_count_prev <= gpu_h_count;
+        v_count_prev <= gpu_v_count;
+    end
+    assign hsync_start = (gpu_h_count == 10'd640) && (h_count_prev == 10'd639);
+    assign vsync_start = (gpu_v_count == 10'd400) && (v_count_prev == 10'd399);
 
 endmodule

@@ -80,7 +80,16 @@ module gpu_top(
     output wire        debug_gfx_gpu_cs,    // Graphics GPU chip select
     output wire        debug_char_gpu_cs,   // Character GPU chip select
     output wire        debug_vsync,         // VSync signal
-    output wire        scanline_hblank_irq  // HBlank interrupt from scanline renderer
+    output wire        scanline_hblank_irq, // HBlank interrupt from scanline renderer
+
+    // Timing counters for external video fetch
+    output wire [9:0]  out_h_count,
+    output wire [9:0]  out_v_count,
+
+    // Framebuffer pixel input (for display_mode == 2)
+    input  wire [31:0] fb_pixel_data,
+    input  wire        fb_pixel_valid,
+    output wire        fb_pixel_rd
 );
 
     //==========================================================================
@@ -214,29 +223,46 @@ module gpu_top(
     );
 
     //--------------------------------------------------------------------------
-    // 3. GPU Scanline Renderer - Hi-res 8bpp scanline mode
-    //    Double-buffered line buffer, CPU fills via IO, HBlank interrupt
+    // 3. Framebuffer Mode (display_mode == 2)
+    //    Reads RGB565 pixels from external FIFO (fed by SDRAM video fetch).
+    //    Each FIFO word = 2 packed 16-bit pixels. We read one word every
+    //    2 pixel clocks and unpack low then high pixel.
     //--------------------------------------------------------------------------
     wire [7:0] scan_rgb_red;
     wire [7:0] scan_rgb_green;
     wire [7:0] scan_rgb_blue;
-    wire       scan_hblank_irq;
+    wire       scan_hblank_irq = 1'b0; // Not used in SDRAM mode
 
-    gpu_scanline_renderer gpu_scanline_inst(
-        .clk_pixel     (clk_pixel),
-        .clk_cpu       (clk_cpu),
-        .rst_n         (rst_n),
-        .h_count       (h_count),
-        .v_count       (v_count),
-        .video_active  (video_active),
-        .reg_addr      (addr[3:0]),
-        .reg_data_in   (data_in),
-        .reg_we        (gfx_gpu_cs && we && (addr[3:0] >= 4'hE)),
-        .rgb_r_out     (scan_rgb_red),
-        .rgb_g_out     (scan_rgb_green),
-        .rgb_b_out     (scan_rgb_blue),
-        .hblank_irq    (scan_hblank_irq)
-    );
+    // RGB565 unpacker: reads from fb_pixel_data (FIFO output)
+    reg        pixel_phase;     // 0 = low pixel, 1 = high pixel
+    reg [15:0] pixel_high;      // Latched high pixel from previous read
+    wire [15:0] current_pixel = pixel_phase ? pixel_high : fb_pixel_data[15:0];
+
+    // Read from FIFO every 2 pixels (when displaying low pixel of next word)
+    assign fb_pixel_rd = video_active && (display_mode == 2'd2) && !pixel_phase && fb_pixel_valid;
+
+    always @(posedge clk_pixel) begin
+        if (!rst_n || !video_active) begin
+            pixel_phase <= 0;
+        end else if (display_mode == 2'd2 && video_active) begin
+            if (!pixel_phase) begin
+                // Latch the high pixel for next cycle
+                pixel_high <= fb_pixel_data[31:16];
+                pixel_phase <= 1;
+            end else begin
+                pixel_phase <= 0;
+            end
+        end
+    end
+
+    // RGB565 to RGB888 conversion
+    // R[15:11] -> R[7:0]: {R[4:0], R[4:2]}
+    // G[10:5]  -> G[7:0]: {G[5:0], G[5:4]}
+    // B[4:0]   -> B[7:0]: {B[4:0], B[4:2]}
+    wire fb_visible = video_active && (display_mode == 2'd2);
+    assign scan_rgb_red   = fb_visible ? {current_pixel[15:11], current_pixel[15:13]} : 8'd0;
+    assign scan_rgb_green = fb_visible ? {current_pixel[10:5],  current_pixel[10:9]}  : 8'd0;
+    assign scan_rgb_blue  = fb_visible ? {current_pixel[4:0],   current_pixel[4:2]}   : 8'd0;
 
     //--------------------------------------------------------------------------
     // 4. GPU Mux - Select between Character, Bitmap, and Scanline modes
@@ -311,7 +337,9 @@ module gpu_top(
     assign debug_gfx_gpu_cs   = gfx_gpu_cs;    // Graphics GPU chip select
     assign debug_char_gpu_cs  = char_gpu_cs;   // Character GPU chip select
     assign debug_vsync        = vsync;         // VSync signal
-    assign scanline_hblank_irq = scan_hblank_irq; // HBlank from scanline renderer
+    assign scanline_hblank_irq = scan_hblank_irq;
+    assign out_h_count = h_count;
+    assign out_v_count = v_count;
 
     //==========================================================================
     // Notes on Signal Conversion
