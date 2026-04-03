@@ -29,8 +29,7 @@
 `include "DEVICES/PS2Decoder.v" // PS2 keyboard decoder
 
 `ifdef NRV_IO_SDRAM
-`include "SDRAM/muchtoremember_colorlight.v"
-`include "SDRAM/sdram_burst_reader.v"
+`include "SDRAM/muchtoremember_burst.v"
 `include "SDRAM/video_fetch_engine.v"
 `include "SDRAM/video_line_fifo.v"
 `include "DEVICES/cache.v"
@@ -413,36 +412,23 @@ module femtosoc(
    assign sd_addr = sd_addr_full[10:0];
 
    // ---- SDRAM with video fetch pipeline ----
-   // Architecture: original muchtoremember (unchanged) for CPU single-word access.
-   // Separate sdram_burst_reader for video burst reads.
-   // sdram_arbiter muxes SDRAM pins between the two.
-
-   // Cache <-> Arbiter wires
+   // ---- Single unified SDRAM controller with burst support ----
+   // Cache <-> Controller wires
    wire [3:0]  cache_sdram_wmask;
    wire        cache_sdram_rd;
    wire [25:0] cache_sdram_addr;
    wire [31:0] cache_sdram_din;
    wire [31:0] cache_sdram_dout;
-   wire        cache_sdram_busy_raw;  // From controller
-   wire        vid_burst_busy;       // From burst reader (high from request to completion)
-   wire        cache_sdram_busy = cache_sdram_busy_raw | vid_burst_busy;  // Stall CPU during entire burst sequence
+   wire        cache_sdram_busy;
 
-   // Arbiter <-> Original controller wires
-   wire [3:0]  arb_ctrl_wmask;
-   wire        arb_ctrl_rd;
-   wire [25:0] arb_ctrl_addr;
-   wire [31:0] arb_ctrl_din;
-   wire [31:0] arb_ctrl_dout;
-   wire        arb_ctrl_busy;
-
-   // Video fetch <-> burst reader wires
+   // Video fetch <-> Controller wires
    wire        vid_burst_rd;
    wire [25:0] vid_burst_addr;
    wire [8:0]  vid_burst_len;
    wire [31:0] vid_burst_dout;
    wire        vid_burst_valid;
    wire        vid_burst_done;
-   // vid_burst_busy declared above (used for CPU stall)
+   wire        vid_burst_busy;
 
    // Video FIFO wires
    wire [31:0] fifo_wdata;
@@ -455,9 +441,6 @@ module femtosoc(
    // GPU timing pulses
    wire        gpu_hsync_start;
    wire        gpu_vsync_start;
-
-   // SDRAM data input (shared between both controllers)
-   wire [31:0] sd_data_in_shared;
 
    // Cache
    sdram_cache cache (
@@ -476,18 +459,10 @@ module femtosoc(
       .sdram_busy(cache_sdram_busy)
    );
 
-   // Burst reader command wires
-   wire        burst_active;
-   wire [12:0] burst_sd_addr;
-   wire [1:0]  burst_sd_ba;
-   wire [3:0]  burst_sd_dqm;
-   wire        burst_sd_cs, burst_sd_we, burst_sd_ras, burst_sd_cas;
-   wire [31:0] ctrl_sd_data_in;
-
-   // Original SDRAM controller with burst override
-   // Stays directly connected to SDRAM pins (preserves IOLOGIC)
-   // Burst reader overrides command registers when active
-   muchtoremember sdram_ctrl (
+   // Unified SDRAM controller: single-word + burst in one module
+   // Priority: refresh > burst > single-word
+   // Busy signal timing identical to original muchtoremember
+   muchtoremember_burst sdram_ctrl (
       .clk(clk), .resetn(reset),
       .sd_clk(sdram_clk),
       .sd_d(sd_d),
@@ -498,28 +473,14 @@ module femtosoc(
       .sd_we(sd_we),
       .sd_ras(sd_ras),
       .sd_cas(sd_cas),
-      // CPU port (blocked during burst)
-      .wmask(vid_burst_busy ? 4'b0000 : cache_sdram_wmask),
-      .rd(vid_burst_busy ? 1'b0 : cache_sdram_rd),
+      // Single-word port (from cache)
+      .wmask(cache_sdram_wmask),
+      .rd(cache_sdram_rd),
       .addr(cache_sdram_addr),
       .din(cache_sdram_din),
       .dout(cache_sdram_dout),
-      .busy(cache_sdram_busy_raw),
-      // Burst override
-      .ovr_active(burst_active),
-      .ovr_addr(burst_sd_addr),
-      .ovr_ba(burst_sd_ba),
-      .ovr_dqm(burst_sd_dqm),
-      .ovr_cs(burst_sd_cs),
-      .ovr_we(burst_sd_we),
-      .ovr_ras(burst_sd_ras),
-      .ovr_cas(burst_sd_cas),
-      .sd_data_in_out(ctrl_sd_data_in)
-   );
-
-   // Burst reader — generates burst SDRAM commands, reads data via controller
-   sdram_burst_reader burst_reader (
-      .clk(clk), .resetn(reset),
+      .busy(cache_sdram_busy),
+      // Burst port (from video fetch engine)
       .burst_rd(vid_burst_rd),
       .burst_addr(vid_burst_addr),
       .burst_len(vid_burst_len),
@@ -527,16 +488,7 @@ module femtosoc(
       .burst_valid(vid_burst_valid),
       .burst_done(vid_burst_done),
       .burst_busy(vid_burst_busy),
-      .active(burst_active),
-      .sd_addr(burst_sd_addr),
-      .sd_ba(burst_sd_ba),
-      .sd_dqm(burst_sd_dqm),
-      .sd_cs(burst_sd_cs),
-      .sd_we(burst_sd_we),
-      .sd_ras(burst_sd_ras),
-      .sd_cas(burst_sd_cas),
-      .sd_data_in(ctrl_sd_data_in), // From controller's input register
-      .ctrl_busy(cache_sdram_busy_raw)  // Wait for controller idle before starting
+      .sd_data_in_out()
    );
 
    // Video fetch engine — only active when display_mode == 2 (framebuffer)

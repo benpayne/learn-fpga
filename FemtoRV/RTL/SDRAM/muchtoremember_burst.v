@@ -1,19 +1,15 @@
-// SDRAM controller with burst read support for EM638325-6H on Colorlight i5
+// SDRAM controller with burst read support for EM638325-6H
 // 2Mx32 (64Mbit), 32-bit data bus
 //
 // Based on muchtoremember by Matthias Koch (January 2022)
-// Extended with a burst read port for video framebuffer fetch.
+// Extended with burst read port for video framebuffer fetch.
 //
-// The SDRAM MODE register stays at burst_length=1. Burst reads are
-// implemented as back-to-back pipelined READ commands with A10=0
-// (no auto-precharge). After CAS latency 2, data arrives every cycle.
+// Single-word port: identical timing to original muchtoremember.
+// Burst read port: back-to-back pipelined READs, ~1 word/cycle.
+// Priority: refresh > burst (when requested) > single-word.
 //
-// Two ports:
-//   Port A (single-word): Original CPU interface (rd, wmask, addr, din, dout, busy)
-//   Port B (burst read):  Video interface (burst_rd, burst_addr, burst_len,
-//                          burst_dout, burst_valid, burst_done)
-//
-// Priority: refresh > burst > single-word
+// Uses one-hot state encoding identical to the original to preserve
+// the exact busy signal timing that the cache depends on.
 
 module muchtoremember_burst (
 
@@ -32,7 +28,7 @@ module muchtoremember_burst (
   input  clk,
   input  resetn,
 
-  // Port A: Single-word (CPU)
+  // Single-word port (from cache)
   input  [3:0]  wmask,
   input         rd,
   input  [25:0] addr,
@@ -40,14 +36,17 @@ module muchtoremember_burst (
   output reg [31:0] dout,
   output reg busy,
 
-  // Port B: Burst read (Video)
+  // Burst read port (from video fetch engine)
   input         burst_rd,       // Pulse to start burst
-  input  [25:0] burst_addr,     // Start address (word-aligned)
-  input  [8:0]  burst_len,      // Number of words to read (1-256)
-  output reg [31:0] burst_dout, // Burst data output
-  output reg    burst_valid,    // Pulse when burst_dout is valid
-  output reg    burst_done,     // Pulse when burst completes
-  output reg    burst_busy      // High while burst is in progress
+  input  [25:0] burst_addr,     // Start address
+  input  [8:0]  burst_len,      // Words to read (1-256)
+  output reg [31:0] burst_dout, // Data output
+  output reg    burst_valid,    // Data valid pulse
+  output reg    burst_done,     // Burst complete pulse
+  output reg    burst_busy,     // High during burst
+
+  // Exposed data input for sharing
+  output wire [31:0] sd_data_in_out
 );
 
   parameter sdram_startup_cycles = 10100;
@@ -58,6 +57,8 @@ module muchtoremember_burst (
   wire [31:0] sd_data_in;
   reg  [31:0] sd_data_out;
   reg         sd_data_drive;
+
+  assign sd_data_in_out = sd_data_in;
 
   `ifdef __ICARUS__
   reg [31:0] sd_data_in_buffered;
@@ -81,7 +82,7 @@ module muchtoremember_burst (
   localparam OP_MODE        = 2'b00;
   localparam CAS_LATENCY    = 3'd2;
   localparam ACCESS_TYPE    = 1'b0;
-  localparam BURST_LENGTH   = 3'b000; // 000=1 (single access)
+  localparam BURST_LENGTH   = 3'b000;
 
   localparam MODE = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_LENGTH};
 
@@ -95,97 +96,85 @@ module muchtoremember_burst (
   localparam CMD_AUTO_REFRESH    = 4'b0001;
   localparam CMD_LOAD_MODE       = 4'b0000;
 
-  // ---- States ----
-  // Original single-word states
-  localparam S_INIT       = 0;
-  localparam S_IDLE       = 1;
-  localparam S_ACTIVATE   = 2;
-  localparam S_READ_1     = 3;
-  localparam S_READ_2     = 4;
-  localparam S_READ_3     = 5;
-  localparam S_READ_4     = 6;
-  localparam S_WRITE_1    = 7;
-  localparam S_IDLE_IN_6  = 8;
-  localparam S_IDLE_IN_5  = 9;
-  localparam S_IDLE_IN_4  = 10;
-  localparam S_IDLE_IN_3  = 11;
-  localparam S_IDLE_IN_2  = 12;
-  localparam S_IDLE_IN_1  = 13;
-  // Burst read states
-  localparam S_BURST_ACT  = 14;  // Row activate for burst
-  localparam S_BURST_RD   = 15;  // Issuing READ commands + collecting data
-  localparam S_BURST_DRAIN= 16;  // Draining CAS pipeline after last READ
-  localparam S_BURST_PRE  = 17;  // Precharge after burst
+  // One-hot states — single-word states match original exactly
+  localparam s_init_bit      = 0;  localparam s_init      = 1 << s_init_bit;
+  localparam s_idle_bit      = 1;  localparam s_idle      = 1 << s_idle_bit;
+  localparam s_activate_bit  = 2;  localparam s_activate  = 1 << s_activate_bit;
+  localparam s_read_1_bit    = 3;  localparam s_read_1    = 1 << s_read_1_bit;
+  localparam s_read_2_bit    = 4;  localparam s_read_2    = 1 << s_read_2_bit;
+  localparam s_read_3_bit    = 5;  localparam s_read_3    = 1 << s_read_3_bit;
+  localparam s_read_4_bit    = 6;  localparam s_read_4    = 1 << s_read_4_bit;
+  localparam s_write_1_bit   = 7;  localparam s_write_1   = 1 << s_write_1_bit;
+  localparam s_idle_in_6_bit = 8;  localparam s_idle_in_6 = 1 << s_idle_in_6_bit;
+  localparam s_idle_in_5_bit = 9;  localparam s_idle_in_5 = 1 << s_idle_in_5_bit;
+  localparam s_idle_in_4_bit = 10; localparam s_idle_in_4 = 1 << s_idle_in_4_bit;
+  localparam s_idle_in_3_bit = 11; localparam s_idle_in_3 = 1 << s_idle_in_3_bit;
+  localparam s_idle_in_2_bit = 12; localparam s_idle_in_2 = 1 << s_idle_in_2_bit;
+  localparam s_idle_in_1_bit = 13; localparam s_idle_in_1 = 1 << s_idle_in_1_bit;
+  // Burst-specific states
+  localparam s_burst_act_bit = 14; localparam s_burst_act = 1 << s_burst_act_bit;
+  localparam s_burst_rd_bit  = 15; localparam s_burst_rd  = 1 << s_burst_rd_bit;
+  localparam s_burst_drn_bit = 16; localparam s_burst_drn = 1 << s_burst_drn_bit;
+  localparam s_burst_pre_bit = 17; localparam s_burst_pre = 1 << s_burst_pre_bit;
 
-  reg [4:0] state;
+  (* onehot *)
+  reg [17:0] state = s_init;
 
-  reg [14:0] reset_counter;
-  reg  [7:0] refresh_counter;
-  reg        refresh_pending;
-  reg        rd_sticky;
-  reg  [3:0] wmask_sticky;
+  reg [14:0] reset_counter = sdram_startup_cycles;
+  reg  [7:0] refresh_counter = 0;
+  reg        refresh_pending = 1;
+  reg        rd_sticky  = 0;
+  reg  [3:0] wmask_sticky = 4'b0000;
 
   // Burst state
-  reg [25:0] burst_cur_addr;    // Current burst address
-  reg [8:0]  burst_remaining;   // Words left to issue READ for
-  reg [8:0]  burst_to_receive;  // Words left to capture from data bus
-  reg [2:0]  cas_pipe;          // 3-bit shift register: CAS2 + input register = 3 cycle latency
-  reg [7:0]  burst_col;         // Current column for burst
+  reg [8:0]  burst_remaining;
+  reg [7:0]  burst_col;
+  reg [2:0]  cas_pipe;
 
-  wire [7:0] refresh_counterN = refresh_counter - 1;
+  // Busy: identical to original — clears on s_read_4 and s_write_1
+  wire stillatwork = ~(state[s_read_4_bit] | state[s_write_1_bit]);
+  wire [8:0] refresh_counterN = refresh_counter - 1;
 
-  always @(posedge clk) begin
-    if (!resetn) begin
-      state           <= S_INIT;
-      reset_counter   <= sdram_startup_cycles;
-      busy            <= 0;
-      rd_sticky       <= 0;
-      wmask_sticky    <= 4'b0000;
-      burst_valid     <= 0;
-      burst_done      <= 0;
-      burst_busy      <= 0;
-      cas_pipe        <= 0;
-      sd_data_drive   <= 0;
-      refresh_pending <= 1;
-      refresh_counter <= 0;
+  always @(posedge clk)
+    if(!resetn) begin
+      state          <= s_init;
+      reset_counter  <= sdram_startup_cycles;
+      busy           <= 0;
+      rd_sticky      <= 0;
+      wmask_sticky   <= 4'b0000;
+      burst_valid    <= 0;
+      burst_done     <= 0;
+      burst_busy     <= 0;
+      cas_pipe       <= 0;
+      sd_data_drive  <= 0;
+      refresh_pending<= 1;
+      refresh_counter<= 0;
     end else begin
 
-      // Default: clear one-cycle pulses
+      // Busy logic — IDENTICAL to original
+      busy      <= ((|wmask) | rd) | (busy         &    stillatwork   );
+      rd_sticky <=             rd  | (rd_sticky    &    stillatwork   );
+      wmask_sticky <=    wmask     | (wmask_sticky & {4{stillatwork}} );
+
+      refresh_counter <= refresh_counterN[8] ? sdram_refresh_cycles : refresh_counterN[7:0];
+      refresh_pending <= (refresh_pending & ~state[s_idle_bit]) | refresh_counterN[8];
+
+      // Burst one-cycle pulses
       burst_valid <= 0;
       burst_done  <= 0;
 
-      // Sticky request latching for single-word port
-      if (state == S_IDLE || state == S_READ_4 || state == S_WRITE_1) begin
-        busy         <= (|wmask) | rd;
-        rd_sticky    <= rd;
-        wmask_sticky <= wmask;
-      end else begin
-        busy         <= ((|wmask) | rd) | busy;
-        rd_sticky    <= rd | rd_sticky;
-        wmask_sticky <= wmask | wmask_sticky;
-      end
-
-      // Refresh counter
-      if (refresh_counter == 0) begin
-        refresh_counter <= sdram_refresh_cycles;
-        refresh_pending <= 1;
-      end else begin
-        refresh_counter <= refresh_counter - 1;
-      end
-
       // Latch burst request
-      if (burst_rd && !burst_busy) begin
+      if (burst_rd && !burst_busy)
         burst_busy <= 1;
-      end
 
-      case (state)
+      (* parallel_case *)
+      case(1'b1)
 
-        // ======== INIT ========
-        S_INIT: begin
+        // ======== INIT (unchanged) ========
+        state[s_init_bit]: begin
           sd_ba  <= 2'b00;
           sd_dqm <= 4'b1111;
           sd_data_drive <= 0;
-
           case (reset_counter)
             33: begin sd_cs <= 0; end
             31: begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_PRECHARGE; sd_addr <= 13'b0010000000000; end
@@ -194,98 +183,93 @@ module muchtoremember_burst (
             7:  begin {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_LOAD_MODE; sd_addr <= MODE; end
             default: {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           endcase
-
           reset_counter <= reset_counter - 1;
-          if (reset_counter == 0) state <= S_IDLE;
+          if (reset_counter == 0) state <= s_idle;
         end
 
-        // ======== IDLE ========
-        S_IDLE: begin
-          sd_data_drive <= 0;
-          sd_dqm <= 4'b1111;
+        // ======== IDLE COUNTDOWN (unchanged) ========
+        state[s_idle_in_6_bit]: begin state <= s_idle_in_5; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_5_bit]: begin state <= s_idle_in_4; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_4_bit]: begin state <= s_idle_in_3; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_3_bit]: begin state <= s_idle_in_2; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_2_bit]: begin state <= s_idle_in_1; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+        state[s_idle_in_1_bit]: begin state <= s_idle;      {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
+
+        // ======== IDLE: priority = refresh > burst > single ========
+        state[s_idle_bit]: begin
+          sd_ba   <= addr[22:21];
+          sd_addr <= {2'b00, addr[20:10]};
 
           if (refresh_pending) begin
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_AUTO_REFRESH;
-            refresh_pending <= 0;
-            state <= S_IDLE_IN_2;
+            state <= s_idle_in_2;
           end else if (burst_busy) begin
-            // Start burst: activate row
+            // Start burst read
             sd_ba   <= burst_addr[22:21];
             sd_addr <= {2'b00, burst_addr[20:10]};
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
-            burst_cur_addr  <= burst_addr;
-            burst_remaining <= burst_len;
             burst_col       <= burst_addr[9:2];
+            burst_remaining <= burst_len;
             cas_pipe        <= 0;
-            state           <= S_BURST_ACT;
+            state           <= s_burst_act;
           end else if ((|wmask_sticky) | rd_sticky) begin
-            // Single-word access
-            sd_ba   <= addr[22:21];
-            sd_addr <= {2'b00, addr[20:10]};
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
-            state <= S_ACTIVATE;
+            state <= s_activate;
           end else begin
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           end
         end
 
-        // ======== Single-word read/write (unchanged) ========
-        S_ACTIVATE: begin
+        // ======== SINGLE-WORD READ/WRITE (unchanged) ========
+        state[s_activate_bit]: begin
           sd_data_drive <= ~rd_sticky;
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
-          state <= rd_sticky ? S_READ_1 : S_WRITE_1;
+          state <= rd_sticky ? s_read_1 : s_write_1;
         end
 
-        S_READ_1: begin
+        state[s_read_1_bit]: begin
           sd_dqm <= 4'b0000;
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_READ;
-          sd_addr <= {3'b001, 2'b00, addr[9:2]}; // A10=1 auto-precharge
-          state <= S_READ_2;
+          sd_addr <= {3'b001, 2'b00, addr[9:2]};
+          state <= s_read_2;
         end
 
-        S_READ_2: begin
+        state[s_read_2_bit]: begin
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
-          state <= S_READ_3;
+          state <= s_read_3;
         end
 
-        S_READ_3: state <= S_READ_4;
+        state[s_read_3_bit]: state <= s_read_4;
 
-        S_READ_4: begin
+        state[s_read_4_bit]: begin
           dout  <= sd_data_in;
-          state <= S_IDLE;
+          state <= s_idle;
         end
 
-        S_WRITE_1: begin
+        state[s_write_1_bit]: begin
           sd_addr     <= {3'b001, 2'b00, addr[9:2]};
           sd_data_out <= din;
           sd_dqm      <= ~wmask_sticky;
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_WRITE;
-          state <= S_IDLE_IN_2;
+          state <= s_idle_in_2;
         end
 
-        // ======== Burst read ========
-        // Pipeline: READ issued → CAS latency 2 → data valid on sd_data_in
-        // We use a 2-bit shift register (cas_pipe) to track when data arrives.
-        // cas_pipe[0] = READ was issued 1 cycle ago
-        // cas_pipe[1] = READ was issued 2 cycles ago = data is valid NOW
-
-        S_BURST_ACT: begin
-          // tRCD wait (1 cycle after ACTIVATE)
+        // ======== BURST READ ========
+        state[s_burst_act_bit]: begin
+          // tRCD wait
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           sd_dqm <= 4'b0000;
-          cas_pipe <= 3'b000;
-          burst_to_receive <= burst_remaining;
-          state <= S_BURST_RD;
+          sd_data_drive <= 0;
+          state <= s_burst_rd;
         end
 
-        S_BURST_RD: begin
-          // Advance CAS pipeline (3 stages: CAS2 + input buffer = 3 cycle total)
+        state[s_burst_rd_bit]: begin
+          // Advance CAS pipeline (3 stages for CAS2 + input register)
           cas_pipe <= {cas_pipe[1:0], 1'b0};
 
-          // Issue READ if more words needed
           if (burst_remaining > 0) begin
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_READ;
-            sd_addr <= {3'b000, 2'b00, burst_col};
+            sd_addr <= {3'b000, 2'b00, burst_col};  // A10=0, no auto-precharge
             burst_col <= burst_col + 1;
             burst_remaining <= burst_remaining - 1;
             cas_pipe[0] <= 1'b1;
@@ -293,56 +277,43 @@ module muchtoremember_burst (
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           end
 
-          // Capture data when pipeline delivers (3 cycles after READ)
+          // Capture data from pipeline
           if (cas_pipe[2]) begin
             burst_dout  <= sd_data_in;
             burst_valid <= 1;
-            burst_to_receive <= burst_to_receive - 1;
           end
 
-          // All data received? Go to drain.
-          if (burst_to_receive == 0 ||
-              (burst_to_receive == 1 && cas_pipe[2])) begin
-            state <= S_BURST_DRAIN;
+          // All READs issued and pipeline draining
+          if (burst_remaining == 0 && !cas_pipe[0] && !cas_pipe[1]) begin
+            state <= s_burst_drn;
           end
         end
 
-        S_BURST_DRAIN: begin
-          // Drain remaining words from CAS pipeline
+        state[s_burst_drn_bit]: begin
           {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           cas_pipe <= {cas_pipe[1:0], 1'b0};
 
           if (cas_pipe[2]) begin
             burst_dout  <= sd_data_in;
             burst_valid <= 1;
-            burst_to_receive <= burst_to_receive - 1;
           end
 
           if (cas_pipe == 3'b000) begin
-            state <= S_BURST_PRE;
+            // Precharge all banks
+            {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_PRECHARGE;
+            sd_addr <= 13'b0010000000000;
+            state <= s_burst_pre;
           end
         end
 
-        S_BURST_PRE: begin
-          // Precharge all banks
-          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_PRECHARGE;
-          sd_addr <= 13'b0010000000000; // A10=1 = all banks
+        state[s_burst_pre_bit]: begin
+          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           burst_done <= 1;
           burst_busy <= 0;
-          state <= S_IDLE_IN_2;
+          state <= s_idle_in_2;  // tRP recovery
         end
 
-        // ======== Idle countdown ========
-        S_IDLE_IN_6: begin state <= S_IDLE_IN_5; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        S_IDLE_IN_5: begin state <= S_IDLE_IN_4; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        S_IDLE_IN_4: begin state <= S_IDLE_IN_3; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        S_IDLE_IN_3: begin state <= S_IDLE_IN_2; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        S_IDLE_IN_2: begin state <= S_IDLE_IN_1; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-        S_IDLE_IN_1: begin state <= S_IDLE;      {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
-
-        default: state <= S_IDLE;
       endcase
-    end
-  end
+   end
 
 endmodule
