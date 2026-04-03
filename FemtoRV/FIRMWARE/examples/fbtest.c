@@ -72,8 +72,8 @@ int main(void) {
     GPU_WRITE(GPU_REG_CHAR_DATA, 'M');
     putchar('M');
 
-    // Wait ~5 seconds
-    for (volatile int i = 0; i < 40000000; i++);
+    // Wait ~10 seconds (CPU is slower during mode 2 due to SDRAM burst stalls)
+    for (volatile long i = 0; i < 100000000; i++);
 
     // Back to text mode
     GPU_WRITE(0x0D, 0);

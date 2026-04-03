@@ -9,7 +9,10 @@ LIB_DIR = ../lib/ps2-controller-lib
 # Or use convenience targets below
 
 # PS2 decoder (default)
-ifeq ($(MODULE),video_fetch_tb)
+ifeq ($(MODULE),gpu_fb_tb)
+  VERILOG_SOURCES = ../RTL/SDRAM/video_line_fifo.v
+  TOPLEVEL := video_line_fifo
+else ifeq ($(MODULE),video_fetch_tb)
   VERILOG_SOURCES = video_fetch_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v ../RTL/SDRAM/sdram_arbiter.v ../RTL/SDRAM/video_fetch_engine.v ../RTL/SDRAM/video_line_fifo.v
   TOPLEVEL := video_fetch_wrapper
 else ifeq ($(MODULE),sdram_burst_tb)

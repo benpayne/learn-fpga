@@ -545,7 +545,7 @@ module femtosoc(
    // Note: fetch engine reads from SDRAM, CPU is stalled during bursts
    wire fetch_enabled = (gpu_display_mode == 2'd2);
    wire gated_hsync = gpu_hsync_start & fetch_enabled;
-   wire gated_vsync = gpu_vsync_start & fetch_enabled;
+   wire gated_vsync = gpu_vsync_start;  // Always pass VSync so fetch engine tracks frame timing
 
    video_fetch_engine #(
       .H_ACTIVE(640),
@@ -570,15 +570,19 @@ module femtosoc(
    );
 
    // Video line FIFO: bridges SDRAM fetch (sys clock) to GPU (pixel clock)
+   // Reset FIFO on VSync only — keeps data flowing, self-syncs each frame
+   wire fifo_rst_w = !reset | gpu_vsync_start;
+   wire fifo_rst_r = !reset | gpu_vsync_start;
+
    video_line_fifo fifo (
       .clk_w(clk),
-      .rst_w(!reset),
+      .rst_w(fifo_rst_w),
       .wr_data(fifo_wdata),
       .wr_en(fifo_wen),
       .full(fifo_full),
       .almost_full(),
       .clk_r(clk_pixel),
-      .rst_r(!reset),
+      .rst_r(fifo_rst_r),
       .rd_data(fifo_rd_data),
       .rd_en(fifo_rd_en),
       .empty(fifo_empty),

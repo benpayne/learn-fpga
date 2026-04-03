@@ -147,6 +147,7 @@ module video_fetch_engine #(
     localparam S_BURST_B_WAIT  = 3'd6;
 
     reg [2:0] state = S_IDLE;
+    reg       frame_active;
 
     // Registered copies of burst parameters to avoid combinatorial glitches
     // while the burst is in progress
@@ -158,20 +159,25 @@ module video_fetch_engine #(
 
     always @(posedge clk) begin
         if (!resetn) begin
-            state    <= S_IDLE;
-            line_num <= 0;
-            burst_rd <= 0;
+            state        <= S_IDLE;
+            line_num     <= 0;
+            burst_rd     <= 0;
+            frame_active <= 1;  // Start active immediately
         end else begin
             burst_rd <= 0; // default: no request
 
             case (state)
 
                 S_IDLE: begin
-                    if (vsync_start) begin
+                    if (vsync_start || (line_num >= V_ACTIVE)) begin
                         line_num <= 0;
                     end
 
-                    if (hsync_start && (line_num < V_ACTIVE)) begin
+                    // Simple: fetch one line per hsync when line_num < V_ACTIVE.
+                    // The FIFO VSync flush ensures we start clean each frame.
+                    // No VBlank gating — during VBlank, hsync is gated by fetch_enabled
+                    // externally, so bursts only happen when mode 2 is active.
+                    if (hsync_start && (line_num < V_ACTIVE) && !fifo_full) begin
                         // Register burst parameters for this scanline before
                         // line_addr changes (line_num could change next cycle)
                         r_burst_a_addr <= line_addr;
