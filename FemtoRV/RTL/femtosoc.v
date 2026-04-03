@@ -31,7 +31,7 @@
 `ifdef NRV_IO_SDRAM
 `include "SDRAM/muchtoremember_burst.v"
 `include "SDRAM/video_fetch_engine.v"
-`include "SDRAM/video_line_fifo.v"
+`include "SDRAM/video_line_buffer.v"
 `include "DEVICES/cache.v"
 `endif
 
@@ -435,8 +435,8 @@ module femtosoc(
    wire        fifo_wen;
    wire        fifo_full;
    wire [31:0] fifo_rd_data;
-   wire        fifo_rd_en;
-   wire        fifo_empty;
+   wire        fifo_rd_en;   // Unused with line buffer (direct BRAM read)
+   wire        fifo_empty;  // Unused with line buffer
 
    // GPU timing pulses
    wire        gpu_hsync_start;
@@ -524,25 +524,29 @@ module femtosoc(
       .line_num()
    );
 
-   // Video line FIFO: bridges SDRAM fetch (sys clock) to GPU (pixel clock)
-   // Reset FIFO on VSync only — keeps data flowing, self-syncs each frame
-   wire fifo_rst_w = !reset | gpu_vsync_start;
-   wire fifo_rst_r = !reset | gpu_vsync_start;
+   // Ping-pong double line buffer: eliminates FIFO underrun
+   // Display reads from one buffer while fetch engine fills the other
+   // Swap at each hsync
+   wire lb_wr_ready;
+   wire lb_wr_done;
+   assign fifo_full = !lb_wr_ready;
 
-   video_line_fifo fifo (
-      .clk_w(clk),
-      .rst_w(fifo_rst_w),
+   // Swap when write buffer becomes full (rising edge of wr_done)
+   // This ensures the complete line is written before display reads it
+   reg lb_wr_done_prev;
+   always @(posedge clk) lb_wr_done_prev <= lb_wr_done;
+   wire lb_swap = lb_wr_done & !lb_wr_done_prev;  // Rising edge of wr_done
+
+   video_line_buffer line_buf (
+      .clk(clk),
+      .resetn(reset),
       .wr_data(fifo_wdata),
       .wr_en(fifo_wen),
-      .full(fifo_full),
-      .almost_full(),
-      .clk_r(clk_pixel),
-      .rst_r(fifo_rst_r),
+      .wr_ready(lb_wr_ready),
+      .wr_done(lb_wr_done),
+      .rd_addr(gpu_h_count[9:1]),     // h_count/2 = word index (2 pixels per word)
       .rd_data(fifo_rd_data),
-      .rd_en(fifo_rd_en),
-      .empty(fifo_empty),
-      .almost_empty(),
-      .wr_fill()
+      .swap(lb_swap)
    );
 `endif
 
@@ -936,8 +940,8 @@ HardwareConfig hwconfig(
       .hsync_start(gpu_hsync_start),
       .vsync_start(gpu_vsync_start),
       .fb_pixel_data(fifo_rd_data),
-      .fb_pixel_valid(!fifo_empty),
-      .fb_pixel_rd(fifo_rd_en),
+      .fb_pixel_valid(1'b1),      // Line buffer always has valid data
+      .fb_pixel_rd(fifo_rd_en),  // Unused — line buffer is direct addressed
       .display_mode_out(gpu_display_mode),
       .v_count_out(gpu_v_count),
       .h_count_out(gpu_h_count)

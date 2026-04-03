@@ -234,28 +234,25 @@ module gpu_top(
     wire [7:0] scan_rgb_blue;
     wire       scan_hblank_irq = 1'b0;
 
-    // Simple pixel unpacker — combinatorial, proven to show color bars.
-    // Read FIFO word, output low pixel then high pixel.
-    reg        pixel_phase;
-    reg [15:0] pixel_high;
+    // Pixel unpacker for line buffer mode.
+    // Line buffer rd_addr is driven by h_count[9:1] externally.
+    // BRAM output (fb_pixel_data) is registered — data for h_count N
+    // appears at h_count N+1. We use h_count[0] to select pixel:
+    //   h_count even → display low pixel [15:0]
+    //   h_count odd  → display high pixel [31:16]
+    // Since BRAM address changes every 2 h_counts (addr = h_count[9:1]),
+    // the data is stable for 2 pixel clocks.
 
     wire fb_mode = (display_mode == 2'd2);
-    wire [15:0] fb_current = pixel_phase ? pixel_high : fb_pixel_data[15:0];
 
-    assign fb_pixel_rd = fb_mode && video_active && !pixel_phase && fb_pixel_valid;
+    // h_count is delayed 1 cycle to match BRAM registered output
+    reg h_count_lsb_d;
+    always @(posedge clk_pixel) h_count_lsb_d <= h_count[0];
 
-    always @(posedge clk_pixel) begin
-        if (!rst_n || !video_active) begin
-            pixel_phase <= 0;
-        end else if (fb_mode && video_active) begin
-            if (!pixel_phase) begin
-                pixel_high <= fb_pixel_data[31:16];
-                pixel_phase <= 1;
-            end else begin
-                pixel_phase <= 0;
-            end
-        end
-    end
+    wire [15:0] fb_current = h_count_lsb_d ? fb_pixel_data[31:16] : fb_pixel_data[15:0];
+
+    // No FIFO rd_en needed — line buffer is addressed directly
+    assign fb_pixel_rd = 1'b0;  // Unused with line buffer
 
     wire fb_visible = video_active && fb_mode;
     assign scan_rgb_red   = fb_visible ? {fb_current[15:11], fb_current[15:13]} : 8'd0;

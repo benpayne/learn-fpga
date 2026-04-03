@@ -34,32 +34,47 @@ int main(void) {
     GPU_WRITE(GPU_REG_CHAR_DATA, 'B');
     putchar('F'); putchar('B');
 
-    // Fill framebuffer with solid color bars using word writes
     volatile uint32_t *fb32 = (volatile uint32_t *)FB_BASE;
-
-    // RGB565 colors packed as two pixels per 32-bit word
-    // Red=0xF800, Green=0x07E0, Blue=0x001F, White=0xFFFF
-    uint32_t red2   = 0xF800F800;
-    uint32_t green2 = 0x07E007E0;
-    uint32_t blue2  = 0x001F001F;
-    uint32_t white2 = 0xFFFFFFFF;
-    uint32_t yellow2= 0xFFE0FFE0;
-    uint32_t cyan2  = 0x07FF07FF;
-    uint32_t mag2   = 0xF81FF81F;
-    uint32_t black2 = 0x00000000;
-
-    uint32_t colors[] = {red2, green2, blue2, yellow2, mag2, cyan2, white2, black2};
-    int bar_width_words = FB_WIDTH / 2 / 8;  // 40 words per bar
-    int stride_words = FB_STRIDE / 4;       // 512 words per line
+    int stride_words = FB_STRIDE / 4;  // 512 words per line
 
     GPU_WRITE(GPU_REG_CHAR_DATA, 'F');
     putchar('F');
 
+    // Diagnostic pattern: each line has a unique color based on Y
+    // Left half: vertical gradient (R increases with Y)
+    // Right half: horizontal gradient (B increases with X)
+    // Diagonal white stripe at y==x to detect line skipping/repeating
     for (int y = 0; y < FB_HEIGHT; y++) {
-        for (int bar = 0; bar < 8; bar++) {
-            for (int x = 0; x < bar_width_words; x++) {
-                fb32[y * stride_words + bar * bar_width_words + x] = colors[bar];
+        // Line color: R based on Y, G based on Y inverted
+        uint8_t r = (y * 31) / FB_HEIGHT;           // 0-31
+        uint8_t g = ((FB_HEIGHT - y) * 63) / FB_HEIGHT; // 63-0
+        uint16_t line_color = (r << 11) | (g << 5);  // RG gradient, no blue
+
+        for (int x = 0; x < FB_WIDTH / 2; x++) {  // x in word units = 2 pixels
+            int px = x * 2;  // pixel x position
+
+            uint16_t pix0, pix1;
+
+            if (px < FB_WIDTH / 2) {
+                // Left half: line color (unique per Y — detects repeats)
+                pix0 = line_color;
+                pix1 = line_color;
+            } else {
+                // Right half: blue gradient (unique per X — detects column issues)
+                uint8_t b0 = ((px) * 31) / FB_WIDTH;
+                uint8_t b1 = ((px+1) * 31) / FB_WIDTH;
+                pix0 = (r << 11) | b0;
+                pix1 = (r << 11) | b1;
             }
+
+            // Diagonal stripe: white line where y ~= px/1.6 (aspect ratio)
+            int diag = (y * FB_WIDTH) / FB_HEIGHT;
+            if (px >= diag - 2 && px <= diag + 2) {
+                pix0 = 0xFFFF;  // White
+                pix1 = 0xFFFF;
+            }
+
+            fb32[y * stride_words + x] = ((uint32_t)pix1 << 16) | pix0;
         }
     }
 

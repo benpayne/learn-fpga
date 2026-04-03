@@ -35,10 +35,10 @@ module video_fetch_engine #(
     input  wire        burst_valid,
     input  wire        burst_busy,
 
-    // FIFO write port
+    // Line buffer write port
     output wire [31:0] fifo_wdata,
     output wire        fifo_wen,
-    input  wire        fifo_full,
+    input  wire        fifo_full,  // Actually: !wr_ready from line buffer
 
     // Status
     output wire [9:0]  line_num
@@ -58,10 +58,11 @@ module video_fetch_engine #(
                             (v_count + 10'd1);
 
     // Should we fetch on this hsync?
-    // Yes if: we're in the last 2 VBlank lines (prefetch line 0)
-    //         OR we're in active display (prefetch next line)
+    // During active display: always fetch (prefetch next line)
+    // During VBlank: fetch in the last 4 lines to pre-fill line 0
+    // This ensures line 0 is fully loaded before display starts
     wire should_fetch = (v_count < V_ACTIVE) ||
-                        (v_count >= (V_TOTAL - 2));
+                        (v_count >= (V_TOTAL - 4));
 
     assign line_num = fetch_line;
 
