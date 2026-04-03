@@ -51,18 +51,14 @@ module video_fetch_engine #(
     assign fifo_wdata = burst_dout;
     assign fifo_wen   = burst_valid & ~fifo_full;
 
-    // ---- Determine which line to fetch ----
-    // Fetch the NEXT line (the one that will be displayed after current)
-    // At the end of VBlank (v_count == V_TOTAL-1), fetch line 0
-    wire [9:0] fetch_line = (v_count >= V_ACTIVE - 1) ? 10'd0 :
-                            (v_count + 10'd1);
+    // ---- Line tracking ----
+    // GPU's v_count is source of truth for frame sync (VSync resets).
+    // fetch_line tracks which line to fetch next — increments after each
+    // completed fetch. This is needed because with the ping-pong buffer,
+    // multiple fetches per v_count would overwrite the same buffer.
+    reg [9:0] fetch_line;
 
-    // Should we fetch on this hsync?
-    // During active display: always fetch (prefetch next line)
-    // During VBlank: fetch in the last 4 lines to pre-fill line 0
-    // This ensures line 0 is fully loaded before display starts
-    wire should_fetch = (v_count < V_ACTIVE) ||
-                        (v_count >= (V_TOTAL - 4));
+    wire should_fetch = (fetch_line < V_ACTIVE);
 
     assign line_num = fetch_line;
 
@@ -95,15 +91,20 @@ module video_fetch_engine #(
 
     always @(posedge clk) begin
         if (!resetn) begin
-            state    <= S_IDLE;
-            burst_rd <= 0;
+            state      <= S_IDLE;
+            burst_rd   <= 0;
+            fetch_line <= 0;
         end else begin
             burst_rd <= 0;
+
+            // VSync resets line counter (GPU is source of truth for frame sync)
+            if (vsync_start)
+                fetch_line <= 0;
 
             case (state)
 
                 S_IDLE: begin
-                    // On hsync, if we should fetch and FIFO has room, start
+                    // On hsync, if we should fetch and buffer has room, start
                     if (hsync_start && should_fetch && !fifo_full) begin
                         r_burst_a_addr <= line_addr;
                         r_burst_a_len  <= burst_a_len;
@@ -123,11 +124,12 @@ module video_fetch_engine #(
 
                 S_BURST_A_WAIT: begin
                     if (!burst_busy && state == S_BURST_A_WAIT) begin
-                        // Burst A complete
                         if (r_need_burst_b)
                             state <= S_BURST_B_REQ;
-                        else
+                        else begin
+                            fetch_line <= fetch_line + 1;
                             state <= S_IDLE;
+                        end
                     end
                 end
 
@@ -139,8 +141,10 @@ module video_fetch_engine #(
                 end
 
                 S_BURST_B_WAIT: begin
-                    if (!burst_busy)
+                    if (!burst_busy) begin
+                        fetch_line <= fetch_line + 1;
                         state <= S_IDLE;
+                    end
                 end
 
                 default: state <= S_IDLE;

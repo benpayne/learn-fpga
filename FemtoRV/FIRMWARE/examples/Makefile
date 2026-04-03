@@ -21,7 +21,7 @@ LDFLAGS_UPLOAD=-T upload.ld
 
 LDFLAGS_PROGRAM=-T program.ld
 
-PROGRAMS=hello.bin nop.bin bounce.bin mario.bin hello_gpu.bin gfx_test.bin args.bin edit.bin play.bin sndtest.bin fbtest.bin
+PROGRAMS=hello.bin nop.bin bounce.bin mario.bin hello_gpu.bin gfx_test.bin args.bin edit.bin play.bin sndtest.bin fbtest.bin showimg.bin bursttest.bin
 
 # Build progstart.o (entry stub that saves/restores ra)
 progstart.o: progstart.S

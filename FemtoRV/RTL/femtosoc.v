@@ -505,13 +505,13 @@ module femtosoc(
       .V_ACTIVE(400),
       .V_TOTAL(449),
       .STRIDE_WORDS(512),
-      .FB_BASE_PARAM(26'hA00000)
+      .FB_BASE_PARAM(26'h200000)  // SDRAM-relative address
    ) video_fetch (
       .clk(clk), .resetn(reset),
       .hsync_start(gated_hsync),
       .vsync_start(gated_vsync),
       .v_count(gpu_v_count),
-      .fb_base(26'hA00000),
+      .fb_base(26'h200000),  // SDRAM-relative: 0xA00000 - 0x800000 = 0x200000
       .burst_rd(vid_burst_rd),
       .burst_addr(vid_burst_addr),
       .burst_len(vid_burst_len),

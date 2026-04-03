@@ -3,7 +3,7 @@
 // then switches GPU to display_mode=2 (framebuffer).
 // Press any key to return to text mode.
 
-#include <femtorv32.h>
+#include "retrokernel.h"
 
 // RGB565 color helpers
 #define RGB565(r,g,b) ((((r)&0x1F)<<11) | (((g)&0x3F)<<5) | ((b)&0x1F))
@@ -81,14 +81,22 @@ int main(void) {
     GPU_WRITE(GPU_REG_CHAR_DATA, 'D');
     putchar('D');
 
+    // Verify data was written
+    rk_puts("\nVerify:\n");
+    rk_puts("  [0]="); rk_puthex8(fb32[0]>>24); rk_puthex8(fb32[0]>>16); rk_puthex8(fb32[0]>>8); rk_puthex8(fb32[0]);
+    rk_puts("\n  [1]="); rk_puthex8(fb32[1]>>24); rk_puthex8(fb32[1]>>16); rk_puthex8(fb32[1]>>8); rk_puthex8(fb32[1]);
+    rk_puts("\n  [512]="); rk_puthex8(fb32[512]>>24); rk_puthex8(fb32[512]>>16); rk_puthex8(fb32[512]>>8); rk_puthex8(fb32[512]);
+    rk_puts("\n  [1024]="); rk_puthex8(fb32[1024]>>24); rk_puthex8(fb32[1024]>>16); rk_puthex8(fb32[1024]>>8); rk_puthex8(fb32[1024]);
+    rk_puts("\n");
+
     // Switch to mode 2
     GPU_WRITE(0x0D, 2);
 
     GPU_WRITE(GPU_REG_CHAR_DATA, 'M');
     putchar('M');
 
-    // Wait ~10 seconds (CPU is slower during mode 2 due to SDRAM burst stalls)
-    for (volatile long i = 0; i < 100000000; i++);
+    // Wait for PS2 keypress
+    rk_getc();
 
     // Back to text mode
     GPU_WRITE(0x0D, 0);
