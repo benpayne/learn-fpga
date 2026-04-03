@@ -526,27 +526,17 @@ module femtosoc(
 
    // Ping-pong double line buffer: eliminates FIFO underrun
    // Display reads from one buffer while fetch engine fills the other
-   // Swap at each hsync
-   wire lb_wr_ready;
-   wire lb_wr_done;
-   assign fifo_full = !lb_wr_ready;
-
-   // Swap when write buffer becomes full (rising edge of wr_done)
-   // This ensures the complete line is written before display reads it
-   reg lb_wr_done_prev;
-   always @(posedge clk) lb_wr_done_prev <= lb_wr_done;
-   wire lb_swap = lb_wr_done & !lb_wr_done_prev;  // Rising edge of wr_done
+   // Simple ping-pong: swap on hsync, reset write pointer, start next fetch
+   assign fifo_full = 0;  // Always accept writes (320 word buffer has room)
 
    video_line_buffer line_buf (
       .clk(clk),
       .resetn(reset),
       .wr_data(fifo_wdata),
       .wr_en(fifo_wen),
-      .wr_ready(lb_wr_ready),
-      .wr_done(lb_wr_done),
-      .rd_addr(gpu_h_count[9:1]),     // h_count/2 = word index (2 pixels per word)
+      .rd_addr(gpu_h_count[9:1]),
       .rd_data(fifo_rd_data),
-      .swap(lb_swap)
+      .hsync(gated_hsync)
    );
 `endif
 
