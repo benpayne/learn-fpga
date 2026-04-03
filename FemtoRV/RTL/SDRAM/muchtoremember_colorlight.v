@@ -57,14 +57,16 @@ module muchtoremember (
   reg  [3:0] int_sd_dqm;
   reg        int_sd_cs, int_sd_we, int_sd_ras, int_sd_cas;
 
-  // Output mux: burst reader overrides when active
-  assign sd_addr = ovr_active ? ovr_addr : int_sd_addr;
-  assign sd_ba   = ovr_active ? ovr_ba   : int_sd_ba;
-  assign sd_dqm  = ovr_active ? ovr_dqm  : int_sd_dqm;
-  assign sd_cs   = ovr_active ? ovr_cs   : int_sd_cs;
-  assign sd_we   = ovr_active ? ovr_we   : int_sd_we;
-  assign sd_ras  = ovr_active ? ovr_ras  : int_sd_ras;
-  assign sd_cas  = ovr_active ? ovr_cas  : int_sd_cas;
+  // Output: when override is active, the burst reader drives commands
+  // directly into the output registers via the always block below.
+  // When not active, the state machine drives them normally.
+  assign sd_addr = int_sd_addr;
+  assign sd_ba   = int_sd_ba;
+  assign sd_dqm  = int_sd_dqm;
+  assign sd_cs   = int_sd_cs;
+  assign sd_we   = int_sd_we;
+  assign sd_ras  = int_sd_ras;
+  assign sd_cas  = int_sd_cas;
 
   parameter sdram_startup_cycles = 10100;
   parameter sdram_refresh_cycles = 195;
@@ -249,6 +251,26 @@ module muchtoremember (
         end
 
       endcase
+
+      // Burst override: when active, the burst reader takes over the command
+      // registers. The state machine is forced to IDLE so it doesn't issue
+      // conflicting commands. When override ends, the state machine resumes
+      // cleanly from IDLE.
+      if (ovr_active) begin
+         int_sd_addr <= ovr_addr;
+         int_sd_ba   <= ovr_ba;
+         int_sd_dqm  <= ovr_dqm;
+         int_sd_cs   <= ovr_cs;
+         int_sd_we   <= ovr_we;
+         int_sd_ras  <= ovr_ras;
+         int_sd_cas  <= ovr_cas;
+         sd_data_drive <= 0;
+         // Force state machine to IDLE — when override ends, it resumes clean
+         state <= s_idle;
+         busy <= 0;
+         rd_sticky <= 0;
+         wmask_sticky <= 0;
+      end
 
    end
 
