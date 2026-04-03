@@ -496,22 +496,28 @@ module femtosoc(
    wire [9:0] gpu_v_count;
    wire [9:0] gpu_h_count;
    wire fetch_enabled = (gpu_display_mode == 2'd2);
-   // Pass hsync/vsync to fetch engine — it uses v_count to decide what to do
-   wire gated_hsync = gpu_hsync_start & fetch_enabled;
-   wire gated_vsync = gpu_vsync_start;
+   // Synchronize hsync/vsync from pixel clock to system clock
+   // Edge detector ensures exactly 1 system clock pulse even if
+   // pixel clock pulse spans 2 system clocks (different PLL phases)
+   reg hsync_prev, vsync_prev;
+   always @(posedge clk) begin
+       hsync_prev <= gpu_hsync_start;
+       vsync_prev <= gpu_vsync_start;
+   end
+   wire gated_hsync = gpu_hsync_start & ~hsync_prev & fetch_enabled;
+   wire gated_vsync = gpu_vsync_start & ~vsync_prev;
 
    video_fetch_engine #(
-      .H_ACTIVE(640),
       .V_ACTIVE(400),
-      .V_TOTAL(449),
-      .STRIDE_WORDS(512),
-      .FB_BASE_PARAM(26'h200000)  // SDRAM-relative address
+      .STRIDE_BYTES(2048),
+      .LINE_WORDS(320),
+      .FB_BASE_PARAM(26'h200000)
    ) video_fetch (
       .clk(clk), .resetn(reset),
       .hsync_start(gated_hsync),
       .vsync_start(gated_vsync),
       .v_count(gpu_v_count),
-      .fb_base(26'h200000),  // SDRAM-relative: 0xA00000 - 0x800000 = 0x200000
+      .fb_base(26'h200000),
       .burst_rd(vid_burst_rd),
       .burst_addr(vid_burst_addr),
       .burst_len(vid_burst_len),

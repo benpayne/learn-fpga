@@ -112,13 +112,17 @@ module muchtoremember_burst (
   localparam s_idle_in_2_bit = 12; localparam s_idle_in_2 = 1 << s_idle_in_2_bit;
   localparam s_idle_in_1_bit = 13; localparam s_idle_in_1 = 1 << s_idle_in_1_bit;
   // Burst-specific states
-  localparam s_burst_act_bit = 14; localparam s_burst_act = 1 << s_burst_act_bit;
-  localparam s_burst_rd_bit  = 15; localparam s_burst_rd  = 1 << s_burst_rd_bit;
-  localparam s_burst_drn_bit = 16; localparam s_burst_drn = 1 << s_burst_drn_bit;
-  localparam s_burst_pre_bit = 17; localparam s_burst_pre = 1 << s_burst_pre_bit;
+  localparam s_burst_act_bit  = 14; localparam s_burst_act  = 1 << s_burst_act_bit;
+  localparam s_burst_rd_bit   = 15; localparam s_burst_rd   = 1 << s_burst_rd_bit;
+  localparam s_burst_drn_bit  = 16; localparam s_burst_drn  = 1 << s_burst_drn_bit;
+  localparam s_burst_pre_bit  = 17; localparam s_burst_pre  = 1 << s_burst_pre_bit;
+  // Row-crossing states (precharge current row, activate next, resume reads)
+  localparam s_burst_xpre_bit = 18; localparam s_burst_xpre = 1 << s_burst_xpre_bit;
+  localparam s_burst_xrp_bit  = 19; localparam s_burst_xrp  = 1 << s_burst_xrp_bit;
+  localparam s_burst_xact_bit = 20; localparam s_burst_xact = 1 << s_burst_xact_bit;
 
   (* onehot *)
-  reg [17:0] state = s_init;
+  reg [20:0] state = s_init;
 
   reg [14:0] reset_counter = sdram_startup_cycles;
   reg  [7:0] refresh_counter = 0;
@@ -130,6 +134,8 @@ module muchtoremember_burst (
   reg [8:0]  burst_remaining;
   reg [7:0]  burst_col;
   reg [2:0]  cas_pipe;
+  reg [1:0]  burst_bank;     // Current bank for burst
+  reg [10:0] burst_row;      // Current row for burst
 
   // Busy: identical to original — clears on s_read_4 and s_write_1
   wire stillatwork = ~(state[s_read_4_bit] | state[s_write_1_bit]);
@@ -210,6 +216,8 @@ module muchtoremember_burst (
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
             burst_col       <= burst_addr[9:2];
             burst_remaining <= burst_len;
+            burst_bank      <= burst_addr[22:21];
+            burst_row       <= burst_addr[20:10];
             cas_pipe        <= 0;
             state           <= s_burst_act;
           end else if ((|wmask_sticky) | rd_sticky) begin
@@ -264,15 +272,25 @@ module muchtoremember_burst (
         end
 
         state[s_burst_rd_bit]: begin
-          // Advance CAS pipeline (3 stages for CAS2 + input register)
+          // Advance CAS pipeline
           cas_pipe <= {cas_pipe[1:0], 1'b0};
 
           if (burst_remaining > 0) begin
+            // Issue READ
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_READ;
-            sd_addr <= {3'b000, 2'b00, burst_col};  // A10=0, no auto-precharge
-            burst_col <= burst_col + 1;
+            sd_addr <= {3'b000, 2'b00, burst_col};
             burst_remaining <= burst_remaining - 1;
             cas_pipe[0] <= 1'b1;
+
+            if (burst_col == 8'hFF) begin
+              // Last column in this row — need to cross to next row
+              // Don't increment col (it would wrap to 0 naturally)
+              // After issuing this READ, go to row crossing
+              burst_col <= 0;
+              state <= s_burst_xpre;  // Will drain pipeline during crossing
+            end else begin
+              burst_col <= burst_col + 1;
+            end
           end else begin
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
           end
@@ -287,6 +305,50 @@ module muchtoremember_burst (
           if (burst_remaining == 0 && !cas_pipe[0] && !cas_pipe[1]) begin
             state <= s_burst_drn;
           end
+        end
+
+        // ======== ROW CROSSING: drain pipeline, precharge, activate next row ========
+        // Data from the last few READs is still in the CAS pipeline.
+        // We must capture it during the crossing states.
+
+        state[s_burst_xpre_bit]: begin
+          // Precharge + continue draining CAS pipeline
+          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_PRECHARGE;
+          sd_addr <= 13'b0010000000000;
+          burst_row <= burst_row + 1;
+          cas_pipe <= {cas_pipe[1:0], 1'b0};
+          if (cas_pipe[2]) begin
+            burst_dout  <= sd_data_in;
+            burst_valid <= 1;
+          end
+          state <= s_burst_xrp;
+        end
+
+        state[s_burst_xrp_bit]: begin
+          // tRP wait + continue draining
+          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP;
+          cas_pipe <= {cas_pipe[1:0], 1'b0};
+          if (cas_pipe[2]) begin
+            burst_dout  <= sd_data_in;
+            burst_valid <= 1;
+          end
+          state <= s_burst_xact;
+        end
+
+        state[s_burst_xact_bit]: begin
+          // Activate next row + drain last pipeline word if any
+          sd_ba   <= burst_bank;
+          sd_addr <= {2'b00, burst_row};
+          {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
+          cas_pipe <= {cas_pipe[1:0], 1'b0};
+          if (cas_pipe[2]) begin
+            burst_dout  <= sd_data_in;
+            burst_valid <= 1;
+          end
+          // Pipeline should be empty by now. Reset and resume reading.
+          if (cas_pipe[1:0] == 2'b00)
+            state <= s_burst_act;
+          // else stay here one more cycle to drain
         end
 
         state[s_burst_drn_bit]: begin
