@@ -493,21 +493,24 @@ module femtosoc(
 
    // Video fetch engine — only active when display_mode == 2 (framebuffer)
    wire [1:0] gpu_display_mode;
-   // Enable video fetch when display_mode == 2
-   // Note: fetch engine reads from SDRAM, CPU is stalled during bursts
+   wire [9:0] gpu_v_count;
+   wire [9:0] gpu_h_count;
    wire fetch_enabled = (gpu_display_mode == 2'd2);
+   // Pass hsync/vsync to fetch engine — it uses v_count to decide what to do
    wire gated_hsync = gpu_hsync_start & fetch_enabled;
-   wire gated_vsync = gpu_vsync_start;  // Always pass VSync so fetch engine tracks frame timing
+   wire gated_vsync = gpu_vsync_start;
 
    video_fetch_engine #(
       .H_ACTIVE(640),
       .V_ACTIVE(400),
-      .STRIDE_WORDS(512),  // 2KB per line, aligned to SDRAM row boundary
+      .V_TOTAL(449),
+      .STRIDE_WORDS(512),
       .FB_BASE_PARAM(26'hA00000)
    ) video_fetch (
       .clk(clk), .resetn(reset),
       .hsync_start(gated_hsync),
       .vsync_start(gated_vsync),
+      .v_count(gpu_v_count),
       .fb_base(26'hA00000),
       .burst_rd(vid_burst_rd),
       .burst_addr(vid_burst_addr),
@@ -935,7 +938,9 @@ HardwareConfig hwconfig(
       .fb_pixel_data(fifo_rd_data),
       .fb_pixel_valid(!fifo_empty),
       .fb_pixel_rd(fifo_rd_en),
-      .display_mode_out(gpu_display_mode)
+      .display_mode_out(gpu_display_mode),
+      .v_count_out(gpu_v_count),
+      .h_count_out(gpu_h_count)
    );
 
  `ifdef NRV_IO_INT_CONTROLLER

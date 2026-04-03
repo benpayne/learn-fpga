@@ -62,8 +62,10 @@ module gpu_femtorv_wrapper(
     input  wire        fb_pixel_valid, // FIFO has data
     output wire        fb_pixel_rd,    // Request next word from FIFO
 
-    // Display mode output (for enabling video fetch)
-    output wire [1:0]  display_mode_out
+    // Display mode and timing outputs
+    output wire [1:0]  display_mode_out,
+    output wire [9:0]  v_count_out,       // Current display line (from VGA timing)
+    output wire [9:0]  h_count_out        // Current pixel position
 );
 
     //==========================================================================
@@ -163,5 +165,8 @@ module gpu_femtorv_wrapper(
     assign hsync_start = (gpu_h_count == 10'd640) && (h_count_prev == 10'd639);
     assign vsync_start = (gpu_v_count == 10'd400) && (v_count_prev == 10'd399);
     assign display_mode_out = debug_display_mode;
+
+    assign v_count_out = gpu_v_count;
+    assign h_count_out = gpu_h_count;
 
 endmodule
