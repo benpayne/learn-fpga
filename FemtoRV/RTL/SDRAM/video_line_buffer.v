@@ -1,14 +1,7 @@
 // video_line_buffer.v — Double-buffered scanline buffer (ping-pong)
 //
-// Simple design: swap and reset on hsync. Display reads one buffer
-// while SDRAM burst fills the other. No complex handshaking.
-//
-// On hsync:
-//   1. Swap active_buf (display reads from newly filled buffer)
-//   2. Reset write pointer to 0
-//   3. Fetch engine starts filling the other buffer
-//
 // 640 x 32-bit BRAM: addresses 0-319 = buffer A, 320-639 = buffer B
+// BRAM-friendly: separate read and write always blocks for inference.
 
 module video_line_buffer (
     input  wire        clk,
@@ -27,29 +20,30 @@ module video_line_buffer (
 );
 
     reg [31:0] mem [0:639];
-    reg        active_buf;            // 0=read A/write B, 1=read B/write A
+    reg        active_buf;
     reg [8:0]  wr_ptr;
 
     // Buffer A = 0-319, Buffer B = 320-639
-    // Read from active buffer, write to inactive buffer
     wire [9:0] rd_full_addr = active_buf ? (10'd320 + {1'b0, rd_addr}) : {1'b0, rd_addr};
     wire [9:0] wr_full_addr = active_buf ? {1'b0, wr_ptr} : (10'd320 + {1'b0, wr_ptr});
+    wire       do_write = wr_en && wr_ptr < 320;
 
+    // BRAM read port (separate always block for inference)
+    always @(posedge clk)
+        rd_data <= mem[rd_full_addr];
+
+    // BRAM write port (separate always block for inference)
+    always @(posedge clk)
+        if (do_write) mem[wr_full_addr] <= wr_data;
+
+    // Control logic
     always @(posedge clk) begin
         if (!resetn) begin
             active_buf <= 0;
             wr_ptr     <= 0;
         end else begin
-            // Read port (registered BRAM output)
-            rd_data <= mem[rd_full_addr];
-
-            // Write port
-            if (wr_en && wr_ptr < 320) begin
-                mem[wr_full_addr] <= wr_data;
+            if (do_write)
                 wr_ptr <= wr_ptr + 1;
-            end
-
-            // hsync: swap and reset
             if (hsync) begin
                 active_buf <= ~active_buf;
                 wr_ptr <= 0;

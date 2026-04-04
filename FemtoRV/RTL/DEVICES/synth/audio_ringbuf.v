@@ -41,7 +41,19 @@ module audio_ringbuf (
     // ---- Read data (status) ----
     assign rdata = {8'hAB, 8'b0, wr_ptr[9], vol_shift, rd_ptr_msb_prev, rd_ptr, enabled};
 
-    // ---- Single always block for all state ----
+    // ---- BRAM-friendly: separate read and write always blocks ----
+    wire buf_wr_en = wr_en && (wdata[30:29] == 2'b01);
+    reg signed [15:0] buf_rd_data;
+
+    // BRAM read port
+    always @(posedge clk)
+        buf_rd_data <= buffer[rd_ptr];
+
+    // BRAM write port
+    always @(posedge clk)
+        if (buf_wr_en) buffer[wr_ptr] <= wdata[15:0];
+
+    // ---- Control logic ----
     always @(posedge clk) begin
         if (reset) begin
             wr_ptr <= 0;
@@ -52,35 +64,25 @@ module audio_ringbuf (
             pcm_out <= 0;
             rd_ptr_msb_prev <= 0;
         end else begin
-            half_irq <= 0;  // Default: no interrupt
+            half_irq <= 0;
 
-            // ---- CPU write port ----
+            // CPU write port (control registers + write pointer)
             if (wr_en) begin
                 case (wdata[30:29])
-                    2'b00: begin
-                        // Set write pointer
-                        wr_ptr <= wdata[9:0];
-                    end
-                    2'b01: begin
-                        // Write sample at write pointer, auto-increment
-                        buffer[wr_ptr] <= wdata[15:0];
-                        wr_ptr <= wr_ptr + 1;
-                    end
+                    2'b00: wr_ptr <= wdata[9:0];
+                    2'b01: wr_ptr <= wr_ptr + 1;  // Auto-increment (write handled above)
                     2'b10: begin
-                        // Control register
                         enabled <= wdata[0];
-                        if (wdata[1])
-                            rd_ptr <= 0;
+                        if (wdata[1]) rd_ptr <= 0;
                         vol_shift <= wdata[4:2];
                     end
                     default: ;
                 endcase
             end
 
-            // ---- Hardware read port (at sample rate) ----
+            // Hardware read port (at sample rate)
             if (sample_tick && enabled) begin
-                // Read sample from buffer and apply volume
-                pcm_out <= buffer[rd_ptr] >>> vol_shift;
+                pcm_out <= buf_rd_data >>> vol_shift;
 
                 // Advance read pointer
                 rd_ptr_msb_prev <= rd_ptr[9];
