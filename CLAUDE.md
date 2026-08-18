@@ -9,7 +9,11 @@ This is **learn-fpga** by Bruno Levy - an educational repository for learning FP
 **Your Custom Work (2024-2026):**
 - Added PS2 keyboard controller with interrupt support and scan code decoder
 - Created custom interrupt controller for FemtoRV (32 sources, edge-triggered)
-- HDMI display GPU with per-character 16-color text mode + bitmap graphics
+- HDMI display GPU with per-character 16-color text mode + bitmap graphics + SDRAM framebuffer
+- 4-voice 4-operator FM synthesizer with I2S output + sampled audio ring buffer
+- SDRAM controller with burst reads, write-through cache, and video scanline fetch
+- BIOS monitor with SD card boot and XMODEM upload
+- RetroKernel: Unix-style shell with FAT32 filesystem, program loader
 - Modified FemtoRV processors to integrate interrupts
 - Target: Colorlight i5 board (ECP5 FPGA)
 - **Use Case**: Retro computing co-processor - providing modern peripherals (PS2 keyboard, graphics, audio) to vintage CPUs (68k, 6502, 8086/286, Z80)
@@ -39,6 +43,14 @@ Located in `FemtoRV/RTL/DEVICES/`:
 - `InterruptController.v` - 32-source interrupt controller
 - `Interrupt_bits.v` - Interrupt bit definitions
 - `HardwareConfig_bits.v` - IO address bit assignments
+- `cache.v` - 64-entry direct-mapped write-through SDRAM cache with RMW
+- `synth/` - FM synthesizer (4-voice 4-op TDM, I2S, sine ROM, registers)
+- `synth/audio_ringbuf.v` - 1024x16-bit sampled audio ring buffer (48kHz)
+
+Located in `FemtoRV/RTL/SDRAM/`:
+- `muchtoremember_burst.v` - Unified SDRAM controller (single-word + burst reads, row-crossing)
+- `video_fetch_engine.v` - Scanline burst reader for framebuffer mode
+- `video_line_buffer.v` - Ping-pong double line buffer (320 words × 2)
 
 Located in `FemtoRV/lib/ps2-controller-lib/` (git submodule):
 - PS2 decoder core, debounce, FIFO sub-modules
@@ -47,18 +59,31 @@ Located in `FemtoRV/lib/hdmi-display-lib/` (shared with retrocpu):
 - `rtl/core/` - TMDS encoder, DVI transmitter, VGA timing generator
 - `rtl/character/` - Character GPU: buffer, renderer, font ROM, registers
 - `rtl/graphics/` - Graphics GPU: VRAM, palette, pixel renderer (1/2/4 BPP)
-- `rtl/gpu_top.v` - Top-level GPU with char+graphics mux
+- `rtl/gpu_top.v` - Top-level GPU with char+graphics+framebuffer mux
 - `wrappers/fpga/gpu_femtorv_wrapper.v` - FemtoRV 32-bit bus adapter
 - `clock/gpu_pll.v` - ECP5 PLL for 25MHz pixel + 125MHz TMDS
 - `data/font_data.hex` - 8x16 VGA font bitmap
 
 Located in `FemtoRV/FIRMWARE/`:
+- `monitor/` - BIOS monitor (SD boot, XMODEM upload, memory commands)
+- `retrokernel/` - RetroKernel v0.1 (Unix shell, FAT32, program loader)
+- `examples/` - User programs (bench, fbtest, showimg, play, sndtest, edit, etc.)
 - `LIBFEMTORV32/ps2_keymap.h` - PS2 scan code to ASCII decoder with modifiers
 - `gpu_text/` - HDMI text demo (16 colors, keyboard echo, scrolling)
 - `blinky/` - Interrupt-driven PS2 keyboard + timer demo
 
+Located in `FemtoRV/TOOLS/`:
+- `xmodem_upload.py` - XMODEM binary uploader for BIOS monitor
+- `kernel_upload.py` - File uploader for RetroKernel (load command)
+
 Located in `FemtoRV/TEST/`:
 - `ps2dec_tb.py` - Cocotb testbench for PS2 decoder
+- `ic_tb.py` - Cocotb testbench for interrupt controller
+- `timer_tb.py` - Cocotb testbench for timer
+- `sdram_burst_tb.py` - Cocotb testbench for SDRAM controller (single, burst, row-crossing)
+- `gpu_fb_tb.py` - Cocotb testbench for GPU framebuffer
+- `line_buffer_tb.py` - Cocotb testbench for video line buffer
+- `video_fetch_tb.py` - Cocotb testbench for video fetch engine
 
 ## FemtoRV CPU Variants
 
@@ -84,16 +109,19 @@ FemtoRV comes in multiple variants, each adding more features:
 │ 68k/6502/   │  Bus    │                          │
 │ 8086/Z80    │         │  ┌────────────────────┐  │
 └─────────────┘         │  │  FemtoRV Core      │  │
-                        │  │  (intermissum+)    │  │
+                        │  │  (petitbateau)     │  │
                         │  └────────┬───────────┘  │
                         │           │              │
                         │  ┌────────┴───────────┐  │
-                        │  │ Your Peripherals:  │  │
+                        │  │ Peripherals:       │  │
                         │  │ • PS2 Keyboard     │  │
                         │  │ • Interrupt Ctrl   │  │
-                        │  │ • Graphics (TBD)   │  │
-                        │  │ • Audio (TBD)      │  │
-                        │  │ • SPI Flash        │  │
+                        │  │ • HDMI GPU (3mode) │  │
+                        │  │ • FM Synth + PCM   │  │
+                        │  │ • SD Card (FAT32)  │  │
+                        │  │ • 8MB SDRAM        │  │
+                        │  │ • SDRAM Cache      │  │
+                        │  │ • Timer            │  │
                         │  └────────────────────┘  │
                         └──────────────────────────┘
 ```
@@ -113,18 +141,44 @@ FemtoRV comes in multiple variants, each adding more features:
 - **Active development**: Moved to TordBoyau (pipelined core without MMU)
 
 ### Your Fork Status
-- **Last build**: March 2026 (Colorlight i5)
+- **Last build**: April 2026 (Colorlight i5)
 - **Working features**:
-  - FemtoRV petitbateau (RV32IMFC) at 25 MHz, 64KB BRAM
+  - FemtoRV petitbateau (RV32IMFC) at 25 MHz
+  - 32KB BRAM (BIOS ROM) + 8MB SDRAM (main RAM, cached)
+  - 64-entry direct-mapped write-through SDRAM cache with RMW
   - PS2 keyboard with interrupt-driven scan code decoder + keymap
-  - HDMI display: 40/80-col text with per-character 16-color CGA palette
-  - HDMI display: bitmap graphics modes (1/2/4 BPP, 32KB VRAM, 16-entry RGB444 palette)
+  - HDMI GPU: 3 display modes (text, bitmap, SDRAM framebuffer)
+  - FM synthesizer: 4-voice 4-op TDM, I2S + PWM output
+  - Sampled audio: 1024-sample ring buffer at 48kHz, mixed with FM
+  - SD card: SPI bit-bang, FAT32 read, BIOS auto-boot
+  - BIOS monitor: memory commands, XMODEM upload, SD boot
+  - RetroKernel v0.1: Unix shell, FAT32 dir/cat/cp/rm/mkdir, program loader
   - Edge-triggered interrupt controller (32 sources)
   - Timer with countdown and interrupt
-  - UART, LEDs (active-low), 7-segment display
-  - Cocotb testbenches for PS2, interrupt controller, timer
-- **Resource usage**: LUTs 33%, Block RAM 92% (52/56), PLLs 2/2
+  - UART (256-byte RX FIFO, TX holding register), LEDs, 7-segment
+  - Cocotb testbenches for PS2, interrupt controller, timer, SDRAM, video
+- **Performance**: 4.7 MIPS, 4.38 DMIPS (0.175 DMIPS/MHz), 952 KFLOPS, 3034 KB/sec memcpy
+- **Resource usage**: LUTs 57% (13,937/24,288), Block RAM 71% (40/56), Multipliers 53% (15/28), PLLs 100% (2/2)
+- **Timing margin**: Max 32.6 MHz (30% margin at 25 MHz target)
 - **Remote**: https://github.com/benpayne/learn-fpga.git (branch: colorlight_i5_support)
+
+### Branch Layout
+
+Everything below `87ad9c1` (BRAM-friendly line buffer) is the shared, known-good base:
+petitbateau + SDRAM + cache + GPU + synth + BIOS monitor + RetroKernel, all working.
+
+- `001-pico-rom-emulator` — Pico W ROM emulator + virtual disk. **Parked, incomplete, never
+  verified on hardware.** Commit `f1e70b1` documents two known defects in its message: the
+  boot stub polls the mailbox status field at the wrong offset (0x000 is the opcode field,
+  status is 0x004), and `boot_manager.c` puts a 7936-byte buffer on core1's 4KB stack.
+- `002-retro-web` — checked out in a separate worktree.
+- `003-llama2-minimal-soc` — current work. Branched from `87ad9c1`, **not** from the Pico
+  branch, so none of the unfinished Pico changes (4KB `NRV_RAM`, shared BRAM, SPI loader)
+  are present here.
+
+Build profiles are selected by a `-D<BOARD>` define, dispatched in `RTL/femtosoc_config.v`
+to a file in `RTL/CONFIGS/`. New profiles are added alongside existing ones rather than by
+editing them, so `colorlight_i5` and any new profile coexist in one checkout.
 
 ### Upstream Changes Since Your Work
 ```bash
@@ -142,18 +196,27 @@ FemtoRV comes in multiple variants, each adding more features:
 ```bash
 cd FemtoRV
 
-# Build firmware (e.g., gpu_text demo)
-(cd FIRMWARE && make libs)                           # rebuild libs if changed
-(cd FIRMWARE/gpu_text && make clean gpu_text.hex)     # build and copy to firmware.hex
+# Build firmware
+(cd FIRMWARE && make libs)                             # rebuild libs if changed
+(cd FIRMWARE/monitor && make clean monitor.hex)        # build BIOS monitor
+(cd FIRMWARE/retrokernel && make retrokernel.bin)       # build kernel (uploaded to SD)
+(cd FIRMWARE/examples && make clean all)               # build user programs
 
-# Synthesize bitstream (includes firmware in BRAM)
+# Copy font data (required for GPU)
+cp -f lib/hdmi-display-lib/data/font_data.hex font_data.hex
+
+# Synthesize bitstream (includes BIOS in BRAM)
 make colorlight_i5.synth                              # yosys + nextpnr + ecppack
 
 # Program FPGA (volatile - lost on power cycle)
-sudo openFPGALoader -c cmsisdap -v --file-type bin femtosoc.bit
+openFPGALoader -c cmsisdap -v --file-type bin femtosoc.bit
 
 # Program FPGA (permanent - survives power cycle)
-sudo openFPGALoader -c cmsisdap -v -f --unprotect-flash --file-type bin femtosoc.bit
+openFPGALoader -c cmsisdap -v -f --unprotect-flash --file-type bin femtosoc.bit
+
+# Upload files to RetroKernel's SD card
+python3 TOOLS/kernel_upload.py FIRMWARE/retrokernel/retrokernel.bin /dev/ttyACM0 /kernel.bin
+python3 TOOLS/kernel_upload.py FIRMWARE/examples/bench.bin /dev/ttyACM0 /bench.bin
 ```
 
 ### Programming the FPGA
@@ -169,25 +232,18 @@ make BOARD=colorlight_i5 load
 ### Running Tests
 
 ```bash
-cd TEST
+cd FemtoRV/TEST
 
-# Run PS2 decoder testbench (your test)
-pytest ps2dec_tb.py
+# Run all testbenches
+pytest ps2dec_tb.py          # PS2 decoder
+pytest ic_tb.py              # Interrupt controller
+pytest timer_tb.py           # Timer
+pytest sdram_burst_tb.py     # SDRAM controller (single, burst, row-crossing)
+pytest line_buffer_tb.py     # Video line buffer
+pytest video_fetch_tb.py     # Video fetch engine
 
 # View waveforms
 gtkwave sim_build/ps2_decoder_device.fst
-```
-
-### Building Firmware
-
-```bash
-cd FIRMWARE/EXAMPLES
-
-# Build a demo program
-make hello.hex
-
-# Program to FPGA (loads into BRAM)
-make hello.prog
 ```
 
 ## Your Custom Hardware Architecture
@@ -254,22 +310,23 @@ module InterruptController(
 
 ## Memory-Mapped I/O
 
-FemtoRV uses memory-mapped I/O. Typical memory map:
+FemtoRV uses memory-mapped I/O. Your Colorlight i5 memory map:
 
 ```
-0x00000000 - 0x00001FFF : RAM (8KB typical)
-0x00002000 - 0x00003FFF : ROM/Flash
-0x80000000 - 0x8FFFFFFF : I/O devices
-  0x80000000 : UART
-  0x80000004 : LEDs
-  0x80000008 : Switches
-  ...
-  [YOUR DEVICES]
-  0x80000xxx : PS2 Decoder
-  0x80000yyy : Interrupt Controller
+0x000000-0x007FFF   32KB BRAM (BIOS ROM with SD boot loader)
+0x400000+           IO devices (one-hot addressing):
+                      UART, LEDs, 7-seg, Timer, PS2 Keyboard,
+                      GPU, FM Synth, SD Card, Interrupt Controller,
+                      Hardware Config
+0x800000-0x80FFFF   64KB kernel space (RetroKernel, loaded from SD)
+0x810000-0x9FFFFF   ~2MB program space
+0xA00000-0xA7CFFF   512KB framebuffer (640x400x16bpp, stride=2KB)
+0xA7D000-0xEFFFFF   ~4.5MB free
+0xF00000-0xFFFFF0   1MB stack (SDRAM, grows down)
 ```
 
-Device addresses configured in `femtosoc_config.v`
+SDRAM addresses (0x800000+) go through a 64-entry write-through cache.
+Device addresses configured in `colorlight_i5_config.v` and `HardwareConfig_bits.v`
 
 ## Toolchain and Environment
 
@@ -431,9 +488,9 @@ cd openlane/femtorv_quark
 
 - ❌ **No MMU**: Cannot run Linux (only bare-metal/RTOS)
 - ❌ **No Supervisor mode**: Machine mode only
-- ❌ **No cache**: Direct memory access
 - ❌ **No out-of-order**: Simple in-order pipeline
 - ✅ **This is intentional**: Optimized for small size, educational clarity
+- ℹ️ **Custom cache added**: 64-entry write-through cache for SDRAM (your addition, not upstream)
 
 ### For Linux, Consider:
 
@@ -475,31 +532,32 @@ For your use case (peripheral controller for retro computers):
 ### Quick Build and Test
 
 ```bash
-# Build for Colorlight i5
 cd FemtoRV
-make BOARD=colorlight_i5 build
 
-# Load to FPGA
-make BOARD=colorlight_i5 load
+# Full rebuild
+(cd FIRMWARE && make libs)
+(cd FIRMWARE/monitor && make clean monitor.hex)
+cp -f lib/hdmi-display-lib/data/font_data.hex font_data.hex
+make colorlight_i5.synth
 
-# Build and run firmware
-cd FIRMWARE/EXAMPLES
-make hello.prog
+# Program FPGA
+openFPGALoader -c cmsisdap -v --file-type bin femtosoc.bit
 
-# Connect serial terminal (115200 8N1)
-screen /dev/ttyUSB0 115200
+# Upload files to SD card via RetroKernel
+python3 TOOLS/kernel_upload.py FIRMWARE/examples/bench.bin /dev/ttyACM0 /bench.bin
+
+# Connect serial terminal (115200 8N1, CMSIS-DAP USB)
+screen /dev/ttyACM0 115200
+# Or use: minicom -D /dev/ttyACM0 -b 115200
 ```
 
 ### Modifying Hardware
 
 After changing Verilog files:
 ```bash
-# Rebuild synthesis
-make clean
-make BOARD=colorlight_i5 build
-
-# Reload to FPGA
-make BOARD=colorlight_i5 load
+cd FemtoRV
+make colorlight_i5.synth          # ~2-3 min (yosys + nextpnr + ecppack)
+openFPGALoader -c cmsisdap -v --file-type bin femtosoc.bit
 ```
 
 ### Adding New Peripherals
@@ -547,40 +605,52 @@ Your goal is to create a modern peripheral controller for vintage computers usin
 - ✅ **Timer** - Working (countdown with completion interrupt)
 - ✅ **HDMI Character Display** - Working (40/80-col, per-char 16-color CGA palette)
 - ✅ **HDMI Graphics Modes** - Working (1/2/4 BPP bitmap, 32KB VRAM, 16-entry RGB444 palette, VBlank sync)
+- ✅ **HDMI Framebuffer** - Working (640x400 16bpp RGB565 from SDRAM, burst scanline fetch, ping-pong line buffer)
 - ✅ **SD Card Interface** - Working (SPI bit-bang, FAT32, Digilent PMOD SD on P2: CS=P17, MOSI=R18, MISO=C18, SCK=U16)
-- ✅ **SDRAM** - Working (EM638325 8MB, 32-bit, cached with RMW, code execution verified)
+- ✅ **SDRAM** - Working (EM638325 8MB, 32-bit, unified controller with burst + row-crossing)
+- ✅ **SDRAM Cache** - Working (64-entry direct-mapped, write-through, RMW for byte/halfword stores)
 - ✅ **FM Synthesizer** - Working (4-voice 4-op TDM, 8 presets, I2S + PWM, integrated into SoC)
-- ✅ **BIOS Monitor** - Working (H/D/E/S/L/G/C/M, XMODEM upload, F5 40/80 toggle)
-- ✅ **RetroKernel v0.1** - Working (Unix shell, FAT32 dir listing, program loader framework)
+- ✅ **Sampled Audio** - Working (1024x16-bit ring buffer at 48kHz, mixed with FM synth, play.c)
+- ✅ **UART** - Working (115200 8N1, 256-byte RX FIFO, TX holding register)
+- ✅ **BIOS Monitor** - Working (H/D/E/S/L/G/C/M, XMODEM upload, SD auto-boot, F5 40/80 toggle)
+- ✅ **RetroKernel v0.1** - Working (Unix shell, FAT32 ls/cat/cp/rm/mkdir, program loader, SD boot)
+- ✅ **Benchmarks** - 4.7 MIPS, 4.38 DMIPS (0.175 DMIPS/MHz), 952 KFLOPS, 3034 KB/sec memcpy
 - 🔲 **USB Host** - Modern keyboards/mice
 - 🔲 **Retro Bus Interface** - Connection to vintage CPUs
 
 ### Resource Usage
-- LUTs: 55% (13,582/24,288)
-- Block RAM: 51% (29/56 DP16KD) — reduced from 94% by moving RAM to SDRAM
+- LUTs: 57% (13,937/24,288)
+- Block RAM: 71% (40/56 DP16KD)
 - Multipliers: 53% (15/28)
 - PLLs: 100% (2/2)
+- Timing: Max 32.6 MHz (30% margin at 25 MHz)
 
 ### Memory Architecture
 ```
-0x000000-0x003FFF   16KB BRAM (BIOS ROM, monitor)
+0x000000-0x007FFF   32KB BRAM (BIOS ROM with SD boot loader)
 0x400000+           IO devices (GPU, Synth, UART, Timer, PS2, SD)
 0x800000-0x80FFFF   64KB kernel space (RetroKernel)
-0x810000-0xEFFFFF   ~7MB program space
-0xF00000-0xFFFFF0   1MB stack (grows down)
+0x810000-0x9FFFFF   ~2MB program space
+0xA00000-0xA7CFFF   512KB framebuffer (640x400x16bpp, stride=2KB)
+0xA7D000-0xEFFFFF   ~4.5MB free
+0xF00000-0xFFFFF0   1MB stack (SDRAM, grows down)
 ```
 
 ### Development Roadmap
 
 1. ~~**Monitor/Loader firmware**~~ ✅ Done
 2. ~~**SD Card support**~~ ✅ Done (FAT32 read working)
-3. ~~**SDRAM controller**~~ ✅ Done (8MB, cached, RMW, code execution)
-4. ~~**Audio synthesizer**~~ ✅ Done (4-voice FM, I2S, integrated)
-5. **RetroKernel Phase 2** — File I/O syscalls, cat/cp/rm commands, SD card write
-6. **RetroKernel Phase 3** — Memory allocator, program arguments, boot from SD
-7. **Smart terminal mode** — VT100/ANSI escape code support in GPU
-8. **FM synth improvements** — Operator feedback, LFO, audio FIFO
-9. **Retro bus interface** — Physical connection to vintage CPUs
+3. ~~**SDRAM controller**~~ ✅ Done (8MB, cached, burst, row-crossing, code execution)
+4. ~~**Audio synthesizer**~~ ✅ Done (4-voice FM + sampled PCM, I2S, integrated)
+5. ~~**Sampled audio playback**~~ ✅ Done (ring buffer, 48kHz, play.c)
+6. ~~**SDRAM framebuffer**~~ ✅ Done (640x400 16bpp, burst scanline fetch)
+7. ~~**RetroKernel Phase 2**~~ ✅ Done (cat/cp/rm/mkdir, program loader)
+8. ~~**RetroKernel Phase 3**~~ ✅ Done (SD boot, program execution from SD)
+9. ~~**CPU benchmarks**~~ ✅ Done (Dhrystone 2.1, custom bench)
+10. **Smart terminal mode** — VT100/ANSI escape code support in GPU
+11. **FM synth improvements** — Operator feedback, LFO
+12. **Cache upgrade** — 64 entries is limited; 256 entries exceeds timing margin at 25 MHz
+13. **Retro bus interface** — Physical connection to vintage CPUs
 
 ### Use Cases
 
@@ -591,13 +661,35 @@ Your goal is to create a modern peripheral controller for vintage computers usin
 
 ### GPU Architecture Notes
 
-The HDMI display uses a dual-mode GPU (character + bitmap graphics) with DVI/TMDS output:
-- **Character GPU**: 16-bit cells {bg[3:0], fg[3:0], char[7:0]}, 4-bit IRGB CGA palette
-- **Graphics GPU**: 1/2/4 BPP bitmap, 32KB VRAM, 16-entry RGB444 CLUT, page flipping
+The HDMI display uses a tri-mode GPU (character + bitmap graphics + SDRAM framebuffer) with DVI/TMDS output:
+- **Mode 0 (Text)**: 16-bit cells {bg[3:0], fg[3:0], char[7:0]}, 4-bit IRGB CGA palette, 40/80 column
+- **Mode 1 (Bitmap)**: 1/2/4 BPP bitmap, 32KB VRAM in BRAM, 16-entry RGB444 CLUT, page flipping
+- **Mode 2 (Framebuffer)**: 640x400 16bpp RGB565 from SDRAM, burst scanline fetch, ping-pong line buffer
 - **GPU access**: Single 1-hot IO address, register index packed in wdata[12:8], value in wdata[7:0]
   - `GPU_WRITE(reg, val)` expands to `IO_OUT(IO_GPU, (reg << 8) | val)`
 - **PLL**: gpu_pll.v generates 25MHz pixel + 125MHz TMDS from board clock (CLKFB_DIV=1, CLKOP_DIV=20)
 - **DDR output**: ODDRX1F primitives in femtosoc.v for TMDS serialization
-- **Block RAM budget**: 92% (52/56 DP16KD) — VRAM is 32KB, char buffer is 4.8KB
+- **Framebuffer fetch**: video_fetch_engine.v issues 320-word bursts per scanline, row-crossing handled by SDRAM controller
+- **Line buffer**: Ping-pong double buffer (2x320 words), hsync-driven swap, RGB565->RGB888 unpacking
 
-This is an exciting project with clear ASIC potential! FemtoRV is the perfect foundation.
+### SDRAM Cache Architecture
+
+- **64 entries x 1 word** (256 bytes), direct-mapped, register-based (combinatorial reads)
+- **Write-through**: all writes go to SDRAM; cache updated simultaneously
+- **Read-modify-write**: byte/halfword stores merge with cached data or fetch from SDRAM
+- **Zero-stall read hits**: combinatorial data path, no added latency
+- **Timing constraint**: 256 entries with distributed RAM (LUT-based) exceeds timing margin at 25 MHz (28.4 MHz vs 25 MHz); 64 entries gives 32.6 MHz (30% margin)
+- **Cache upgrade findings**: ECP5 BRAM cannot provide zero-latency reads (always 1 clock cycle); distributed RAM works but 256:1 mux is too deep for 25 MHz
+
+## Active Technologies
+
+- Verilog (FPGA RTL) + Yosys/nextpnr-ecp5 (FPGA synthesis) + Cocotb (testbenches)
+- C (RISC-V firmware, rv32imfc) + RISC-V GCC toolchain
+- Python (upload tools, testbenches)
+- Target: Colorlight i5 (ECP5 LFE5U-25F), 25 MHz
+
+### Sub-project: 003-llama2-minimal-soc (current branch)
+- Minimal SoC profile: CPU + SDRAM + UART only, all other peripherals stripped
+- Goal: run llama2.c (stories260K, ~1MB fp32) from SDRAM, output over serial
+- Purpose: free FPGA capacity and establish a measured baseline for a future
+  MatMul accelerator. See `specs/003-llama2-minimal-soc/spec.md`.
