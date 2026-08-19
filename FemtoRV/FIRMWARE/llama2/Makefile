@@ -8,6 +8,9 @@
 
 include ../makefile.inc
 
+# Serial port for XMODEM uploads; override with: make upload PORT=/dev/ttyUSB0
+PORT ?= /dev/ttyACM0
+
 FEMTORV32_LIBS_EX=$(FIRMWARE_DIR)/CRT/syscalls.o \
 		   -L$(RVTOOLCHAIN_LIB_DIR)\
 	           -L$(FIRMWARE_DIR)/CRT\
@@ -19,7 +22,12 @@ LDFLAGS_LLAMA2=-T llama2.ld
 
 # All three translation units must be linked: llama2.c (inference),
 # model_load.c (SD card -> SDRAM loader) and profile.c (cycle accounting).
-LLAMA2_OBJS=llama2.o model_load.o profile.o
+# sdramstart.o zeroes .bss before main() -- mandatory for SDRAM programs.
+# Single source of truth lives in ../examples/sdramstart.S.
+LLAMA2_OBJS=sdramstart.o llama2.o model_load.o profile.o
+
+sdramstart.o: ../examples/sdramstart.S
+	$(RVAS) $(RVASFLAGS) $(RVUSERASFLAGS) $< -o $@
 
 llama2.elf: $(LLAMA2_OBJS) $(RV_BINARIES)
 	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_LLAMA2) $(LLAMA2_OBJS) -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
@@ -40,7 +48,7 @@ all: llama2.bin
 # Upload the program to the board via XMODEM (BIOS monitor 'L' command),
 # then run it with 'G 800000' at the monitor prompt.
 upload: llama2.bin
-	python3 ../../TOOLS/xmodem_upload.py $< /dev/ttyACM0 800000
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
 
 clean:
 	rm -f *.o *.elf *.bin *.list

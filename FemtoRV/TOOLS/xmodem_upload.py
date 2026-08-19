@@ -15,6 +15,7 @@ The script:
   2. Waits for initial NAK (monitor ready)
   3. Sends file using XMODEM protocol (128-byte packets, 8-bit checksum)
   4. Optionally sends 'G <addr>' to execute the uploaded program
+  5. With --follow, streams the program's serial output until Ctrl-C
 """
 
 import serial
@@ -65,7 +66,7 @@ def send_packet(ser, packet_num, data, debug=False):
     print("Timeout waiting for ACK/NAK")
     return False
 
-def upload(port, filename, load_addr=0x10000, execute=True):
+def upload(port, filename, load_addr=0x10000, execute=True, follow=False):
     print(f"Port: {port}, File: {filename}")
     print(f"Load address: 0x{load_addr:08X}")
 
@@ -162,10 +163,29 @@ def upload(port, filename, load_addr=0x10000, execute=True):
         for c in cmd:
             ser.write(c.encode())
             time.sleep(0.02)
-        time.sleep(1.0)
-        if ser.in_waiting:
-            msg = ser.read(ser.in_waiting).decode('ascii', errors='replace')
-            print(f"Monitor: {msg.strip()}")
+
+        if follow:
+            # Stream the program's output until Ctrl-C. Needed for anything
+            # that runs longer than a moment -- a memory test or an SD
+            # benchmark takes minutes, and the old fixed 1s peek below would
+            # close the port long before the program printed its results.
+            print("--- streaming output (Ctrl-C to stop) ---", flush=True)
+            try:
+                while True:
+                    n = ser.in_waiting
+                    if n:
+                        data = ser.read(n).decode('ascii', errors='replace')
+                        sys.stdout.write(data)
+                        sys.stdout.flush()
+                    else:
+                        time.sleep(0.02)
+            except KeyboardInterrupt:
+                print("\n--- stopped ---")
+        else:
+            time.sleep(1.0)
+            if ser.in_waiting:
+                msg = ser.read(ser.in_waiting).decode('ascii', errors='replace')
+                print(f"Monitor: {msg.strip()}")
 
     ser.close()
     return True
@@ -177,9 +197,16 @@ if __name__ == '__main__':
         print("  Default load address: 0x4000")
         sys.exit(1)
 
-    filename = sys.argv[1]
-    port = sys.argv[2] if len(sys.argv) > 2 else '/dev/ttyACM0'
-    addr = int(sys.argv[3], 16) if len(sys.argv) > 3 else 0x4000
+    args = [a for a in sys.argv[1:] if not a.startswith('-')]
+    follow = any(a in ('--follow', '-f') for a in sys.argv[1:])
 
-    success = upload(port, filename, addr)
+    if not args:
+        print("Usage: xmodem_upload.py <binary_file> [port] [load_addr_hex] [--follow]")
+        sys.exit(1)
+
+    filename = args[0]
+    port = args[1] if len(args) > 1 else '/dev/ttyACM0'
+    addr = int(args[2], 16) if len(args) > 2 else 0x4000
+
+    success = upload(port, filename, addr, execute=True, follow=follow)
     sys.exit(0 if success else 1)

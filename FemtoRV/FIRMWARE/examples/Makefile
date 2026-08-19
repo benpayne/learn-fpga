@@ -1,6 +1,9 @@
 
 include ../makefile.inc
 
+# Serial port for XMODEM uploads; override with: make upload_x PORT=/dev/ttyUSB0
+PORT ?= /dev/ttyACM0
+
 FEMTORV32_LIBS_EX=$(FIRMWARE_DIR)/CRT/syscalls.o \
 		   -L$(RVTOOLCHAIN_LIB_DIR)\
            -L$(FIRMWARE_DIR)/CRT\
@@ -22,8 +25,10 @@ LDFLAGS_UPLOAD=-T upload.ld
 # directly from SDRAM without the RetroKernel's progstart.o entry stub.
 LDFLAGS_UPLOAD_SDRAM=-T upload_sdram.ld
 
-%.upload_sdram.elf: %.o $(RV_BINARIES)
-	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD_SDRAM) $< -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
+# sdramstart.o zeroes .bss before calling main -- mandatory for SDRAM
+# programs, see sdramstart.S. Must be listed before $< so it lands first.
+%.upload_sdram.elf: %.o sdramstart.o $(RV_BINARIES)
+	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD_SDRAM) sdramstart.o $< -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
 
 # sdram_memtest.bin: explicit rule (overrides the %.bin: %.program.elf
 # pattern rule below) so it links at 0x800000 via upload_sdram.ld instead
@@ -65,11 +70,20 @@ sd_bench.bin: sd_bench.upload_sdram.elf
 	@echo "Built $@ ($$(stat -c%s $@) bytes)"
 
 upload_sd_bench: sd_bench.bin
-	python3 ../../TOOLS/xmodem_upload.py $< /dev/ttyACM0 800000
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
 
-# Upload a program to the board via XMODEM (to SDRAM for testing)
+# Explicit upload target for the memory test. MUST be 800000 to match
+# upload_sdram.ld -- the generic upload_% rule below uses 810000 (the
+# RetroKernel program address) and would load this at the wrong address
+# and jump into garbage.
+upload_sdram_memtest: sdram_memtest.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
+# Upload a program to the board via XMODEM (to SDRAM for testing).
+# NOTE: 810000 is the RetroKernel program-load address. Programs linked
+# with upload_sdram.ld live at 800000 and need an explicit target above.
 upload_%: %.bin
-	python3 ../../TOOLS/xmodem_upload.py $< /dev/ttyACM0 810000
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 810000
 
 clean:
 	rm -f *.o *.elf *.bin *.list
