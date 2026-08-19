@@ -1,0 +1,178 @@
+# See https://github.com/wuxx/Colorlight-FPGA-Projects?tab=readme-ov-file
+#
+# Minimal LLM SoC profile: CPU + SDRAM + UART + SD card + LEDs + timer only.
+# Pin constraints for hardware not present in this profile (HDMI/GPDI, PS2,
+# 7-segment display, audio, SPI flash) have been removed -- those ports do
+# not exist on femtosoc.v when the corresponding `ifdef`s are undefined.
+
+## Clock #########################################
+
+LOCATE COMP "pclk" SITE "P3";
+IOBUF PORT "pclk" PULLMODE=NONE IO_TYPE=LVCMOS33;
+FREQUENCY PORT "pclk" 25 MHZ;
+
+## RESET button ##################################
+
+LOCATE COMP "RESET" SITE "T1"; # fire 2
+IOBUF PORT "RESET" IO_TYPE=LVCMOS33;
+
+## LEDs (active-low, connector P2) #################
+## D1=rightmost on board, D8=leftmost
+
+LOCATE COMP "D1_pin" SITE "N18";
+LOCATE COMP "D2_pin" SITE "N17";
+LOCATE COMP "D3_pin" SITE "L20";
+LOCATE COMP "D4_pin" SITE "M18";
+LOCATE COMP "D5_pin" SITE "K20";
+LOCATE COMP "D6_pin" SITE "L18";
+LOCATE COMP "D7_pin" SITE "G20";
+LOCATE COMP "D8_pin" SITE "J20";
+
+IOBUF PORT "D1_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D2_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D3_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D4_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D5_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D6_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D7_pin"  IO_TYPE=LVCMOS33;
+IOBUF PORT "D8_pin"  IO_TYPE=LVCMOS33;
+
+## UART ######################################################
+
+LOCATE COMP "TXD"   SITE "J17"; # FPGA transmits to ftdi
+LOCATE COMP "RXD"   SITE "H18"; # FPGA receives from ftdi
+
+IOBUF PORT "TXD" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "RXD" PULLMODE=UP IO_TYPE=LVCMOS33;
+
+## SD card ####################################################
+
+## SD Card (Digilent PMOD MicroSD on P2 right side)
+## If wrong orientation, swap to M17/R17/T18/K18 row
+
+LOCATE COMP "sd_cs_n" SITE "P17";   # PMOD pin 1: CS
+LOCATE COMP "sd_mosi" SITE "R18";   # PMOD pin 2: MOSI
+LOCATE COMP "sd_miso" SITE "C18";   # PMOD pin 3: MISO
+LOCATE COMP "sd_clk"  SITE "U16";   # PMOD pin 4: SCK
+
+IOBUF PORT "sd_cs_n" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "sd_mosi" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "sd_miso" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+IOBUF PORT "sd_clk"  PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+
+# SDRAM (using lower 16 bits of 32-bit bus) ####################
+# Pin mapping from LiteX Colorlight i5 target
+
+LOCATE COMP "sdram_clk" SITE "B9";
+IOBUF  PORT "sdram_clk" IO_TYPE=LVCMOS33;
+
+LOCATE COMP "sd_addr[0]"  SITE "B13"; # A0
+LOCATE COMP "sd_addr[1]"  SITE "C14"; # A1
+LOCATE COMP "sd_addr[2]"  SITE "A16"; # A2
+LOCATE COMP "sd_addr[3]"  SITE "A17"; # A3
+LOCATE COMP "sd_addr[4]"  SITE "B16"; # A4
+LOCATE COMP "sd_addr[5]"  SITE "B15"; # A5
+LOCATE COMP "sd_addr[6]"  SITE "A14"; # A6
+LOCATE COMP "sd_addr[7]"  SITE "A13"; # A7
+LOCATE COMP "sd_addr[8]"  SITE "A12"; # A8
+LOCATE COMP "sd_addr[9]"  SITE "A11"; # A9
+LOCATE COMP "sd_addr[10]" SITE "B12"; # A10 (auto-precharge / row addr MSB)
+IOBUF PORT "sd_addr[0]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[1]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[2]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[3]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[4]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[5]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[6]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[7]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[8]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[9]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_addr[10]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_d[0]"  SITE "D15";
+LOCATE COMP "sd_d[1]"  SITE "E14";
+LOCATE COMP "sd_d[2]"  SITE "E13";
+LOCATE COMP "sd_d[3]"  SITE "D12";
+LOCATE COMP "sd_d[4]"  SITE "E12";
+LOCATE COMP "sd_d[5]"  SITE "D11";
+LOCATE COMP "sd_d[6]"  SITE "C10";
+LOCATE COMP "sd_d[7]"  SITE "B17";
+LOCATE COMP "sd_d[8]"  SITE "B8";
+LOCATE COMP "sd_d[9]"  SITE "A8";
+LOCATE COMP "sd_d[10]" SITE "C7";
+LOCATE COMP "sd_d[11]" SITE "A7";
+LOCATE COMP "sd_d[12]" SITE "A6";
+LOCATE COMP "sd_d[13]" SITE "B6";
+LOCATE COMP "sd_d[14]" SITE "A5";
+LOCATE COMP "sd_d[15]" SITE "B5";
+
+IOBUF PORT "sd_d[0]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[1]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[2]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[3]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[4]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[5]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[6]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[7]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[8]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[9]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[10]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[11]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[12]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[13]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[14]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[15]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_d[16]" SITE "D5";
+LOCATE COMP "sd_d[17]" SITE "C5";
+LOCATE COMP "sd_d[18]" SITE "D6";
+LOCATE COMP "sd_d[19]" SITE "C6";
+LOCATE COMP "sd_d[20]" SITE "E7";
+LOCATE COMP "sd_d[21]" SITE "D7";
+LOCATE COMP "sd_d[22]" SITE "E8";
+LOCATE COMP "sd_d[23]" SITE "D8";
+LOCATE COMP "sd_d[24]" SITE "E9";
+LOCATE COMP "sd_d[25]" SITE "D9";
+LOCATE COMP "sd_d[26]" SITE "E11";
+LOCATE COMP "sd_d[27]" SITE "C11";
+LOCATE COMP "sd_d[28]" SITE "C12";
+LOCATE COMP "sd_d[29]" SITE "D13";
+LOCATE COMP "sd_d[30]" SITE "D14";
+LOCATE COMP "sd_d[31]" SITE "C15";
+
+IOBUF PORT "sd_d[16]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[17]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[18]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[19]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[20]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[21]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[22]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[23]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[24]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[25]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[26]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[27]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[28]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[29]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[30]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_d[31]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_ba[0]" SITE "B11";
+LOCATE COMP "sd_ba[1]" SITE "C8";
+IOBUF PORT "sd_ba[0]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_ba[1]" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+LOCATE COMP "sd_we" SITE "A10";
+LOCATE COMP "sd_ras" SITE "B10";
+LOCATE COMP "sd_cas" SITE "A9";
+IOBUF PORT "sd_we"  IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_ras" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+IOBUF PORT "sd_cas" IO_TYPE=LVCMOS33 SLEWRATE=FAST;
+
+# Note: CKE, CS, DQM appear to be hardwired on the Colorlight i5 PCB:
+# CKE = tied high (always enabled), CS = tied low (always selected),
+# DQM = tied low (no byte masking). The muchtoremember controller
+# drives these signals internally but they don't need external pins.
+# Only 11 address lines (A0-A10) are routed to FPGA.
+# Data bus: dq[15:0] = first 16-bit chip, dq[31:16] = second chip.
+# We use dq[15:0] only (16MB) with the 16-bit controller.

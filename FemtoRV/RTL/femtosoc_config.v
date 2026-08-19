@@ -8,8 +8,21 @@
 `include "CONFIGS/ulx3s_config.v"
 `endif
 
+// COLORLIGHT_I5_LLM must be checked *before* COLORLIGHT_I5: the build passes
+// both -DCOLORLIGHT_I5 (needed so femtopll.v can select the board PLL via
+// `elsif COLORLIGHT_I5`) and -DCOLORLIGHT_I5_LLM. The minimal LLM config sets
+// NRV_CONFIGURED at its end, so the `ifndef NRV_CONFIGURED guard below keeps
+// the full-featured colorlight_i5_config.v from also being included on top
+// of it. Do not remove this guard, or the minimal profile will silently pull
+// in the GPU/audio/PS2/interrupt-controller devices it is meant to drop.
+`ifdef COLORLIGHT_I5_LLM
+`include "CONFIGS/colorlight_i5_llm_config.v"
+`endif
+
 `ifdef COLORLIGHT_I5
+`ifndef NRV_CONFIGURED
 `include "CONFIGS/colorlight_i5_config.v"
+`endif
 `endif
 
 `ifdef ICE_STICK

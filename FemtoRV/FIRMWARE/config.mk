@@ -2,5 +2,5 @@ ARCH=rv32imafc
 OPTIMIZE=-O3
 ABI=ilp32f
 RAM_SIZE=      32768
-DEVICES=
-BOARD=colorlight_i5
+DEVICES= -DSDCARD=1
+BOARD=colorlight_i5_llm

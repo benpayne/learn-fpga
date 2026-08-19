@@ -63,11 +63,25 @@ loader, and the memory-test host. Note the Pico branch shrank this to 4096 — t
 **Baseline for comparison** (full profile, from CLAUDE.md): LUT 57% (13,937/24,288), BRAM
 71% (40/56), MULT 53% (15/28), PLL 100% (2/2).
 
-**MEASURE**: expected to drop well below the SC-004 thresholds of 40% logic free and 40%
-memory blocks free. The GPU alone accounts for 32KB of VRAM plus character buffer, font ROM,
-and line buffers; the synth adds a sine ROM and audio ring buffer and several multipliers.
-Removing the GPU should also free one PLL. Actual figures come from the first build and must
-be recorded, not assumed.
+**MEASURED 2026-08-18** (nextpnr-ecp5, minimal profile, build log `/tmp/synth_llm.log`):
+
+| Resource | Full profile | Minimal profile | Free |
+|---|---|---|---|
+| LUT4 | 57% (13,937/24,288) | **34%** (8,391/24,288) | 66% |
+| Block RAM (DP16KD) | 71% (40/56) | **28%** (16/56) | 72% |
+| Multipliers (MULT18X18D) | 53% (15/28) | **28%** (8/28) | 72% |
+| PLL (EHXPLLL) | 100% (2/2) | **50%** (1/2) | one freed |
+| IO (TRELLIS_IO) | — | 32% (65/197) | — |
+| Bitstream | 384,797 B | 259,704 B | — |
+
+**SC-004 PASSES** with wide margin: 66% logic free and 72% memory blocks free, against a
+threshold of 40% each.
+
+**Unexpected bonus — timing improved substantially**: max frequency rose from 32.6 MHz (full
+profile) to **40.76 MHz**, a 25% gain, giving 63% margin at the 25 MHz target instead of 30%.
+Removing the GPU took its 125 MHz TMDS paths and one PLL out of the design. This makes a
+future clock increase materially more plausible than the plan assumed, and gives the
+accelerator real timing room to work with. Worth revisiting the deferred decision in R10.
 
 ---
 

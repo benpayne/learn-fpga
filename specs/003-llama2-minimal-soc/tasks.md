@@ -51,12 +51,12 @@ where they replace estimates.
 
 **Purpose**: Create the new build profile. Purely additive — no existing behaviour changes.
 
-- [ ] T001 [P] Create minimal profile config at `FemtoRV/RTL/CONFIGS/colorlight_i5_llm_config.v`, defining `COLORLIGHT_I5`, `NRV_IO_LEDS`, `NRV_IO_UART`, `NRV_IO_TIMER`, `NRV_IO_SDCARD`, `NRV_IO_SDRAM`, `NRV_IO_HARDWARE_CONFIG`, `NRV_FEMTORV32_PETITBATEAU`, `NRV_FREQ 25`, `NRV_RAM 32768`, `NRV_RESET_ADDR 0`, and ending with `NRV_CONFIGURED`; omit GPU, SYNTH, PS2, SEGMENT, INT_CONTROLLER
-- [ ] T002 Add dispatch branch to `FemtoRV/RTL/femtosoc_config.v`: insert `` `ifdef COLORLIGHT_I5_LLM `` including the new config **before** the existing `COLORLIGHT_I5` branch, and wrap the existing `COLORLIGHT_I5` include in `` `ifndef NRV_CONFIGURED `` so the first match wins (research R1)
-- [ ] T003 [P] Create trimmed pin file `FemtoRV/BOARDS/colorlight_i5_llm.lpf` by copying `colorlight_i5.lpf` and keeping only `pclk` with its `FREQUENCY` constraint, `RESET`, `D1_pin`-`D8_pin`, `TXD`/`RXD`, the SD card group (`sd_cs_n`/`sd_mosi`/`sd_miso`/`sd_clk`) and the SDRAM group (`sdram_clk`/`sd_addr`/`sd_d`/`sd_ba`/`sd_we`/`sd_ras`/`sd_cas`); delete gpdi, ps2, segments, audio, and SPI-flash pins — note `sd_d`/`sd_addr` are SDRAM, not the card (research R3)
-- [ ] T004 [P] Create board makefile `FemtoRV/BOARDS/colorlight_i5_llm.mk` with `colorlight_i5_llm.synth`, `.prog_fast`, `.prog`, and `.firmware_config` targets, passing `-DCOLORLIGHT_I5 -DCOLORLIGHT_I5_LLM -DACTIVE_LOW_LEDS` to yosys and using the new `.lpf`; omit the `font_data.hex` copy that the full profile performs
-- [ ] T005 Add `include BOARDS/colorlight_i5_llm.mk` to `FemtoRV/Makefile` alongside the existing board includes
-- [ ] T006 [P] Create firmware skeleton `FemtoRV/FIRMWARE/llama2/` with a `Makefile` modelled on `FIRMWARE/examples/Makefile` (linking `-lfemtorv32 -lfemtoc -lm`) and `llama2.ld` linking at `0x800000` per the memory layout in data-model.md entity 2
+- [X] T001 [P] Create minimal profile config at `FemtoRV/RTL/CONFIGS/colorlight_i5_llm_config.v`, defining `COLORLIGHT_I5`, `NRV_IO_LEDS`, `NRV_IO_UART`, `NRV_IO_TIMER`, `NRV_IO_SDCARD`, `NRV_IO_SDRAM`, `NRV_IO_HARDWARE_CONFIG`, `NRV_FEMTORV32_PETITBATEAU`, `NRV_FREQ 25`, `NRV_RAM 32768`, `NRV_RESET_ADDR 0`, and ending with `NRV_CONFIGURED`; omit GPU, SYNTH, PS2, SEGMENT, INT_CONTROLLER
+- [X] T002 Add dispatch branch to `FemtoRV/RTL/femtosoc_config.v`: insert `` `ifdef COLORLIGHT_I5_LLM `` including the new config **before** the existing `COLORLIGHT_I5` branch, and wrap the existing `COLORLIGHT_I5` include in `` `ifndef NRV_CONFIGURED `` so the first match wins (research R1)
+- [X] T003 [P] Create trimmed pin file `FemtoRV/BOARDS/colorlight_i5_llm.lpf` by copying `colorlight_i5.lpf` and keeping only `pclk` with its `FREQUENCY` constraint, `RESET`, `D1_pin`-`D8_pin`, `TXD`/`RXD`, the SD card group (`sd_cs_n`/`sd_mosi`/`sd_miso`/`sd_clk`) and the SDRAM group (`sdram_clk`/`sd_addr`/`sd_d`/`sd_ba`/`sd_we`/`sd_ras`/`sd_cas`); delete gpdi, ps2, segments, audio, and SPI-flash pins — note `sd_d`/`sd_addr` are SDRAM, not the card (research R3)
+- [X] T004 [P] Create board makefile `FemtoRV/BOARDS/colorlight_i5_llm.mk` with `colorlight_i5_llm.synth`, `.prog_fast`, `.prog`, and `.firmware_config` targets, passing `-DCOLORLIGHT_I5 -DCOLORLIGHT_I5_LLM -DACTIVE_LOW_LEDS` to yosys and using the new `.lpf`; omit the `font_data.hex` copy that the full profile performs
+- [X] T005 Add `include BOARDS/colorlight_i5_llm.mk` to `FemtoRV/Makefile` alongside the existing board includes
+- [X] T006 [P] Create firmware skeleton `FemtoRV/FIRMWARE/llama2/` with a `Makefile` modelled on `FIRMWARE/examples/Makefile` (linking `-lfemtorv32 -lfemtoc -lm`) and `llama2.ld` linking at `0x800000` per the memory layout in data-model.md entity 2
 
 ---
 
@@ -67,13 +67,15 @@ single largest open risk in the plan.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T007 Build the minimal profile with `cd FemtoRV && make colorlight_i5_llm.firmware_config && make colorlight_i5_llm.synth`, resolving any synthesis errors; the two expected failure modes are an undefined `femtoPLL` (T002/T004 defines wrong) and unmatched pin constraints (T003 trimming wrong)
+- [X] T007 Build the minimal profile with `cd FemtoRV && make colorlight_i5_llm.firmware_config && make colorlight_i5_llm.synth`, resolving any synthesis errors; the two expected failure modes are an undefined `femtoPLL` (T002/T004 defines wrong) and unmatched pin constraints (T003 trimming wrong)
 - [ ] T008 Verify no regression: `cd FemtoRV && make colorlight_i5.firmware_config && make colorlight_i5.synth` still succeeds unchanged, satisfying SC-011 and FR-002 — this guards the shared `femtosoc_config.v` edit from T002
-- [ ] T009 Record logic, memory-block, multiplier, and PLL utilisation from the T007 nextpnr report into `specs/003-llama2-minimal-soc/research.md` under R2, replacing the **MEASURE** placeholder, and check against SC-004 (≥40% logic and ≥40% memory blocks free)
-- [ ] T010 [P] Adapt `FemtoRV/FIRMWARE/examples/sdram_test.c` into a serial-only memory test covering the full usable range `0x800000`-`0xEFFFFF`, removing all `GPU_WRITE`/`gpu_*` output which does not exist in this profile, and reporting errors plus sustained transfer rate (FR-006)
-- [ ] T011 [P] Create `FemtoRV/FIRMWARE/examples/sd_bench.c` — a minimal serial-only SD read benchmark using the `sd_init`/`fl_attach_media`/`fl_fopen`/`fl_fread` pattern from `sd_dir.c`, reading a large file and reporting bytes, elapsed seconds, and KB/s using `cycles()`; strip all GPU output
-- [ ] T012 [P] Create `FemtoRV/FIRMWARE/llama2/tools/fetch_model.sh` to download the ~260K-parameter model and its **matching reduced-vocabulary** tokenizer, printing the byte length and checksum of each (contracts/build-targets.md)
-- [ ] T013 Run `fetch_model.sh`, copy `model.bin` and `tokenizer.bin` to the root of a FAT-formatted card, and verify the header fields against data-model.md entity 3 with a host-side hexdump — this is the **VERIFY** item in research R5 and must be done before the on-board loader trusts the layout
+- [X] T009 Record logic, memory-block, multiplier, and PLL utilisation from the T007 nextpnr report into `specs/003-llama2-minimal-soc/research.md` under R2, replacing the **MEASURE** placeholder, and check against SC-004 (≥40% logic and ≥40% memory blocks free)
+- [X] T010 [P] Adapt `FemtoRV/FIRMWARE/examples/sdram_test.c` into a serial-only memory test covering the full usable range `0x800000`-`0xEFFFFF`, removing all `GPU_WRITE`/`gpu_*` output which does not exist in this profile, and reporting errors plus sustained transfer rate (FR-006)
+- [X] T011 [P] Create `FemtoRV/FIRMWARE/examples/sd_bench.c` — a minimal serial-only SD read benchmark using the `sd_init`/`fl_attach_media`/`fl_fopen`/`fl_fread` pattern from `sd_dir.c`, reading a large file and reporting bytes, elapsed seconds, and KB/s using `cycles()`; strip all GPU output
+- [X] T012 [P] Create `FemtoRV/FIRMWARE/llama2/tools/fetch_model.sh` to download the ~260K-parameter model and its **matching reduced-vocabulary** tokenizer, printing the byte length and checksum of each (contracts/build-targets.md)
+- [~] T013 Run `fetch_model.sh`, copy `model.bin` and `tokenizer.bin` to the root of a FAT-formatted card, and verify the header fields against data-model.md entity 3 with a host-side hexdump — this is the **VERIFY** item in research R5 and must be done before the on-board loader trusts the layout
+  - [X] host side: fetch_model.sh run; header verified (dim=64 hidden=172 layers=5 heads=8 kv=4 vocab=512 seq=512); weight layout confirmed to INCLUDE freq_cis tables (264,128 floats = 1,056,512 B = filesize-28)
+  - [ ] **[HW]** copy model.bin + tokenizer.bin to a FAT card and fit it to the board — *Session A/B*
 
 **Checkpoint**: Both profiles build; test programs compile; card is prepared.
 
@@ -85,7 +87,7 @@ single largest open risk in the plan.
 
 **Independent Test**: Program the board, see a monitor prompt, read the resource report.
 
-- [ ] T014 [HW] [US1] Program the board with `openFPGALoader -c cmsisdap -v --file-type bin femtosoc.bit` from `FemtoRV/`, confirming the volatile load succeeds — *Session A*
+- [ ] T014 [HW] [US1] Program the board with `openFPGALoader -c cmsisdap -v --file-type bin femtosoc_llm.bit` from `FemtoRV/`, confirming the volatile load succeeds — *Session A*. **NOTE: use `femtosoc_llm.bit`, not `femtosoc.bit`.** Both profiles write to `femtosoc.bit`, so whichever synthesised last wins; the minimal profile's output was preserved as `femtosoc_llm.bit` (259,704 bytes). To regenerate it: `make colorlight_i5_llm.synth && cp femtosoc.bit femtosoc_llm.bit`
 - [ ] T015 [HW] [US1] Connect at 115200 8N1 (`screen /dev/ttyACM0 115200`), reset the board, and confirm the monitor prompt appears within 5 seconds (SC-002); press `H` and confirm the `H D E S L G C M` command list — *Session A*
 - [ ] T016 [US1] Record the boot-to-prompt time and the T009 resource figures in `specs/003-llama2-minimal-soc/tasks.md` under Session A results, confirming SC-004 is met
 
@@ -117,11 +119,11 @@ revised on real numbers.
 **Independent Test**: Load the model from the card and verify it against a host checksum;
 separately upload and start a program.
 
-- [ ] T021 [P] [US3] Implement header parsing and validation in `FemtoRV/FIRMWARE/llama2/model_load.c` per data-model.md entity 3: read the seven `int32` fields, handle negative `vocab_size` as the unshared-classifier signal, bounds-check every field, and confirm file length matches the length implied by the header (FR-015)
-- [ ] T022 [US3] Implement the card-to-SDRAM load in `model_load.c`, reading `/model.bin` into `0x900000` in chunks and refusing before loading if the implied size exceeds the 1 MB region (FR-008)
-- [ ] T023 [US3] Implement tokenizer loading in `model_load.c` reading `/tokenizer.bin` into `0xA00000`, and **assert the token count equals `abs(vocab_size)`**, failing loudly on mismatch (FR-018a) — this is the highest-value check in the feature because a mismatch produces fluent-but-wrong text rather than an error
-- [ ] T024 [US3] Implement the distinguishable failure paths in `FemtoRV/FIRMWARE/llama2/model_load.c` per `contracts/console-interface.md`: no card, unreadable filesystem, missing file, truncated file, oversized header, token-count mismatch, and card removed mid-load (FR-012)
-- [ ] T025 [US3] Implement the Load Report output in `model_load.c` — bytes, elapsed, KB/s, verification result, and the parsed model dimensions (FR-012a, data-model.md entity 8)
+- [X] T021 [P] [US3] Implement header parsing and validation in `FemtoRV/FIRMWARE/llama2/model_load.c` per data-model.md entity 3: read the seven `int32` fields, handle negative `vocab_size` as the unshared-classifier signal, bounds-check every field, and confirm file length matches the length implied by the header (FR-015)
+- [X] T022 [US3] Implement the card-to-SDRAM load in `model_load.c`, reading `/model.bin` into `0x900000` in chunks and refusing before loading if the implied size exceeds the 1 MB region (FR-008)
+- [X] T023 [US3] Implement tokenizer loading in `model_load.c` reading `/tokenizer.bin` into `0xA00000`, and **assert the token count equals `abs(vocab_size)`**, failing loudly on mismatch (FR-018a) — this is the highest-value check in the feature because a mismatch produces fluent-but-wrong text rather than an error
+- [X] T024 [US3] Implement the distinguishable failure paths in `FemtoRV/FIRMWARE/llama2/model_load.c` per `contracts/console-interface.md`: no card, unreadable filesystem, missing file, truncated file, oversized header, token-count mismatch, and card removed mid-load (FR-012)
+- [X] T025 [US3] Implement the Load Report output in `model_load.c` — bytes, elapsed, KB/s, verification result, and the parsed model dimensions (FR-012a, data-model.md entity 8)
 - [ ] T026 [HW] [US3] Upload the loader with monitor `L`/`G` and load the model from the card; confirm the reported byte count and checksum match the T012 host values (FR-011) — *Session B*
 - [ ] T027 [HW] [US3] Use monitor `D 900000` to spot-check that weights landed at the expected address, and `D A00000` for the tokenizer — *Session B*
 - [ ] T028 [HW] [US3] Verify each failure path from T024 by testing at minimum: card removed, and a deliberately truncated `model.bin` — confirm each is reported distinguishably rather than hanging or proceeding — *Session B*
@@ -161,9 +163,9 @@ should target.
 **Independent Test**: Run measurement mode and confirm categories account for ≥90% of
 per-token time.
 
-- [ ] T040 [US5] Implement per-category cycle accounting in `FemtoRV/FIRMWARE/llama2/profile.c` with mutually exclusive counters for matrix multiply, attention, normalisation, rotary position encoding, and sampling, using `cycles()` and accumulating across a run
-- [ ] T041 [US5] Compute `other` as a residual — total minus the sum of named categories — so the coverage claim is proven rather than estimated (FR-020, data-model.md entity 7)
-- [ ] T042 [US5] Implement the Performance Report output in `FemtoRV/FIRMWARE/llama2/profile.c` per `contracts/console-interface.md`: token count, elapsed, rate, per-category percentages, largest category by name, and coverage percentage
+- [X] T040 [US5] Implement per-category cycle accounting in `FemtoRV/FIRMWARE/llama2/profile.c` with mutually exclusive counters for matrix multiply, attention, normalisation, rotary position encoding, and sampling, using `cycles()` and accumulating across a run
+- [X] T041 [US5] Compute `other` as a residual — total minus the sum of named categories — so the coverage claim is proven rather than estimated (FR-020, data-model.md entity 7)
+- [X] T042 [US5] Implement the Performance Report output in `FemtoRV/FIRMWARE/llama2/profile.c` per `contracts/console-interface.md`: token count, elapsed, rate, per-category percentages, largest category by name, and coverage percentage
 - [ ] T043 [US5] Add a measurement mode flag to the generation entry point in `FemtoRV/FIRMWARE/llama2/llama2.c` so profiling can be enabled without a separate binary
 - [ ] T044 [HW] [US5] Run generation in measurement mode over at least 100 tokens and paste the full report into `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
 - [ ] T045 [HW] [US5] Confirm coverage ≥90% (SC-010) and that the largest category is named explicitly in the T044 report captured in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*

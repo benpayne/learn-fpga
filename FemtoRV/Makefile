@@ -17,6 +17,7 @@ include BOARDS/ecp5_evn.mk
 include BOARDS/arty35_yosys_nextpnr.mk
 include BOARDS/cmod_a7_yosys_nextpnr.mk
 include BOARDS/colorlight_i5.mk
+include BOARDS/colorlight_i5_llm.mk
 
 
 
