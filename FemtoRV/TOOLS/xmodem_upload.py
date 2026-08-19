@@ -66,7 +66,8 @@ def send_packet(ser, packet_num, data, debug=False):
     print("Timeout waiting for ACK/NAK")
     return False
 
-def upload(port, filename, load_addr=0x10000, execute=True, follow=False):
+def upload(port, filename, load_addr=0x10000, execute=True, follow=False,
+           idle_timeout=20):
     print(f"Port: {port}, File: {filename}")
     print(f"Load address: 0x{load_addr:08X}")
 
@@ -169,7 +170,9 @@ def upload(port, filename, load_addr=0x10000, execute=True, follow=False):
             # that runs longer than a moment -- a memory test or an SD
             # benchmark takes minutes, and the old fixed 1s peek below would
             # close the port long before the program printed its results.
-            print("--- streaming output (Ctrl-C to stop) ---", flush=True)
+            print(f"--- streaming output (Ctrl-C, or {idle_timeout}s idle, to stop) ---",
+                  flush=True)
+            last = time.time()
             try:
                 while True:
                     n = ser.in_waiting
@@ -177,7 +180,17 @@ def upload(port, filename, load_addr=0x10000, execute=True, follow=False):
                         data = ser.read(n).decode('ascii', errors='replace')
                         sys.stdout.write(data)
                         sys.stdout.flush()
+                        last = time.time()
                     else:
+                        # Exit on a quiet line rather than blocking forever.
+                        # An unattended --follow that never returns leaves an
+                        # orphan holding the serial port; a second uploader
+                        # then fights it for bytes, producing NAKs and
+                        # pathological transfer rates that look like a board
+                        # fault but are not.
+                        if idle_timeout and (time.time() - last) > idle_timeout:
+                            print(f"\n--- idle {idle_timeout}s, stopping ---")
+                            break
                         time.sleep(0.02)
             except KeyboardInterrupt:
                 print("\n--- stopped ---")
@@ -208,5 +221,11 @@ if __name__ == '__main__':
     port = args[1] if len(args) > 1 else '/dev/ttyACM0'
     addr = int(args[2], 16) if len(args) > 2 else 0x4000
 
-    success = upload(port, filename, addr, execute=True, follow=follow)
+    idle = 20
+    for a in sys.argv[1:]:
+        if a.startswith('--idle='):
+            idle = int(a.split('=', 1)[1])
+
+    success = upload(port, filename, addr, execute=True, follow=follow,
+                     idle_timeout=idle)
     sys.exit(0 if success else 1)

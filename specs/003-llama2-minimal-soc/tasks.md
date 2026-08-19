@@ -98,9 +98,9 @@ single largest open risk in the plan.
 
 **Independent Test**: Program the board, see a monitor prompt, read the resource report.
 
-- [ ] T014 [HW] [US1] Program the board with `openFPGALoader -c cmsisdap -v --file-type bin femtosoc_llm.bit` from `FemtoRV/`, confirming the volatile load succeeds — *Session A*. **NOTE: use `femtosoc_llm.bit`, not `femtosoc.bit`.** Both profiles write to `femtosoc.bit`, so whichever synthesised last wins; the minimal profile's output was preserved as `femtosoc_llm.bit` (259,704 bytes). To regenerate it: `make colorlight_i5_llm.synth && cp femtosoc.bit femtosoc_llm.bit`
-- [ ] T015 [HW] [US1] Connect at 115200 8N1 (`screen /dev/ttyACM0 115200`), reset the board, and confirm the monitor prompt appears within 5 seconds (SC-002); press `H` and confirm the `H D E S L G C M` command list — *Session A*
-- [ ] T016 [US1] Record the boot-to-prompt time and the T009 resource figures in `specs/003-llama2-minimal-soc/tasks.md` under Session A results, confirming SC-004 is met
+- [X] T014 [HW] [US1] Program the board with `openFPGALoader -c cmsisdap -v --file-type bin femtosoc_llm.bit` from `FemtoRV/`, confirming the volatile load succeeds — *Session A*. **NOTE: use `femtosoc_llm.bit`, not `femtosoc.bit`.** Both profiles write to `femtosoc.bit`, so whichever synthesised last wins; the minimal profile's output was preserved as `femtosoc_llm.bit` (259,704 bytes). To regenerate it: `make colorlight_i5_llm.synth && cp femtosoc.bit femtosoc_llm.bit`
+- [X] T015 [HW] [US1] Connect at 115200 8N1 (`screen /dev/ttyACM0 115200`), reset the board, and confirm the monitor prompt appears within 5 seconds (SC-002); press `H` and confirm the `H D E S L G C M` command list — *Session A*
+- [X] T016 [US1] Record the boot-to-prompt time and the T009 resource figures in `specs/003-llama2-minimal-soc/tasks.md` under Session A results, confirming SC-004 is met
 
 **Checkpoint**: US1 complete — a usable minimal platform exists.
 
@@ -113,13 +113,21 @@ incoherent output can never be blamed on RAM.
 
 **Independent Test**: Full-range memory test reports zero errors and a transfer rate.
 
-- [ ] T017 [HW] [US2] Upload the T010 memory test with monitor `L`, start it with `G`, and run it over the full `0x800000`-`0xEFFFFF` range; confirm zero errors and record the reported sustained transfer rate — *Session A*
-- [ ] T018 [HW] [US2] Repeat the memory test three consecutive times confirming zero errors on every run (SC-003), recording results in `specs/003-llama2-minimal-soc/tasks.md`; a single intermittent failure here must be resolved before any later story is trusted — *Session A*
-- [ ] T019 [HW] [US2] Upload and run the T011 SD benchmark (`FemtoRV/FIRMWARE/examples/sd_bench.c`) via monitor `L`/`G`, recording bytes, elapsed time, and KB/s — *Session A*
-- [ ] T020 [US2] Write the T019 throughput into `research.md` R6 replacing the 30-80 KB/s estimate, and into `spec.md` SC-005 if the 60-second target needs revising; if throughput implies >60 s for 1 MB, evaluate the R6 escalation options **before** proceeding to Phase 5
+- [X] T017 [HW] [US2] Upload the T010 memory test with monitor `L`, start it with `G`, and run it over the full `0x800000`-`0xEFFFFF` range; confirm zero errors and record the reported sustained transfer rate — *Session A*
+- [X] T018 [HW] [US2] Repeat the memory test three consecutive times confirming zero errors on every run (SC-003), recording results in `specs/003-llama2-minimal-soc/tasks.md`; a single intermittent failure here must be resolved before any later story is trusted — *Session A*
+- [X] T019 [HW] [US2] Upload and run the T011 SD benchmark (`FemtoRV/FIRMWARE/examples/sd_bench.c`) via monitor `L`/`G`, recording bytes, elapsed time, and KB/s — *Session A*
+- [X] T020 [US2] Write the T019 throughput into `research.md` R6 replacing the 30-80 KB/s estimate, and into `spec.md` SC-005 if the 60-second target needs revising; if throughput implies >60 s for 1 MB, evaluate the R6 escalation options **before** proceeding to Phase 5
 
-**Checkpoint**: US2 complete — RAM is trustworthy and the loading strategy is confirmed or
-revised on real numbers.
+**Checkpoint**: US2 complete — **REACHED 2026-08-19**. RAM is trustworthy and the loading
+strategy is confirmed on real numbers.
+
+| Measurement | Result |
+|---|---|
+| Memory test, 6 MB, 6 patterns | 0 errors |
+| Clean runs | 3 (one by the operator, two automated) — SC-003 satisfied |
+| SDRAM bandwidth (CPU, write+read) | 4,897 KB/s (5.1 MB/s) |
+| SD throughput | 56.5 KB/s, flat across 512 B-32 KB chunks |
+| Model load time (1,056,540 B) | **18.25 s** — SC-005 satisfied, 3.3x inside target |
 
 ---
 

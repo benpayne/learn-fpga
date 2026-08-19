@@ -154,6 +154,30 @@ one shipped for the larger models. A mismatched pair produces fluent-looking but
 
 ---
 
+## R2a. SDRAM verified on hardware (measured 2026-08-19)
+
+**Result**: all six patterns pass with zero errors over the 6 MB range
+`0x900000`-`0xEFFFFF` (the low 1 MB holds the running program and is excluded).
+Patterns: walking ones, address-as-data, `0x00000000`, `0xFFFFFFFF`, `0x55555555`,
+`0xAAAAAAAA`.
+
+**Measured CPU-mediated bandwidth**: 62,914,560 bytes in 313,614,791 cycles at 25 MHz =
+**4,897 KB/s (5.1 MB/s)** for combined write+read through the cache.
+
+**Why this number matters for the accelerator.** The burst roofline measured in simulation is
+~98 MB/s (0.98 words/cycle x 4 B x 25 MHz). The CPU, running the simplest possible
+integer fill-and-verify loop, achieves ~5 MB/s — about **5% of what the memory can deliver**.
+That is the optimistic case: no floating point, no dependent loads, perfectly sequential.
+It independently corroborates the roofline analysis that motivated this whole feature, and it
+sets a concrete floor: any accelerator that streams weights via burst reads has roughly a
+**20x bandwidth headroom** over the CPU doing the same traffic, before considering that the
+CPU also has to do arithmetic between loads.
+
+**Consequence for SC-003**: satisfied. RAM is sound, so incoherent generated text later cannot
+be attributed to memory faults.
+
+---
+
 ## R6. Loading the model from the card
 
 **Decision**: Reuse the existing FAT library and SD driver. `FIRMWARE/examples/sd_dir.c`
@@ -165,8 +189,28 @@ from a standalone program with no kernel underneath.
 output via `GPU_WRITE`**, which does not exist in this profile. They need their output paths
 reduced to serial before they will compile — a small, mechanical, but non-zero task.
 
-**MEASURE — the biggest open risk in this plan**: SC-005 targets a 60-second load for ~1 MB,
-which needs roughly 17 KB/s. Throughput is unknown. `spi_sd.c` drives every SPI clock edge
+**MEASURED 2026-08-19 — risk retired, comfortably.** SC-005 targets a 60-second load for
+~1 MB (roughly 17 KB/s needed). Actual, reading the real `/model.bin` (1,056,540 bytes):
+
+| Chunk size | Time | Throughput |
+|---|---|---|
+| 512 B | 18.418 s | 56.0 KB/s |
+| 4096 B | 18.254 s | 56.5 KB/s |
+| 32768 B | 18.247 s | 56.5 KB/s |
+
+**~18 seconds, roughly 3.3x inside the target.** The estimate below (30-80 KB/s) was correct;
+the outcome landed near its top end.
+
+**Chunk size is irrelevant** — 56.0 vs 56.5 KB/s across a 64x range of read sizes. The
+bottleneck is the software-driven SPI clock itself, not per-call overhead, so there is no
+tuning to be had here. Anyone tempted to optimise the read size later should not bother; the
+only real lever would be a hardware SPI peripheral.
+
+**Consequence**: the loading split decided earlier holds. The model comes off the card once
+per power cycle in under 20 seconds, and the development loop pays only the program upload.
+None of the R6 escalation options below are needed.
+
+*Original estimate, retained for the record:* throughput was unknown. `spi_sd.c` drives every SPI clock edge
 with a separate `IO_OUT` to `IO_SDCARD`, and IO accesses take extra wait states
 (`NRV_IS_IO_ADDR` in `femtosoc_config.v`). Estimated 30-80 KB/s, giving 13-35 seconds, but
 this is arithmetic, not measurement. FR-012a exists to replace it with a real number.
