@@ -141,11 +141,11 @@ separately upload and start a program.
 **Independent Test**: Start generation and watch at least 100 tokens appear without hang or
 corruption.
 
-- [ ] T031 [US4] Port the reference implementation into `FemtoRV/FIRMWARE/llama2/llama2.c`, removing the memory-mapped file load in favour of a pointer to weights already resident at `0x900000`, and removing all host file I/O (research R8)
-- [ ] T032 [US4] Replace dynamic allocation of the run state with static allocation at fixed addresses from data-model.md entity 2, sizing the KV cache as `2 × n_layers × seq_len × kv_dim × 4` bytes and bounds-checking it against the region (FR-008)
-- [ ] T033 [US4] Replace the wall-clock RNG seed and any host timing calls with `cycles()` from `LIBFEMTORV32/cycles_32.c` (research R9)
-- [ ] T034 [US4] Implement incremental token output to serial in `FemtoRV/FIRMWARE/llama2/llama2.c` as each token is produced — not buffered to the end, since it is the operator's only progress indicator on a multi-minute run (`contracts/console-interface.md`)
-- [ ] T035 [US4] Implement clean termination on reaching the requested token count or `seq_len` (FR-016) and report the achieved generation rate on completion (FR-017)
+- [X] T031 [US4] Port the reference implementation into `FemtoRV/FIRMWARE/llama2/llama2.c`, removing the memory-mapped file load in favour of a pointer to weights already resident at `0x900000`, and removing all host file I/O (research R8)
+- [X] T032 [US4] Replace dynamic allocation of the run state with static allocation at fixed addresses from data-model.md entity 2, sizing the KV cache as `2 × n_layers × seq_len × kv_dim × 4` bytes and bounds-checking it against the region (FR-008)
+- [X] T033 [US4] Replace the wall-clock RNG seed and any host timing calls with `cycles()` from `LIBFEMTORV32/cycles_32.c` (research R9)
+- [X] T034 [US4] Implement incremental token output to serial in `FemtoRV/FIRMWARE/llama2/llama2.c` as each token is produced — not buffered to the end, since it is the operator's only progress indicator on a multi-minute run (`contracts/console-interface.md`)
+- [X] T035 [US4] Implement clean termination on reaching the requested token count or `seq_len` (FR-016) and report the achieved generation rate on completion (FR-017)
 - [ ] T036 [HW] [US4] Upload `llama2.bin` with monitor `L` and start it with `G 800000`; confirm text appears incrementally — *Session C*
 - [ ] T037 [HW] [US4] Generate at least 100 consecutive tokens confirming no hang, crash, or corruption (SC-006), and confirm the output reads as recognisable English prose (SC-007); paste a sample into `specs/003-llama2-minimal-soc/tasks.md` — expect simple, sometimes repetitive text, which is correct for a model this small — *Session C*
 - [ ] T038 [HW] [US4] Run generation twice with identical model, prompt, and seed and confirm byte-identical output (SC-009, FR-014), recording both transcripts for comparison in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
@@ -166,7 +166,7 @@ per-token time.
 - [X] T040 [US5] Implement per-category cycle accounting in `FemtoRV/FIRMWARE/llama2/profile.c` with mutually exclusive counters for matrix multiply, attention, normalisation, rotary position encoding, and sampling, using `cycles()` and accumulating across a run
 - [X] T041 [US5] Compute `other` as a residual — total minus the sum of named categories — so the coverage claim is proven rather than estimated (FR-020, data-model.md entity 7)
 - [X] T042 [US5] Implement the Performance Report output in `FemtoRV/FIRMWARE/llama2/profile.c` per `contracts/console-interface.md`: token count, elapsed, rate, per-category percentages, largest category by name, and coverage percentage
-- [ ] T043 [US5] Add a measurement mode flag to the generation entry point in `FemtoRV/FIRMWARE/llama2/llama2.c` so profiling can be enabled without a separate binary
+- [X] T043 [US5] Add a measurement mode flag to the generation entry point in `FemtoRV/FIRMWARE/llama2/llama2.c` so profiling can be enabled without a separate binary
 - [ ] T044 [HW] [US5] Run generation in measurement mode over at least 100 tokens and paste the full report into `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
 - [ ] T045 [HW] [US5] Confirm coverage ≥90% (SC-010) and that the largest category is named explicitly in the T044 report captured in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
 - [ ] T046 [US5] Record the measured breakdown in `research.md` under R9, replacing the expectation with the finding, and state plainly whether matrix multiply or the transcendental functions dominate

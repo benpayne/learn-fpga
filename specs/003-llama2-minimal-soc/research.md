@@ -234,6 +234,29 @@ User Story 5.
 
 ---
 
+## R9a. Host-harness validation (added 2026-08-18, post-implementation)
+
+**Finding**: before any hardware exists, the ported forward pass was validated on the host
+against the real `model.bin` and `tokenizer.bin`, and produced coherent English:
+
+> Once upon a time, there was a little girl named Lily. She had a jolly apple that she loved
+> to play outside. One day, she went to the park with her mom. She saw a big box
+
+**Why this matters**: it removes inference *correctness* from the hardware risk list. Weight
+layout, table-based RoPE, grouped-query attention, and BPE encode/decode are all confirmed
+against the actual artifacts. What remains untested on hardware is the SD load path, the
+memory map, and performance — not whether the maths is right. If the board produces garbage,
+look at loading and memory first, not at the transformer.
+
+**Second finding — unaligned tokenizer records**: after the first entry, the
+`{score, len, bytes}` records in the tokenizer file are NOT 4-byte aligned. The port reads
+them byte-wise rather than via `uint32_t`/`float` casts, because FemtoRV is not guaranteed to
+tolerate misaligned loads. A cast-based reader would compile cleanly, work on the host, and
+fail only on hardware — exactly the class of bug this project can least afford to debug over
+a serial console.
+
+---
+
 ## R10. Serial baud rate
 
 **Decision**: Keep 115200 for this feature. Record raising it as a follow-on.

@@ -163,3 +163,6 @@ wins are software — precomputed rotary tables and a fast exponential approxima
 | Text degrades into repetition | Check the memory test first, before suspecting the model |
 | Build wants `font_data.hex` | GPU not fully removed from the profile |
 | Synthesis fails on `femtoPLL` | Board makefile is not passing `-DCOLORLIGHT_I5` alongside the new define |
+| `#include <stdint.h>` not found when compiling one file by hand | The `riscv64-unknown-elf-gcc` on `$PATH` is a system 10.2.0 install with no newlib for `rv32imafc/ilp32f`. Use `make`, or the in-tree toolchain at `FIRMWARE/TOOLCHAIN/riscv64-unknown-elf-gcc-8.3.0-*/bin/`. This is environmental, not a code bug |
+| Board behaves like an old build after programming | Both profiles write to `femtosoc.bit`, so whichever synthesised last wins. Program `femtosoc_llm.bit` for the minimal profile |
+| Program links but half of it is missing at runtime | Check the llama2 `Makefile` links all three objects (`llama2.o model_load.o profile.o`), not just `$<` |
