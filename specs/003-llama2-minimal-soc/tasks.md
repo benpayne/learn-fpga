@@ -68,7 +68,7 @@ single largest open risk in the plan.
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
 - [X] T007 Build the minimal profile with `cd FemtoRV && make colorlight_i5_llm.firmware_config && make colorlight_i5_llm.synth`, resolving any synthesis errors; the two expected failure modes are an undefined `femtoPLL` (T002/T004 defines wrong) and unmatched pin constraints (T003 trimming wrong)
-- [ ] T008 Verify no regression: `cd FemtoRV && make colorlight_i5.firmware_config && make colorlight_i5.synth` still succeeds unchanged, satisfying SC-011 and FR-002 — this guards the shared `femtosoc_config.v` edit from T002
+- [X] T008 Verify no regression: `cd FemtoRV && make colorlight_i5.firmware_config && make colorlight_i5.synth` still succeeds unchanged, satisfying SC-011 and FR-002 — this guards the shared `femtosoc_config.v` edit from T002
 - [X] T009 Record logic, memory-block, multiplier, and PLL utilisation from the T007 nextpnr report into `specs/003-llama2-minimal-soc/research.md` under R2, replacing the **MEASURE** placeholder, and check against SC-004 (≥40% logic and ≥40% memory blocks free)
 - [X] T010 [P] Adapt `FemtoRV/FIRMWARE/examples/sdram_test.c` into a serial-only memory test covering the full usable range `0x800000`-`0xEFFFFF`, removing all `GPU_WRITE`/`gpu_*` output which does not exist in this profile, and reporting errors plus sustained transfer rate (FR-006)
 - [X] T011 [P] Create `FemtoRV/FIRMWARE/examples/sd_bench.c` — a minimal serial-only SD read benchmark using the `sd_init`/`fl_attach_media`/`fl_fopen`/`fl_fread` pattern from `sd_dir.c`, reading a large file and reporting bytes, elapsed seconds, and KB/s using `cycles()`; strip all GPU output
@@ -77,7 +77,18 @@ single largest open risk in the plan.
   - [X] host side: fetch_model.sh run; header verified (dim=64 hidden=172 layers=5 heads=8 kv=4 vocab=512 seq=512); weight layout confirmed to INCLUDE freq_cis tables (264,128 floats = 1,056,512 B = filesize-28)
   - [ ] **[HW]** copy model.bin + tokenizer.bin to a FAT card and fit it to the board — *Session A/B*
 
-**Checkpoint**: Both profiles build; test programs compile; card is prepared.
+**Checkpoint**: Both profiles build; test programs compile; card is prepared. **REACHED
+2026-08-18** — all host-side work verified:
+
+| Item | Result |
+|---|---|
+| Minimal profile synth | clean → `femtosoc_llm.bit` (259,704 B), Fmax **40.76 MHz** |
+| Minimal resources | LUT 34%, BRAM 28%, MULT 28%, PLL 1/2 — SC-004 passes (66%/72% free) |
+| Full profile regression | LUT 57% (13,937), BRAM 71% (40/56), PLL 2/2, Fmax 32.56 MHz — **identical to baseline**, SC-011 holds |
+| llama2 program | links clean, 44,012 B, 64,308 B of 1 MB region, no undefined symbols |
+| Inference correctness | validated on host against real artifacts — coherent English (research R9a) |
+| Test programs | `sdram_memtest.bin` 5,628 B · `sd_bench.bin` 34,008 B |
+| Artifacts | model.bin 1,056,540 B + tokenizer.bin 6,227 B, sha256 matched |
 
 ---
 
