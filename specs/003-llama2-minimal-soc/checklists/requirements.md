@@ -47,6 +47,30 @@ default one used by the larger models. A mismatched pair produces plausible-look
 text, which is a failure mode that could easily be misdiagnosed as a numerical or memory bug.
 FR-018a and a new assumption were added to make the pairing an explicit, checked requirement.
 
+**Iteration 3 — 2026-08-18 — re-validated after the loading-path change. All 16 items still pass.**
+
+The original spec routed both the model and the program over the serial connection. At roughly
+1 MB, the model takes close to two minutes that way, and because working memory is volatile
+that cost was being paid on every reset rather than once. The spec now splits loading by how
+often each artifact changes: the model is read from local card storage with no host
+involvement, and the program continues to arrive over the serial connection because it is
+small and is rebuilt constantly.
+
+This reverses the earlier decision to strip local storage. That decision was based on freeing
+capacity, but card access here is driven in software over general-purpose pins rather than by
+a dedicated hardware block, so retaining it costs almost nothing against the headroom targets
+in SC-004. FR-003 was narrowed and FR-003a added to make the reasoning explicit rather than
+leaving the reversal looking arbitrary.
+
+Changes: Overview, User Story 1, User Story 3 (rewritten), FR-003/003a, FR-010/010a/010b,
+FR-011, FR-012/012a, SC-005/005a, four new edge cases covering card failure modes, a new
+Storage Card entity, Dependencies, Assumptions, Testing Support, and Out of Scope.
+
+One assumption is explicitly flagged as unverified: the 60-second target in SC-005 is set
+against an estimate of software-driven card throughput, not a measurement. It should be
+confirmed early, and it is a development-loop convenience rather than a functional constraint,
+so it can move without affecting the feature.
+
 **Deliberate interpretation on "no implementation details".** The specification body
 consistently uses capability-level language ("language model program", "external RAM",
 "serial console") rather than naming modules, file formats, or transfer protocols. Domain
