@@ -682,6 +682,8 @@ The HDMI display uses a tri-mode GPU (character + bitmap graphics + SDRAM frameb
 - **Cache upgrade findings**: ECP5 BRAM cannot provide zero-latency reads (always 1 clock cycle); distributed RAM works but 256:1 mux is too deep for 25 MHz
 
 ## Active Technologies
+- C (RISC-V bare metal, rv32imafc/ilp32f) + Verilog-2001 RTL + Yosys/nextpnr-ecp5/ecppack + riscv64-unknown-elf-gcc 8.3.0 (003-llama2-minimal-soc)
+- FAT-formatted SD card for model/vocabulary artifacts; 8 MB external SDRAM at runtime (003-llama2-minimal-soc)
 
 - Verilog (FPGA RTL) + Yosys/nextpnr-ecp5 (FPGA synthesis) + Cocotb (testbenches)
 - C (RISC-V firmware, rv32imfc) + RISC-V GCC toolchain
@@ -693,3 +695,8 @@ The HDMI display uses a tri-mode GPU (character + bitmap graphics + SDRAM frameb
 - Goal: run llama2.c (stories260K, ~1MB fp32) from SDRAM, output over serial
 - Purpose: free FPGA capacity and establish a measured baseline for a future
   MatMul accelerator. See `specs/003-llama2-minimal-soc/spec.md`.
+
+## Recent Changes
+- 003-llama2-minimal-soc: minimal SoC profile (CPU + SDRAM + UART + SD), llama2.c bring-up,
+  and a per-token timing baseline for future accelerator work. Plan and research in
+  `specs/003-llama2-minimal-soc/`.
