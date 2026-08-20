@@ -250,7 +250,7 @@ accelerator must do both. They differ only in what they stream — weights versu
 - [X] T048 [P] Update `CLAUDE.md` with the minimal profile build commands, its resource figures, and the measured generation rate, alongside the existing full-profile entries
 - [X] T049 Walk `quickstart.md` end to end from a clean checkout to confirm SC-012 — someone who did not implement this can reach generated text unaided; fix any step that requires knowledge not written down
 - [X] T050 [P] Record the follow-on findings for the accelerator work: measured SDRAM bandwidth from T017, the timing breakdown from T046, and whether software wins (precomputed rotary tables, fast `expf`) should precede any RTL
-- [ ] T051 Confirm SC-011 one final time — `make colorlight_i5.synth` still produces a working full-profile image after all changes
+- [X] T051 Confirm SC-011 one final time — `make colorlight_i5.synth` still produces a working full-profile image after all changes
 
 ---
 
