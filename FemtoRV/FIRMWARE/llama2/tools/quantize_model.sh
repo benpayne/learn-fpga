@@ -126,6 +126,68 @@ print("Dropping freq_cis_real/freq_cis_imag RoPE tables (%d + %d floats, %d byte
       "at runtime instead of a table lookup. This is intentional, not data loss."
       % (freq_real.size, freq_imag.size, (freq_real.size + freq_imag.size) * 4))
 
+# ---- hidden_dim zero-padding (research.md R16/R18) ----
+#
+# runq.c's matmul()/quantize() group per row using the INNER dimension, and
+# silently truncate when GS does not divide it. This model has dim=64 (fine
+# for every power-of-two GS) but hidden_dim=172 = 4 * 43 (43 prime), which
+# caps GS at 4 for the w2 matmul and the hq activation -- see R16. That is a
+# pure storage-and-lanes tax with no accuracy benefit (R17 measured quality
+# at GS=4 with a 46x margin against the SC-002 threshold), so it is cheaper
+# to pad hidden_dim up to a multiple of the desired GS than to run at GS=4.
+#
+# Padding is mathematically EXACT, not an approximation:
+#   - w1/w3 gain new all-zero ROWS (they are shaped [hidden_dim][dim], so a
+#     hidden_dim pad is a straight append of zero rows at the end of the
+#     flat array) -> the padded FFN pre-activation entries are exactly 0.
+#   - SwiGLU: silu(0) * 0 = 0, so the padded hidden units contribute nothing
+#     downstream regardless of what w3's padded rows would have produced.
+#   - w2 is shaped [dim][hidden_dim] (dim ROWS of hidden_dim columns each),
+#     so a hidden_dim pad adds zero COLUMNS -- i.e. (PAD - hidden_dim) new
+#     zero elements inserted at the end of EVERY row, not just appended
+#     once at the end of the flat buffer. Getting this backwards (flat
+#     append instead of per-row insert) would silently corrupt the w2
+#     matmul by shifting every row after the first -- this is called out
+#     explicitly because it is the easiest mistake to make here. Since the
+#     appended activation entries (hq) are always exactly 0 (from the
+#     silu(0)*0 term above), the extra dot-product terms w2[i][hidden_dim:]
+#     * hq[hidden_dim:] are exactly 0 too -- the padded model computes
+#     bit-identical results to the unpadded one.
+#
+# PAD_HIDDEN_TO is a variable (overridable via the environment), not baked
+# into the backoff logic below, so other pad targets (176, or 0 to disable
+# padding entirely and fall back to the GS=4 behaviour) can be tried without
+# touching any control flow -- only this value changes.
+PAD_HIDDEN_TO = int(os.environ.get("PAD_HIDDEN_TO", "192"))  # 0 disables padding
+if PAD_HIDDEN_TO and PAD_HIDDEN_TO < hidden_dim:
+    print("ERROR: PAD_HIDDEN_TO=%d is smaller than the model's hidden_dim=%d -- "
+          "padding only grows hidden_dim, it cannot shrink it"
+          % (PAD_HIDDEN_TO, hidden_dim), file=sys.stderr)
+    sys.exit(1)
+elif PAD_HIDDEN_TO and PAD_HIDDEN_TO > hidden_dim:
+    pad_rows = PAD_HIDDEN_TO - hidden_dim
+    print()
+    print("Padding hidden_dim %d -> %d (+%d rows/cols, +%.1f%% FFN weights) "
+          "to restore a larger group size (research R16/R18)"
+          % (hidden_dim, PAD_HIDDEN_TO, pad_rows,
+             100.0 * pad_rows * dim * 3 * n_layers / (3 * n_layers * hidden_dim * dim)))
+    w1 = [np.concatenate([m, np.zeros(pad_rows * dim, dtype=np.float32)]) for m in w1]
+    w3 = [np.concatenate([m, np.zeros(pad_rows * dim, dtype=np.float32)]) for m in w3]
+    # w2 is [dim][hidden_dim] flattened row-major: pad each row's length,
+    # not the flat buffer's end.
+    w2 = [
+        np.concatenate(
+            [m.reshape(dim, hidden_dim), np.zeros((dim, pad_rows), dtype=np.float32)],
+            axis=1,
+        ).reshape(-1)
+        for m in w2
+    ]
+    hidden_dim = PAD_HIDDEN_TO
+else:
+    print()
+    print("hidden_dim padding disabled (PAD_HIDDEN_TO=%s) -- using model's native hidden_dim=%d"
+          % (PAD_HIDDEN_TO, hidden_dim))
+
 # Matrices that get quantized, in the SAME order runq.c's memory_map_weights()
 # expects them to appear on disk (research R1 / q8_format.h):
 #   q_tokens(1), wq(n_layers), wk(n_layers), wv(n_layers), wo(n_layers),

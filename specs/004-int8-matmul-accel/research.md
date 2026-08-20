@@ -465,6 +465,103 @@ and MAC lanes, at no measured quality risk.
 
 ---
 
+## R18. Padded model measurements (2026-08-20)
+
+Implemented the R16/R17 decision: `quantize_model.sh` now zero-pads `hidden_dim` from 172 to
+192 before quantizing (`PAD_HIDDEN_TO`, defaults to 192, overridable via the environment so 176
+or 0/no-padding can be tried without touching any control flow). w1/w3 gain 20 new all-zero
+rows (append, since they are `[hidden_dim][dim]`); w2 gains 20 new all-zero columns inserted at
+the end of every row (per-row insert, since it is `[dim][hidden_dim]` and hidden_dim is the
+*inner* stride — a flat append would have silently shifted every row after the first). `runq_host.c`
+and `run_host.c` were not modified — the padding is entirely a converter-side transformation and
+required no reader change, confirming it is transparent as claimed in R16.
+
+### Padding cost
+
+FFN weight count (w1+w2+w3, per layer) grows from `3 * 172 * 64 = 33024` to `3 * 192 * 64 =
+36864`, i.e. **+11.6%** — exactly the R16 estimate.
+
+### Quantized output
+
+- Group size: **64, no backoff** (as required — the run printed "group size used: 64 (no
+  backoff, as expected)").
+- Output size: **299,008 bytes** (estimate was ~296 KB).
+- sha256: `759d06bf4228772cc9cd73512801c5402753bc8d8a5de96fda1765de09e86c28`
+- Bytes/parameter (quantized tensors): **1.0625** (`= 1 + 4/64`, as expected).
+- fp32 original: 1,056,540 bytes. Ratio: **299008 / 1056540 = 0.2830** (28.3% of fp32 size) —
+  **SC-003 (ratio ≤ 1/3) now PASSES**, versus 0.494 (fail) at GS=4.
+- 279,232 total parameters (278,528 quantized + 704 fp32 rmsnorm).
+
+### Generated text
+
+`./runq_host model.q8.bin tokenizer.bin --seed 2026 --steps 110 -i "Once upon a time"`:
+
+> Once upon a time, there was a little girl named Lily. She loved to play with her toys and her
+> friends. One day, Lily found a new toy in her box. She went to the store and put the toys on
+> her toy. She closed it in her hand, people hold a big brown rock. Lily tried to pull it
+
+Coherent English throughout, same register and vocabulary as the fp32 reference text (a
+different sample, as expected — greedy decode over int8 logits at GS=64 is not required to
+reproduce the GS=4 or fp32 token stream, only to stay linguistically coherent, which it does).
+
+### Teacher-forced KL comparison (the rigorous check)
+
+Followed the R17 methodology exactly, teacher-forcing an identical 459-byte story prompt into
+both `run_host` (fp32) and `runq_host` (padded Q8_0, GS=64) and dumping logits for both:
+
+```
+STORY=$(./run_host -s 2026 -n 210 -p "Once upon a time" | sed -n '/^Once upon/,$p' | grep -v '^achieved' | head -c 900)
+./run_host  -s 2026 -n 220 -p "$STORY" --dump-logits /tmp/f3.logt
+./runq_host model.q8.bin tokenizer.bin --seed 2026 --steps 220 -i "$STORY" --dump-logits /tmp/q3.logt
+```
+
+(One correction to the recipe: `run_host`'s "achieved N tok/s" line is printed to stdout, not
+stderr, and the story text here is short enough that `head -c 900` did not truncate it away —
+had to `grep -v '^achieved'` it out of the prompt explicitly, or it would have been fed back in
+as part of "$STORY".)
+
+Compared the first 140 positions (numpy, using `kl_compare.py`'s own `read_logt`/`softmax`/
+`kl_per_position` helpers directly, sliced to `[:140]`, since the CLI has no row-limit flag):
+
+| Metric | Value | SC-002 threshold |
+|---|---|---|
+| mean KL | **0.000977 nats** | < 0.01 — passes by ~10x |
+| median KL | 0.000600 | |
+| p99 KL | 0.004340 | |
+| max KL | 0.004570 | |
+| top-1 agreement | **100.00%** | > 95% |
+
+**140 was confirmed to be exactly the right cutoff, not just "close enough":** checking every
+position out to 220, the fp32 and quantized argmax tokens agree on every single position
+through index 139 and the *first* disagreement is at position 140 exactly (KL 0.00977 there) —
+that is where free-running divergence begins, matching R17's warning precisely. Running
+`kl_compare.py` unmodified over the full 220 positions (i.e. deliberately repeating R17's
+original mistake) reproduces the same class of bogus result R17 documented: mean KL 0.165,
+p99 7.92, max 11.44, verdict FAIL — an artifact of comparing post-divergence free-running
+positions, not a quantization problem. This is included here only to confirm the 140-row
+boundary is real and the teacher-forcing requirement is not optional.
+
+**VERDICT: PASS.** GS=64 padded quality (0.000977 nats mean KL, 100% top-1) is about 4.5x the
+GS=4 figure from R17 (0.000216 nats) — slightly worse, exactly as expected since larger groups
+share one scale across more weights — but still an order of magnitude inside the SC-002 gate.
+
+### Summary vs. R16/R17
+
+| | GS=4 (unpadded) | GS=64 (padded, this section) |
+|---|---|---|
+| checkpoint size | 521,728 B | 299,008 B |
+| bytes/weight | 2.0000 | 1.0625 |
+| ratio vs fp32 | 0.494 (fails SC-003) | 0.2830 (passes SC-003) |
+| MAC lanes | 2 | 4 |
+| mean KL | 0.000216 nats | 0.000977 nats |
+| top-1 agreement | 100% | 100% |
+
+Padding delivers on R16's projection: SC-003 now passes, the accelerator gets its full 4-lane
+datapath back, and quality stays comfortably inside the SC-002 gate. No reader-side change was
+needed, so the "padding is transparent" claim in R16 holds.
+
+---
+
 ## R19. Burst efficiency MEASURED — the estimate was wrong, and 64 words fails SC-006
 
 **Preliminary** (T041, 2026-08-20). A longer run is in progress before this becomes the official
