@@ -217,10 +217,10 @@ length from measurement.
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T073 [P] Update `specs/004-int8-matmul-accel/quickstart.md` with all measured numbers, replacing the illustrative ones
+- [X] T073 [P] Update `specs/004-int8-matmul-accel/quickstart.md` with all measured numbers, replacing the illustrative ones
 - [X] T074 [P] Update `FemtoRV/RTL/ACCEL/DESIGN.md` to correct the two assumptions Phase 0 overturned — Q8_0 uses separate blocks rather than interleaving, and the activation vector is quantized too — so the design document stops disagreeing with the implementation
 - [ ] T075 [P] Update `CLAUDE.md` with the accelerator build commands, its resource figures, and the final measured rate
-- [ ] T076 Walk `quickstart.md` end to end from a clean checkout to confirm SC-012's reproducibility intent; fix any step needing knowledge not written down
+- [ ] T076 Walk `quickstart.md` end to end from a clean checkout to confirm SC-012's reproducibility intent; fix any step needing knowledge not written down. **PARTIAL.** Executed: the quantizer (reproduces 299,008 B and sha256 `759d06...` byte-for-byte, verified independently) and `runq_host`, which **found a real defect — the documented command omitted `-i "Once upon a time"`**, so it silently generated different-but-coherent text that matched nothing in the doc. Fixed, with both outputs shown so the failure is recognisable. Also reran `acc_reject_tb` (14/14). **Not executed**: the synthesis steps, the RTL testbenches whose modules were mid-edit, and every `[HW]` step. Remaining: re-walk those once the RTL settles
 - [ ] T077 [P] Record follow-on findings for the next feature in `specs/004-int8-matmul-accel/accelerator-outcome.md`: the measured scalar remainder, the clock-increase opportunity from feature 003's 40.76 MHz ceiling, and whether int8's capacity gain is worth exploiting with a larger model
 - [ ] T078 Final full-profile regression — `make colorlight_i5.synth` still produces a working image after every change (SC-014, constitution Principle V)
 - [ ] T079 Re-evaluate this feature against `.specify/memory/constitution.md` and record the result, including whether the Principle V deviation was handled as the plan claimed
