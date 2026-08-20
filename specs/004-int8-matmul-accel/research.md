@@ -921,3 +921,41 @@ cycles instead of `64 + 80`). The original three are left unmodified as the R19 
 above relies on them measuring exactly what they always measured.
 
 ---
+
+## R24. `FIRMWARE/config.mk` is shared mutable state between profiles (found 2026-08-20)
+
+`make <profile>.firmware_config` **overwrites** `FemtoRV/FIRMWARE/config.mk`, which is a tracked
+file both profiles share. Running the display-profile regression (T047/T056) flipped it from
+`BOARD=colorlight_i5_llm` to `BOARD=colorlight_i5` mid-session, while the accelerator work was
+the active task.
+
+**This is a latent hazard today, not an active bug** — checked rather than assumed. The two
+profiles' generated configs differ in exactly one line: `OPTIMIZE`, `ABI`, `RAM_SIZE` and
+`DEVICES` are identical, and `BOARD` is read in only two places in `FIRMWARE/makefile.inc` — an
+`ifeq` against `icesugar_nano`, and a `spiflash_$(BOARD).ld` path used by a link rule that
+neither `llama2.bin`, `runq.bin` nor `acc_test.bin` goes through. So firmware built while the
+file is flipped is byte-identical either way, for now.
+
+It stops being benign the moment the profiles' configs diverge — a different `RAM_SIZE`, a
+different `DEVICES` line, an added define. At that point building firmware after a regression
+run would silently produce a binary configured for the other board, and nothing in the build
+output would say so.
+
+This is the **fourth** instance of one pattern in this feature:
+
+| | Shared state | Failure |
+|---|---|---|
+| R20 | `femtosoc.*` artifact names | wrong bitstream flashed, filename says nothing |
+| R21 | (process) `make \| tee` exit status | OOM-killed run reported as success |
+| — | `TEST/sim_build/` | testbench silently runs another module's DUT |
+| R24 | `FIRMWARE/config.mk` | firmware silently built for the other profile |
+
+Each is a shared, mutable, unnamespaced resource whose collision is **silent**. Three of the
+four have been given per-consumer namespaces (`LLM_ARTIFACT`, `SIM_BUILD/$(MODULE)`, and the
+no-pipe rule for exit status). `config.mk` is left as-is deliberately: it is upstream
+`learn-fpga` structure shared by every board in the repository, and per-profile config files
+would be a wider change than this feature should make. **Recorded so the next profile that
+needs a genuinely different firmware config knows to fix it first**, and restored to
+`colorlight_i5_llm` after the regression run.
+
+---

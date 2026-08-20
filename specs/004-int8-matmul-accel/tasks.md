@@ -128,7 +128,7 @@ software baseline is measured. **Only now does hardware work begin.**
 - [X] T035 [US2] Write `FemtoRV/TEST/acc_unit_tb.py` driving `acc_top` against a simulated SDRAM, using the model's real matrix shapes (64x64, 64x172, 172x64, 64x512)
 - [ ] T036 [US2] Run `acc_unit_tb`; confirm bit-identical results and that the weight FIFO never underruns at full burst rate; record achieved words/cycle
 - [ ] T037 [US2] Cross-check one full matrix against `runq_host`'s dumped intermediates from T008, so the simulation is validated against the same reference the hardware will be
-- [ ] T038 [US2] Verify descriptor rejection paths in simulation — `n % gs != 0`, unsupported `gs`, out-of-range `n`/`d`, oversized `d` — each producing its distinct error code and not starting (FR-009)
+- [ ] T038 [US2] Verify descriptor rejection paths in simulation — `n % gs != 0`, unsupported `gs`, out-of-range `n`/`d`, oversized `d` — each producing its distinct error code and not starting (FR-009). **HALF DONE.** `FemtoRV/TEST/acc_reject_tb.py` proves the `acc_regs.v` half: 14/14 pass, verified independently. But only **3 of the 6 error codes are computed by `acc_regs.v` at all** — `ERR_DIM`, `ERR_GS`, `ERR_FULL`. `ERR_RANGE`, `ERR_SLOT` and `ERR_MODE` reach it only as input pins from the control FSM, and a descriptor with `n=8192` (2x past `MAX_N`), `d=65535`, or `mode=3` is **pushed into the queue with no error** at this level — proven, not assumed. FR-009's "MUST NOT start" is therefore a property of the `acc_top`+`acc_regs` pair. **Remaining: prove `acc_top` actually rejects those three**, in `acc_unit_tb.py`. `ERR_MODE` especially — it exists precisely because `acc_top` once fell through silently on unimplemented modes, and that fix has never been tested
 - [X] T039 [US2] Verify abort returns the unit to idle from mid-operation within a bounded time and flushes the FIFO (FR-010), extending `FemtoRV/TEST/acc_unit_tb.py`
 
 **Checkpoint**: US2 complete — arithmetic and control proven without a board.
@@ -148,9 +148,9 @@ length from measurement.
 - [X] T041 [US3] Add the accelerator starvation guard to `FemtoRV/RTL/SDRAM/muchtoremember_burst.v` — force a burst after N consecutive denied rounds — and expose its trigger count for observation (FR-017; the design expects it never to fire, and that assumption must be checked rather than trusted)
 - [X] T042 [US3] Write `FemtoRV/TEST/acc_arb_tb.py` with a synthetic CPU traffic generator at configurable intensity, measuring accelerator words/cycle and CPU worst-case wait
 - [X] T043 [US3] Run `FemtoRV/TEST/acc_arb_tb.py` with the CPU generator idle; confirm at least 0.9 words/cycle (SC-006)
-- [ ] T044 [US3] Run `FemtoRV/TEST/acc_arb_tb.py` with periodic CPU misses; confirm CPU worst-case wait stays within one burst and accelerator throughput degrades gradually rather than collapsing (SC-007, SC-008)
-- [ ] T045 [US3] Sweep burst length across 16/32/64/128/256 words and record the measured efficiency-versus-latency table in `research.md`, **replacing the estimated table in the design document** (FR-020, constitution Principle VI)
-- [ ] T046 [US3] Choose the burst length from T045's measurements and record the choice and its basis in `specs/004-int8-matmul-accel/research.md`
+- [X] T044 [US3] Run `FemtoRV/TEST/acc_arb_tb.py` with periodic CPU misses; confirm CPU worst-case wait stays within one burst and accelerator throughput degrades gradually rather than collapsing (SC-007, SC-008)
+- [X] T045 [US3] Sweep burst length across 16/32/64/128/256 words and record the measured efficiency-versus-latency table in `research.md`, **replacing the estimated table in the design document** (FR-020, constitution Principle VI)
+- [X] T046 [US3] Choose the burst length from T045's measurements and record the choice and its basis in `specs/004-int8-matmul-accel/research.md`
 - [ ] T047 [US3] **Regression (constitution Principle V, SC-014, FR-021)**: run `cd FemtoRV && make colorlight_i5.synth` and confirm resources, timing and behaviour match the T006 baseline. This is mandatory, not a formality — the arbitration change touches RTL the working profile depends on
 
 **Checkpoint**: US3 complete — sharing policy measured and the full profile proven unharmed.

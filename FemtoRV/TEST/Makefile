@@ -21,6 +21,16 @@ else ifeq ($(MODULE),video_fetch_tb)
 else ifeq ($(MODULE),acc_mac_tb)
   VERILOG_SOURCES = ../RTL/ACCEL/acc_mac.v
   TOPLEVEL := acc_mac
+else ifeq ($(MODULE),acc_reject_tb)
+  # T038: descriptor rejection paths, targeting acc_regs.v DIRECTLY (no
+  # wrapper -- plain wire ports, same "raw module" style as acc_mac_tb
+  # above) rather than acc_unit_tb.py's full acc_top stack. See
+  # acc_reject_tb.py's file header for why (mac-unit owns acc_unit_tb.py
+  # right now, and acc_regs.v is where accept-time validation lives).
+  VERILOG_SOURCES = ../RTL/ACCEL/acc_regs.v
+  # acc_regs.v `include "acc_bits.vh" -- same -I need as acc_unit_tb above.
+  COMPILE_ARGS += -I../RTL/ACCEL
+  TOPLEVEL := acc_regs
 else ifeq ($(MODULE),acc_unit_tb)
   VERILOG_SOURCES = acc_unit_wrapper.v ../RTL/ACCEL/acc_top.v ../RTL/ACCEL/acc_mac.v ../RTL/ACCEL/acc_weight_fetch.v ../RTL/ACCEL/acc_regs.v ../RTL/SDRAM/muchtoremember_burst.v
   # acc_regs.v (and acc_top.v) `include "acc_bits.vh" -- icarus does not search
@@ -77,6 +87,9 @@ test-video-fetch:
 
 test-sdram-burst:
 	$(MAKE) MODULE=sdram_burst_tb SIM=$(SIM)
+
+test-acc-reject:
+	$(MAKE) MODULE=acc_reject_tb SIM=$(SIM)
 
 test-all: clean-sim
 	$(MAKE) test-ic
