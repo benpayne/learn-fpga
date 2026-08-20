@@ -1181,6 +1181,42 @@ to still pass at 25 MHz** — it may well still clear, but that is a measurement
 assumption to carry forward. Whoever runs the next `colorlight_i5_llm` build (R22's "Session B")
 should treat this as the first thing to check, not a formality.
 
+### Addendum: `acc_top.v`'s own accept-time checks, added to `acc_unit_tb.py` in the same pass
+
+fw-quant's `acc_reject_tb.py` proved `acc_regs.v` computes only three of the six error codes at
+enqueue time (`ERR_DIM`, `ERR_GS`, `ERR_FULL`) — a descriptor with `n=8192` (2x `MAX_N`),
+`d=65535`, or `mode=3` is pushed into the queue with no error raised at that layer. `ERR_RANGE`,
+`ERR_SLOT` and `ERR_MODE` are entirely `acc_top.v`'s job (`accept_range_bad`/`accept_slot_bad`/
+`accept_mode_bad` in its `S_IDLE` branch), and until this pass none of the three had been
+exercised end to end through the real queue -> accept-check path.
+
+Six new tests in `acc_unit_tb.py`, all passing:
+
+| Test | Descriptor | Code |
+|---|---|---|
+| `test_reject_range_n` | n=8192 (2x MAX_N), d=1, gs=64 | `ERR_RANGE` |
+| `test_reject_range_d` | n=64, d=65535, gs=64 | `ERR_RANGE` |
+| `test_reject_slot_d_overflow` | n=64, d=1000 (<=MAX_D, >RESULT_SLOT_WORDS=512), gs=64 | `ERR_SLOT` |
+| `test_reject_slot_bad_index` | n=64, d=1, gs=64, out_slot=8 (>=NUM_SLOTS) | `ERR_SLOT` |
+| `test_reject_mode_att_score` | n=64, d=1, gs=64, mode=ACC_MODE_ATT_SCORE | `ERR_MODE` |
+| `test_reject_mode_att_sum` | n=64, d=1, gs=64, mode=ACC_MODE_ATT_SUM | `ERR_MODE` |
+
+The n=8192 and d=65535 cases each trip a second check as a side effect (both also exceed the
+activation buffer's physical capacity, tripping `accept_slot_bad`) — this is expected, not a test
+bug: it is exactly what verifies `accept_mode_bad > accept_range_bad > accept_slot_bad` priority
+resolves correctly under real overlap, not just in isolation. `test_reject_slot_d_overflow` and
+`test_reject_slot_bad_index` are constructed to isolate `ERR_SLOT` cleanly (d within `MAX_D` but
+over the physical slot size; a bad slot index with everything else trivially valid).
+`ACC_MODE_ATT_SCORE`/`ACC_MODE_ATT_SUM` are tested by name rather than only an arbitrary invalid
+value (3), since those two are what a driver could plausibly issue by mistake today and are the
+ones that must correctly flip from rejected to valid the day T064/US6 lands — a regression there
+is the one this guard exists to catch.
+
+Each test confirms three things, not just the error code: `DONE` is not also set (rejection and
+completion are mutually exclusive), and `PERF_CYCLES` reads exactly 0 — proof the descriptor
+never reached `S_RUNNING` at all, not merely that an error bit happened to be set alongside a
+partial run.
+
 ---
 
 ## R27. Hardware session plan — two bitstreams, and one the R20 fix destroyed (2026-08-20)
@@ -1258,5 +1294,71 @@ was for. But it is a real difference in a module the working display profile dep
 recording it as "no change" would have been wrong. The only thing that would settle it
 completely is running the display profile on hardware — not part of this feature's scope, and
 flagged here so it is a known open item rather than an assumed one.
+
+---
+
+## R29. Post-fix timing FAILS — 23.55 MHz against a 25 MHz target (measured 2026-08-20)
+
+Board build on the fixed RTL (R26's scale-timing and fp32-subtraction fixes). `make
+colorlight_i5_llm.synth` exit 0, nextpnr "Program finished normally", and:
+
+```
+Max frequency for clock '$glbnet$clk': 23.55 MHz (FAIL at 25.00 MHz)
+```
+
+| | Pre-fix (R22) | Post-fix | |
+|---|---|---|---|
+| LUT4 | 13,183 (54%) | 13,448 (55%) | +265 |
+| DP16KD | 49 (87%) | 49 (87%) | 0 |
+| MULT18X18D | 25 (89%) | 25 (89%) | 0 |
+| **Max frequency** | **26.21 MHz PASS** | **23.55 MHz FAIL** | **-2.66** |
+
+**mac-unit was right to refuse to assume this.** It flagged that the `fp_add32` fix adds a
+subtraction and a mux directly onto the path R22 had already identified as critical, declined to
+call the fix complete without a board build, and asked for one. That judgement is the reason
+this was caught before an operator session rather than during one.
+
+### The path, and why it is not only logic depth
+
+```
+... -> accel_inst.u_mac.s3_row_first_q ... -> accel_inst.u_mac.row_result_q
+14.5 ns logic, 28.0 ns routing   (42.5 ns total, against a 40 ns period)
+```
+
+**Routing is nearly twice the logic delay.** That reframes the problem: this is not purely a
+deep combinational chain, it is also a **congestion** result, and 87% BRAM plus 89% DSP
+occupancy is exactly the condition that produces long routes. Pipelining alone attacks the
+14.5 ns half directly and the 28.0 ns half only indirectly, by shortening the span that has to
+be routed.
+
+So the fix is **two changes, not one**:
+
+**1. Pipeline the fp32 rescale (`acc_mac.v`).** The rescale runs once per group of GS=64
+elements — 16 cycles at LANES=4 — and is built as single-cycle combinational logic. Splitting it
+across even two or three stages costs nothing in throughput. This is the third distinct symptom
+of the same root cause, after R21's non-terminating `share` pass and the 13-of-17 DSP
+consumption.
+
+**2. Shrink the oversized BRAMs.** `ACT_AWIDTH` and `RESULT_AWIDTH` are both 12, sized from
+`MAX_N`/`MAX_D` of 4096, while this model's `n` and `d` never exceed 512. The naive fix of
+dropping them to 11 is **wrong** and worth recording so nobody tries it: with `NUM_SLOTS=8` that
+gives 2048/8 = 256 words per slot, and the classifier needs d=512 fp32 values — it would
+silently overflow its slot, or trip `ERR_SLOT` if the check is right. The sound version reduces
+slots and width together:
+
+| | Now | Proposed | Words/slot | Needed |
+|---|---|---|---|---|
+| Result | `AWIDTH 12`, 8 slots | `AWIDTH 11`, 4 slots | 512 | 512 (classifier d=512) |
+| Activation | `AWIDTH 12`, 8 slots | `AWIDTH 10`, 4 slots | 256 | 136 (n=512 int8 + 8 scales) |
+
+That returns roughly 10 of the 49 BRAMs. `NUM_SLOTS` is visible to the driver, so it is a
+contract change, not just a parameter tweak.
+
+### Consequence
+
+**The accelerator does not currently close timing, and no hardware session can use this
+bitstream.** Session A is unaffected — it runs the software path on a no-accelerator build at
+40.76 MHz (R27) — but Sessions B and C are blocked until timing closes. This is no longer a
+recommendation to consider; it is required work.
 
 ---
