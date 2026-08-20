@@ -234,7 +234,7 @@ real bitstream —
 | LUT4 | 8,391 (34%) | **13,183 (54%)** | 24,288 | 46% free — PASS |
 | DP16KD (BRAM) | 16 (28%) | **49 (87%)** | 56 | 7 left |
 | MULT18X18D (DSP) | 8 (28%) | **25 (89%)** | 28 | 3 left |
-| Max frequency | 40.76 MHz | **26.21 MHz** | — | PASS at 25 MHz, by **4.8%** |
+| Max frequency | 40.76 MHz | **28.15 MHz** | — | PASS at 25 MHz, by **4.8%** |
 
 — but the resulting `femtosoc_llm.bit` **computes wrong answers**. T036 found a
 scale-pipelining defect in `acc_top.v`: the weight and activation scale registers advance one
@@ -244,10 +244,10 @@ cycle early, so every group is rescaled with the **next** group's scale instead 
 `femtosoc_llm.bit` as flashable until this is fixed and re-verified** — `acc_test`'s CPU-vs-
 hardware comparison (above) is exactly the check that will catch whether it still is.
 
-**The 4.8% timing margin is also not something to wave past.** This project has direct
+**The 12.6% timing margin is also not something to wave past.** This project has direct
 precedent for what that margin class costs: a 256-entry SDRAM cache was *rejected* at 28.4 MHz
 against this same 25 MHz target for being too tight, and UART flakiness was later traced to
-exactly that class of margin rather than to a logic fault. 26.21 MHz is tighter than the
+exactly that class of margin rather than to a logic fault. 28.15 MHz is tighter than the
 configuration this project already judged unacceptable. The critical path is unambiguous —
 `acc_mac.v`'s single-cycle combinational fp32 rescale (`accel_inst.u_mac.s3_rescaled_f_q ->
 row_result_q`, 35.5 ns) — and it is the same logic responsible for the scale bug above, the 87%

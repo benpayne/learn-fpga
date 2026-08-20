@@ -808,13 +808,31 @@ through a pipe — see R21), nextpnr "Program finished normally", `femtosoc_llm.
 
 The out-of-context projections in R21 (~49 BRAM, ~25 DSP) matched the placed design exactly.
 
+### CORRECTION (2026-08-20, same day): 28.15 MHz is post-routing; 26.21 was the estimate
+
+This entry originally recorded **26.21 MHz**. That is nextpnr's **post-placement estimate**,
+printed right after `SA placement time`. The real figure is the **post-routing** one, printed
+after `Routing complete`, and it is **28.15 MHz**. Every number in this entry has been corrected.
+
+The mistake propagated: it made the margin look like 4.8% when it is **12.6%**, and it supported
+a claim that the accelerator was "tighter than the 256-entry cache this project already
+rejected at 28.4 MHz". At 28.15 versus 28.4 the two are effectively the same margin, not
+dramatically worse. The concern about operating this close to the target is still legitimate —
+that cache *was* rejected at essentially this figure — but it was argued from a number that was
+not the design's actual frequency.
+
+**Rule for anyone reading a nextpnr log here: take the fmax printed after `Routing complete`,
+not the one after `SA placement time`.** Both appear, both name the same clock, and only the
+second is real. The same misread would have made R29's failing build look worse than it is
+(20.97 estimated versus 23.55 actual).
+
 ### Timing is the real finding
 
 ```
-Max frequency for clock '$glbnet$clk': 26.21 MHz (PASS at 25.00 MHz)
+Max frequency for clock '$glbnet$clk': 28.15 MHz (PASS at 25.00 MHz)
 ```
 
-It passes, but with **4.8% margin**, and the critical path is unambiguous:
+It passes, but with **12.6% margin**, and the critical path is unambiguous:
 
 ```
 Source accel_inst.u_mac.s3_rescaled_f_q   ->   Sink accel_inst.u_mac.row_result_q
@@ -828,7 +846,7 @@ R21 and that consumes 13 of the 17 accelerator DSPs. Three independent symptoms,
 minimal profile reached 40.76 MHz; the accelerator costs 36% of that. More directly: the
 256-entry SDRAM cache was **rejected** for reaching only 28.4 MHz against a 25 MHz target, and
 UART flakiness was later traced to exactly that kind of thin margin rather than to a logic
-fault. 26.21 MHz is tighter than the configuration this project already judged too tight.
+fault. 28.15 MHz is tighter than the configuration this project already judged too tight.
 
 ### What to do about it
 
@@ -1171,8 +1189,8 @@ the small LUT/FF growth and zero DSP/BRAM change.
 `TRELLIS_IO` — nextpnr correctly refuses; a submodule's wide internal buses are not real pins).
 A real `fmax` number requires the full `femtosoc.v`-top board build R22 already ran once. R22's
 build — run on the **pre-fix** RTL — found the critical path is `acc_mac.v`'s fp32 rescale itself
-(`u_mac.s3_rescaled_f_q -> u_mac.row_result_q`, 35.5 ns, 26.21 MHz achieved against a 25 MHz
-target — only 4.8% margin) and explicitly warned its bitstream must not be flashed because it
+(`u_mac.s3_rescaled_f_q -> u_mac.row_result_q`, 35.5 ns, 28.15 MHz achieved against a 25 MHz
+target — only 12.6% margin) and explicitly warned its bitstream must not be flashed because it
 contained this entry's first bug. This entry's `fp_add32` fix adds a subtraction and a mux
 *directly onto that same path* (the row-accumulate call in `fp_add32`, which is exactly
 `s3_rescaled_f_q`'s consumer). Given the margin was already thin before any of this change,
@@ -1239,12 +1257,12 @@ of failure R20 exists to prevent, and it happened once more on the way to preven
 | Bitstream | `NRV_IO_ACCEL` | Fmax | Used by |
 |---|---|---|---|
 | `femtosoc_llm_soft.bit` | undefined | 40.76 MHz (R14/003) | **Session A** — T022-T026 |
-| `femtosoc_llm.bit` | defined | 26.21 MHz (R22) | **Sessions B and C** — T053+ |
+| `femtosoc_llm.bit` | defined | 28.15 MHz (R22) | **Sessions B and C** — T053+ |
 
 Session A validates the Q8_0 **software** path, which is the golden reference every later
 hardware result is compared against. Running it on the accelerator bitstream would work — the
 accelerator is an idle peripheral that `runq.bin` never issues to — but it would put the
-reference measurement on a build with 4.8% timing margin. If Session A then disagreed with the
+reference measurement on a build with 12.6% timing margin. If Session A then disagreed with the
 host transcript, "quantization port bug" and "marginal timing" would be indistinguishable, and
 the reference would be the thing in doubt. Building the no-accelerator image costs one
 synthesis run and removes that ambiguity entirely.
@@ -1254,7 +1272,7 @@ prerequisite is the physical card copy left over from T021.
 
 ### Session B must distinguish intermittent from consistent failure
 
-At 4.8% margin this matters more than usual. A **consistent** bit-exact mismatch is a logic bug;
+At 12.6% margin this matters more than usual. A **consistent** bit-exact mismatch is a logic bug;
 an **intermittent** one is timing. They call for entirely different next steps, and on a single
 run they look identical. `acc_test.c` should therefore repeat its comparison many times and
 report whether failures are stable, rather than reporting one pass or fail — that turns an
@@ -1311,7 +1329,7 @@ Max frequency for clock '$glbnet$clk': 23.55 MHz (FAIL at 25.00 MHz)
 | LUT4 | 13,183 (54%) | 13,448 (55%) | +265 |
 | DP16KD | 49 (87%) | 49 (87%) | 0 |
 | MULT18X18D | 25 (89%) | 25 (89%) | 0 |
-| **Max frequency** | **26.21 MHz PASS** | **23.55 MHz FAIL** | **-2.66** |
+| **Max frequency** | **28.15 MHz PASS** | **23.55 MHz FAIL** | **-2.66** |
 
 **mac-unit was right to refuse to assume this.** It flagged that the `fp_add32` fix adds a
 subtraction and a mux directly onto the path R22 had already identified as critical, declined to
@@ -1325,11 +1343,25 @@ this was caught before an operator session rather than during one.
 14.5 ns logic, 28.0 ns routing   (42.5 ns total, against a 40 ns period)
 ```
 
-**Routing is nearly twice the logic delay.** That reframes the problem: this is not purely a
-deep combinational chain, it is also a **congestion** result, and 87% BRAM plus 89% DSP
-occupancy is exactly the condition that produces long routes. Pipelining alone attacks the
-14.5 ns half directly and the 28.0 ns half only indirectly, by shortening the span that has to
-be routed.
+It is the **same path as before the fix** — same source register, same sink, same `fp_add32`
+accumulate. Nothing moved; the existing critical path simply got longer:
+
+| | Pre-fix | Post-fix | Delta |
+|---|---|---|---|
+| Logic | 11.3 ns | 14.5 ns | +3.2 (+28%) |
+| Routing | 24.2 ns | 28.0 ns | +3.8 (+16%) |
+| Total | 35.5 ns | 42.5 ns | +7.0 |
+
+**Routing is roughly two-thirds of the delay — and it was already two-thirds before the fix.**
+That is worth stating carefully, because an earlier draft of this entry treated it as a new
+observation that "reframes the problem". It does not: 24.2 versus 11.3 ns was the pre-fix split
+too. The design has been routing-dominated all along, which is what 87% BRAM and 89% DSP
+occupancy produces.
+
+That still matters for choosing the fix, just not as a change. Inserting a pipeline register
+mid-path splits **both** halves — each stage carries roughly half the logic and half the routed
+span — so pipelining does address the routing term, not merely the logic one. A 42.5 ns path
+split evenly across two stages lands near 21 ns, comfortably inside the 40 ns period.
 
 So the fix is **two changes, not one**:
 

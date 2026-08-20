@@ -255,7 +255,7 @@ story.
 - **SC-010**: Generated text with attention also accelerated is byte-identical to the software-only reduced-precision run.
 - **SC-011**: Generation rate reaches at least 8 tokens per second, against the 1.38 measured in feature 003.
 - **SC-012**: The final timing breakdown shows the accelerated categories reduced to under 15% of per-token time.
-- **SC-013**: The design fits with at least 25% of logic capacity unused and meets its timing target. **MEASURED (T050, research R22): LUT4 13,183/24,288 = 54% used, 46% free — PASS. Timing 26.21 MHz against a 25 MHz target — PASS, but by only 4.8%.** The letter of this criterion is met and its spirit is not: this project rejected a 256-entry cache at 28.4 MHz against the same target, and later traced UART flakiness to that class of margin. BRAM at 87% and multipliers at 89% are also close to the ceiling. R22 records the cause — `acc_mac`'s single-cycle fp32 rescale — and the fix.
+- **SC-013**: The design fits with at least 25% of logic capacity unused and meets its timing target. **MEASURED (T050, research R22): LUT4 13,183/24,288 = 54% used, 46% free — PASS. Timing 28.15 MHz against a 25 MHz target — PASS, but by only 4.8%.** The letter of this criterion is met and its spirit is not: this project rejected a 256-entry cache at 28.4 MHz against the same target, and later traced UART flakiness to that class of margin. BRAM at 87% and multipliers at 89% are also close to the ceiling. R22 records the cause — `acc_mac`'s single-cycle fp32 rescale — and the fix.
 - **SC-014**: The existing full-featured configuration still builds and runs unchanged.
 - **SC-015**: A developer can determine from the reported counters whether a throughput shortfall is caused by memory bandwidth or by control logic.
 
