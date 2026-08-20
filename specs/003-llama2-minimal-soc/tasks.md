@@ -145,7 +145,9 @@ separately upload and start a program.
 - [X] T025 [US3] Implement the Load Report output in `model_load.c` — bytes, elapsed, KB/s, verification result, and the parsed model dimensions (FR-012a, data-model.md entity 8)
 - [X] T026 [HW] [US3] Upload the loader with monitor `L`/`G` and load the model from the card; confirm the reported byte count and checksum match the T012 host values (FR-011) — *Session B*
 - [X] T027 [HW] [US3] Use monitor `D 900000` to spot-check that weights landed at the expected address, and `D A00000` for the tokenizer — *Session B*
-- [ ] T028 [HW] [US3] Verify each failure path from T024 by testing at minimum: card removed, and a deliberately truncated `model.bin` — confirm each is reported distinguishably rather than hanging or proceeding — *Session B*
+- [~] T028 [HW] [US3] Verify each failure path from T024 by testing at minimum: card removed, and a deliberately truncated `model.bin` — confirm each is reported distinguishably rather than hanging or proceeding — *Session B*
+  - [X] One failure path verified in practice: an oversized model was refused with "model would overflow its memory region" (ML_ERR_TOO_BIG) rather than overrunning the tokenizer region. That is the highest-value path and it worked.
+  - [ ] **[HW, needs operator]** Card-removed and truncated-file paths require physically pulling the card / rewriting it on a desktop; cannot be driven from the host side.
 - [X] T029 [HW] [US3] Confirm the model load is repeatable on demand without a host transfer (FR-010b) by running it twice in one power cycle, noting the outcome in `specs/003-llama2-minimal-soc/tasks.md` — *Session B*
 - [X] T030 [HW] [US3] Confirm SC-005: 1 MB loads and verifies within 60 seconds with no host involvement; record the actual time in `specs/003-llama2-minimal-soc/tasks.md` — *Session B*
 
@@ -244,10 +246,10 @@ accelerator must do both. They differ only in what they stream — weights versu
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T047 [P] Update `specs/003-llama2-minimal-soc/quickstart.md` with the real measured numbers from Sessions A-C, replacing the illustrative figures in the load and report examples
-- [ ] T048 [P] Update `CLAUDE.md` with the minimal profile build commands, its resource figures, and the measured generation rate, alongside the existing full-profile entries
-- [ ] T049 Walk `quickstart.md` end to end from a clean checkout to confirm SC-012 — someone who did not implement this can reach generated text unaided; fix any step that requires knowledge not written down
-- [ ] T050 [P] Record the follow-on findings for the accelerator work: measured SDRAM bandwidth from T017, the timing breakdown from T046, and whether software wins (precomputed rotary tables, fast `expf`) should precede any RTL
+- [X] T047 [P] Update `specs/003-llama2-minimal-soc/quickstart.md` with the real measured numbers from Sessions A-C, replacing the illustrative figures in the load and report examples
+- [X] T048 [P] Update `CLAUDE.md` with the minimal profile build commands, its resource figures, and the measured generation rate, alongside the existing full-profile entries
+- [X] T049 Walk `quickstart.md` end to end from a clean checkout to confirm SC-012 — someone who did not implement this can reach generated text unaided; fix any step that requires knowledge not written down
+- [X] T050 [P] Record the follow-on findings for the accelerator work: measured SDRAM bandwidth from T017, the timing breakdown from T046, and whether software wins (precomputed rotary tables, fast `expf`) should precede any RTL
 - [ ] T051 Confirm SC-011 one final time — `make colorlight_i5.synth` still produces a working full-profile image after all changes
 
 ---

@@ -681,6 +681,71 @@ The HDMI display uses a tri-mode GPU (character + bitmap graphics + SDRAM frameb
 - **Timing constraint**: 256 entries with distributed RAM (LUT-based) exceeds timing margin at 25 MHz (28.4 MHz vs 25 MHz); 64 entries gives 32.6 MHz (30% margin)
 - **Cache upgrade findings**: ECP5 BRAM cannot provide zero-latency reads (always 1 clock cycle); distributed RAM works but 256:1 mux is too deep for 25 MHz
 
+## Minimal LLM Profile (colorlight_i5_llm, 2026-08)
+
+A second build profile alongside the full retro-computing one. Strips the GPU, audio synth,
+PS2, 7-segment and interrupt controller, keeping CPU + SDRAM + UART + SD card + LEDs + timer.
+Built to run llama2.c and to free capacity for a future MatMul accelerator.
+
+### Build and run
+
+```bash
+cd FemtoRV
+make colorlight_i5_llm.firmware_config       # generates FIRMWARE/config.mk for this profile
+(cd FIRMWARE/monitor && make clean monitor.hex)
+make colorlight_i5_llm.synth                 # -> femtosoc.bit
+cp femtosoc.bit femtosoc_llm.bit             # both profiles write the same filename!
+openFPGALoader -c cmsisdap -v --file-type bin femtosoc_llm.bit
+
+(cd FIRMWARE/llama2/tools && ./fetch_model.sh)   # model.bin + tokenizer.bin -> FAT SD card
+cd FIRMWARE/llama2 && make upload                # upload over XMODEM, run, stream output
+```
+
+`make upload` / `make upload_sd_bench` / `make upload_sdram_memtest` each upload, run, and
+stream program output, exiting after an idle period. Override the port with `PORT=...`.
+
+### Measured on hardware
+
+| | Full profile | Minimal profile |
+|---|---|---|
+| LUT4 | 57% (13,937) | **34%** (8,391) |
+| Block RAM | 71% (40/56) | **28%** (16/56) |
+| Multipliers | 53% (15/28) | 28% (8/28) |
+| PLL | 2/2 | **1/2** |
+| Max frequency | 32.6 MHz | **40.76 MHz** |
+
+- SDRAM: 6 MB verified, 0 errors, 4,897 KB/s (5.1 MB/s) CPU write+read
+- SD card read: ~56.5 KB/s, flat across 512 B-32 KB chunks (software SPI is the bottleneck)
+- Model load (1,056,512 B from card): 17.9 s
+- llama2.c stories260K: **1.38 tok/s**, output byte-identical to the same model on a desktop
+
+### Per-token profile (the accelerator brief)
+
+```
+matmul 61.3% | attention 27.4% | sample 4.0% | other 6.6% | rmsnorm 0.4% | rope 0.2%
+```
+
+matmul + attention = **88.7%**, both matrix-multiply shaped. At 50x acceleration: matmul
+alone gives ~2.5x end-to-end, matmul + attention gives ~7.6x. **An accelerator must cover
+attention as well as the weight matrices**; they differ only in streaming the KV cache versus
+weights, so one datapath serves both.
+
+### Traps worth knowing
+
+- **`.bss` is not zeroed by the C runtime.** `CRT/crt0_baremetal.S` has a long-standing TODO.
+  BRAM programs got away with it because the FPGA zeroes block RAM from the bitstream; SDRAM
+  programs do not. `FIRMWARE/examples/sdramstart.S` now does it for anything linked with
+  `upload_sdram.ld` or `llama2.ld`.
+- **`_end` used to sit inside `.text`**, before `.bss`, so `_sbrk()`'s heap overlapped `.bss`.
+  Fixed in both linker scripts.
+- **The system `riscv64-unknown-elf-gcc` is unusable here** — no newlib for `rv32imafc`/
+  `ilp32f`, fails on `stdint.h`. Only the in-tree 8.3.0 toolchain works, which is what `make`
+  uses.
+- **`femtosoc.v` includes `PS2Decoder.v` unguarded**, so `-Ilib/ps2-controller-lib` is still
+  required even with PS2 disabled.
+- **Never run two serial readers at once.** Two `--follow` processes split the byte stream and
+  produce dropped characters that look exactly like a UART fault.
+
 ## Active Technologies
 - C (RISC-V bare metal, rv32imafc/ilp32f) + Verilog-2001 RTL + Yosys/nextpnr-ecp5/ecppack + riscv64-unknown-elf-gcc 8.3.0 (003-llama2-minimal-soc)
 - FAT-formatted SD card for model/vocabulary artifacts; 8 MB external SDRAM at runtime (003-llama2-minimal-soc)
