@@ -34,6 +34,17 @@ LLAMA2_OBJS=sdramstart.o llama2.o model_load.o profile.o
 # live in the one source file each.
 RUNQ_OBJS=sdramstart.o runq.o model_load.o profile.o quantize.o
 
+# runq_accel.c does not exist -- runq_accel.o is runq.c recompiled with
+# -DUSE_ACC_MATMUL (T059's compile-time switch, see runq.c's do_matmul_q8()
+# comment), via the EXPLICIT rule below rather than the implicit .c.o
+# suffix rule, specifically so it cannot collide with plain runq.o's
+# object file under `make all` (same source, two different flag sets,
+# same stem would otherwise make one of the two builds silently reuse the
+# other's stale .o). acc_driver.o is the accelerator register/BRAM driver
+# (T057/T058) -- linked ONLY into this target, since the default runq.bin
+# must stay exactly the already-verified software-only build.
+RUNQ_ACCEL_OBJS=sdramstart.o runq_accel.o model_load.o profile.o quantize.o acc_driver.o
+
 sdramstart.o: ../examples/sdramstart.S
 	$(RVAS) $(RVASFLAGS) $(RVUSERASFLAGS) $< -o $@
 
@@ -43,11 +54,20 @@ llama2.elf: $(LLAMA2_OBJS) $(RV_BINARIES)
 runq.elf: $(RUNQ_OBJS) $(RV_BINARIES)
 	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_RUNQ) $(RUNQ_OBJS) -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
 
+runq_accel.elf: $(RUNQ_ACCEL_OBJS) $(RV_BINARIES)
+	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_RUNQ) $(RUNQ_ACCEL_OBJS) -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
+
 llama2.o: llama2.c model_load.h profile.h
 runq.o: runq.c model_load.h profile.h quantize.h q8_format.h
 model_load.o: model_load.c model_load.h q8_format.h
 profile.o: profile.c profile.h
 quantize.o: quantize.c quantize.h
+acc_driver.o: acc_driver.c acc_driver.h
+
+# Explicit compile rule (bypasses the implicit .c.o suffix rule on purpose
+# -- see RUNQ_ACCEL_OBJS comment above).
+runq_accel.o: runq.c model_load.h profile.h quantize.h q8_format.h acc_driver.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -DUSE_ACC_MATMUL -c runq.c -o runq_accel.o
 
 llama2.bin: llama2.elf
 	$(RVOBJCOPY) -O binary $< $@
@@ -57,13 +77,20 @@ runq.bin: runq.elf
 	$(RVOBJCOPY) -O binary $< $@
 	@echo "Built $@ ($$(stat -c%s $@) bytes)"
 
+runq_accel.bin: runq_accel.elf
+	$(RVOBJCOPY) -O binary $< $@
+	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+
 llama2.list: llama2.elf
 	$(RVOBJDUMP) -Mnumeric -D $< > $@
 
 runq.list: runq.elf
 	$(RVOBJDUMP) -Mnumeric -D $< > $@
 
-all: llama2.bin runq.bin
+runq_accel.list: runq_accel.elf
+	$(RVOBJDUMP) -Mnumeric -D $< > $@
+
+all: llama2.bin runq.bin runq_accel.bin
 
 # Upload the program to the board via XMODEM (BIOS monitor 'L' command),
 # then run it with 'G 800000' at the monitor prompt.
@@ -73,5 +100,20 @@ upload: llama2.bin
 upload-runq: runq.bin
 	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
 
+upload-runq-accel: runq_accel.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
+# ---- Host-side math verification (NOT cross-compiled) ----
+# Confirms quantize.c's quantize_activations() and a hand-copy of runq.c's
+# matmul_q8()/RoPE (runq.c itself is not host-buildable -- it needs
+# femtorv32.h) are bit-identical to tools/runq_host.c, the golden
+# reference, across this project's actual tensor shapes. Runs on the
+# DEVELOPER'S machine with plain gcc, deliberately NOT $(RVGCC) -- this
+# has nothing to do with the RISC-V target, see verify_fw_math.c's header.
+verify-fw-math: tools/verify_fw_math.c quantize.c quantize.h tools/runq_host.c q8_format.h
+	gcc -O2 -I. -o tools/verify_fw_math tools/verify_fw_math.c quantize.c -lm
+	./tools/verify_fw_math
+
 clean:
 	rm -f *.o *.elf *.bin *.list
+	rm -f tools/verify_fw_math

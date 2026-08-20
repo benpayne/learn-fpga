@@ -15,6 +15,14 @@
 #define IO_FGA_DAT_bit 11
 #define IO_GPU_bit 10
 #define IO_SYNTH_bit 11
+/* int8 MatMul accelerator (feature 004). Reuses bits 10/11 -- mutually
+ * exclusive with FGA/GPU/SYNTH above, same as those already are with each
+ * other (RTL/DEVICES/HardwareConfig_bits.v, RTL/ACCEL/acc_regs.v header
+ * comment: "research R7", the 20-bit IO space had no room left). Only
+ * meaningful in a build/profile with NRV_IO_ACCEL defined
+ * (RTL/CONFIGS/colorlight_i5_llm_config.v). */
+#define IO_ACC_IDX_bit 10
+#define IO_ACC_DAT_bit 11
 #define IO_SEGMENT_bit 12
 #define IO_TIMER_bit 13
 #define IO_INT_CONTROLLER_bit 14

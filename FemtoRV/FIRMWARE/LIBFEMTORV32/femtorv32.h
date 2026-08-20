@@ -95,6 +95,27 @@ int sd_writesector(uint32_t sector, uint8_t* buffer, uint32_t sector_count); /* 
 #define IO_HW_CONFIG_CPUINFO IO_BIT_TO_OFFSET(IO_HW_CONFIG_CPUINFO_bit)
 
 /*
+ * int8 MatMul accelerator (feature 004-int8-matmul-accel)
+ *
+ * Index-then-data, unlike GPU/SYNTH's packed-register-in-wdata scheme
+ * below: accelerator registers carry full 32-bit SDRAM addresses, which
+ * leaves no spare bits in one word for a register index too
+ * (RTL/ACCEL/acc_regs.v header comment; specs/004-int8-matmul-accel/
+ * contracts/accelerator-interface.md "Register indices").
+ *
+ *   Write: IO_OUT(IO_ACC_IDX, reg_index); IO_OUT(IO_ACC_DAT, value);
+ *   Read:  IO_OUT(IO_ACC_IDX, reg_index); val = IO_IN(IO_ACC_DAT);
+ *
+ * Register indices, STATUS bit layout, error codes, mode encoding and the
+ * driver itself live in FemtoRV/FIRMWARE/llama2/acc_driver.h -- this file
+ * only defines the two IO addresses, mirroring how IO_GPU/IO_SYNTH are
+ * defined here while the GPU/SYNTH per-register constants live nearer
+ * their callers.
+ */
+#define IO_ACC_IDX            IO_BIT_TO_OFFSET(IO_ACC_IDX_bit)
+#define IO_ACC_DAT            IO_BIT_TO_OFFSET(IO_ACC_DAT_bit)
+
+/*
  * FM Synthesizer (4-voice, 4-operator FM)
  * Single 1-hot IO address, register index in wdata[12:8], value in wdata[7:0]
  */

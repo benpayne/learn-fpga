@@ -79,6 +79,47 @@ upload_sd_bench: sd_bench.bin
 upload_sdram_memtest: sdram_memtest.bin
 	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
 
+# ---- Accelerator standalone test (T051/T052, feature 004) ----
+# acc_test.c pulls in two sources that live under ../llama2/ (the
+# accelerator driver, T057/T058, and the real quantize.c, T016) rather
+# than duplicating them here -- explicit compile rules below, same
+# cross-directory-source pattern this Makefile already uses for
+# sdramstart.o (built from ../llama2/Makefile's perspective) and
+# progstart.o.
+#
+# Links at 0x800000 like sd_bench.bin/sdram_memtest.bin above, via an
+# EXPLICIT rule rather than the %.upload_sdram.elf pattern rule -- that
+# pattern rule only links ONE object ($< sdramstart.o), and acc_test
+# needs three (acc_test.o, acc_driver.o, quantize.o) plus sdramstart.o.
+# Team-lead note: this project has already been bitten once by a target
+# that linked only $< and reported success while silently omitting most
+# of the program -- the recipe below names every object explicitly so
+# that mistake cannot repeat here.
+acc_driver.o: ../llama2/acc_driver.c ../llama2/acc_driver.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -I../llama2 -c ../llama2/acc_driver.c -o acc_driver.o
+
+quantize.o: ../llama2/quantize.c ../llama2/quantize.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -I../llama2 -c ../llama2/quantize.c -o quantize.o
+
+acc_test.o: acc_test.c ../llama2/acc_driver.h ../llama2/quantize.h
+
+acc_test.elf: sdramstart.o acc_test.o acc_driver.o quantize.o $(RV_BINARIES)
+	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD_SDRAM) sdramstart.o acc_test.o acc_driver.o quantize.o -o acc_test.elf $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
+
+acc_test.bin: acc_test.elf
+	$(RVOBJCOPY) -O binary $< $@
+	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+
+acc_test.list: acc_test.elf
+	$(RVOBJDUMP) -Mnumeric -D $< > $@
+
+# Explicit upload target, MUST be 800000 (upload_sdram.ld) -- same reason
+# as upload_sdram_memtest above: the generic upload_% rule below uses
+# 810000 (the RetroKernel program address) and would load this at the
+# wrong address.
+upload_acc_test: acc_test.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
 # Upload a program to the board via XMODEM (to SDRAM for testing).
 # NOTE: 810000 is the RetroKernel program-load address. Programs linked
 # with upload_sdram.ld live at 800000 and need an explicit target above.

@@ -59,6 +59,9 @@
 #include "q8_format.h"
 #include "quantize.h"
 #include "profile.h"
+#ifdef USE_ACC_MATMUL
+#include "acc_driver.h"
+#endif
 
 /* ===================================================================
  * User-editable run parameters. No command line on this target, so
@@ -332,6 +335,74 @@ static void matmul_q8(float *xout, const Q8Tensor *x, const Q8Tensor *w, int n, 
     }
 }
 
+#ifdef USE_ACC_MATMUL
+/* T059: accelerator path behind this compile-time switch, matmul_q8()
+ * above (the verified-byte-identical software path, see runq.c's file
+ * header) stays reachable and UNCHANGED -- built only via
+ * `make runq_accel.bin` (Makefile), never the default `runq.bin`. This is
+ * the A/B SC-009 depends on: if this file ever stopped compiling and
+ * dispatching through matmul_q8() as the fallback/reference below, the
+ * software path could silently bit-rot without anyone noticing, since
+ * nothing else in this codebase calls matmul_q8() directly once this is
+ * defined.
+ *
+ * ACC_X_SLOT/ACC_OUT_SLOT: this project never needs more than one
+ * activation and one result live at a time (forward_q8() is a strictly
+ * sequential dependency chain, no pipelining attempted here), so slot 0/1
+ * are reused for every call rather than tracking a slot allocator.
+ *
+ * On any non-OK status, this falls back to the CPU path for THAT call so
+ * a run always completes and prints a full transcript even if the
+ * accelerator misbehaves (useful for T051/T052-style bring-up before the
+ * hardware path is trusted) -- but it is loud about it exactly once, not
+ * silent, and not repeated every call (would flood the serial output:
+ * this function runs dim/hidden/n_layers/vocab-dependent hundreds of
+ * times per token). A byte-identical-output claim (SC-009) requires the
+ * accelerator to have produced EVERY result with zero fallbacks for that
+ * run -- g_acc_fell_back below is how a caller (or a future assertion
+ * here) can tell whether that held. */
+#define ACC_X_SLOT   0
+#define ACC_OUT_SLOT 1
+
+static int g_acc_warned    = 0;
+static int g_acc_fell_back = 0;
+
+static void do_matmul_q8(float *xout, const Q8Tensor *x, const Q8Tensor *w, int n, int d, int gs) {
+    acc_perf_t perf;
+    acc_status_t st = acc_load_activation(ACC_X_SLOT, x->q, x->s, n, gs);
+    if (st == ACCST_OK) {
+        st = acc_matmul_q8(ACC_OUT_SLOT, w->q, w->s, ACC_X_SLOT, n, d, gs, &perf);
+        if (st == ACCST_OK) {
+            acc_read_result(ACC_OUT_SLOT, xout, d);
+            return;
+        }
+    }
+    g_acc_fell_back = 1;
+    if (!g_acc_warned) {
+        /* ACCST_ERR_FULL specifically gets its queue-depth field printed:
+         * this driver only ever runs one descriptor at a time (see
+         * acc_driver.h's acc_queue_depth() comment), so a genuinely full
+         * queue should never happen here -- a LOW reported depth alongside
+         * ERR_FULL is a real hardware/driver bug, not back-pressure, and
+         * this is how to tell the two apart without guessing (team-lead
+         * review note). */
+        if (st == ACCST_ERR_FULL) {
+            printf("accelerator matmul failed (%s, queue_depth=%d) -- falling back to "
+                   "software matmul for this and any further failures this run\r\n",
+                   acc_strerror(st), (int)perf.queue_depth);
+        } else {
+            printf("accelerator matmul failed (%s) -- falling back to software matmul "
+                   "for this and any further failures this run\r\n", acc_strerror(st));
+        }
+        g_acc_warned = 1;
+    }
+    matmul_q8(xout, x, w, n, d, gs);   /* NOT MATMUL_Q8 -- would recurse into itself */
+}
+#define MATMUL_Q8 do_matmul_q8
+#else
+#define MATMUL_Q8 matmul_q8
+#endif
+
 static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s, int32_t gs,
                           int token, int pos) {
     int dim = cfg->dim;
@@ -377,9 +448,9 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
         q8_layer_tensor(&wv_l, w->wv_base, (uint32_t)l, (uint32_t)(dim * kv_dim), gs);
 
         prof_begin(PROF_MATMUL);
-        matmul_q8(s->q, &xq_t, &wq_l, dim, dim, gs);
-        matmul_q8(s->k, &xq_t, &wk_l, dim, kv_dim, gs);
-        matmul_q8(s->v, &xq_t, &wv_l, dim, kv_dim, gs);
+        MATMUL_Q8(s->q, &xq_t, &wq_l, dim, dim, gs);
+        MATMUL_Q8(s->k, &xq_t, &wk_l, dim, kv_dim, gs);
+        MATMUL_Q8(s->v, &xq_t, &wv_l, dim, kv_dim, gs);
         prof_end(PROF_MATMUL);
 
         /* RoPE: no table lookup for this format -- see file header. */
@@ -438,7 +509,7 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
         q8_layer_tensor(&wo_l, w->wo_base, (uint32_t)l, (uint32_t)(dim * dim), gs);
 
         prof_begin(PROF_MATMUL);
-        matmul_q8(s->xb2, &xq_t, &wo_l, dim, dim, gs);
+        MATMUL_Q8(s->xb2, &xq_t, &wo_l, dim, dim, gs);
         prof_end(PROF_MATMUL);
 
         for (int i = 0; i < dim; i++) x[i] += s->xb2[i];
@@ -456,8 +527,8 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
         q8_layer_tensor(&w3_l, w->w3_base, (uint32_t)l, (uint32_t)(dim * hidden_dim), gs);
 
         prof_begin(PROF_MATMUL);
-        matmul_q8(s->hb,  &xq_t, &w1_l, dim, hidden_dim, gs);
-        matmul_q8(s->hb2, &xq_t, &w3_l, dim, hidden_dim, gs);
+        MATMUL_Q8(s->hb,  &xq_t, &w1_l, dim, hidden_dim, gs);
+        MATMUL_Q8(s->hb2, &xq_t, &w3_l, dim, hidden_dim, gs);
         prof_end(PROF_MATMUL);
 
         /* SwiGLU: silu(w1(x)) * w3(x). Elementwise, cheap -- "other"
@@ -478,7 +549,7 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
         q8_layer_tensor(&w2_l, w->w2_base, (uint32_t)l, (uint32_t)(hidden_dim * dim), gs);
 
         prof_begin(PROF_MATMUL);
-        matmul_q8(s->xb, &hq_t, &w2_l, hidden_dim, dim, gs);
+        MATMUL_Q8(s->xb, &hq_t, &w2_l, hidden_dim, dim, gs);
         prof_end(PROF_MATMUL);
 
         for (int i = 0; i < dim; i++) x[i] += s->xb[i];
@@ -495,7 +566,7 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
     {
         Q8Tensor xq_t = { s->xq_q, s->xq_s, (uint32_t)dim };
         prof_begin(PROF_MATMUL);
-        matmul_q8(s->logits, &xq_t, &w->wcls, dim, cfg->vocab_size, gs);
+        MATMUL_Q8(s->logits, &xq_t, &w->wcls, dim, cfg->vocab_size, gs);
         prof_end(PROF_MATMUL);
     }
 
