@@ -166,9 +166,9 @@ corruption.
 - [X] T034 [US4] Implement incremental token output to serial in `FemtoRV/FIRMWARE/llama2/llama2.c` as each token is produced — not buffered to the end, since it is the operator's only progress indicator on a multi-minute run (`contracts/console-interface.md`)
 - [X] T035 [US4] Implement clean termination on reaching the requested token count or `seq_len` (FR-016) and report the achieved generation rate on completion (FR-017)
 - [X] T036 [HW] [US4] Upload `llama2.bin` with monitor `L` and start it with `G 800000`; confirm text appears incrementally — *Session C*
-- [ ] T037 [HW] [US4] Generate at least 100 consecutive tokens confirming no hang, crash, or corruption (SC-006), and confirm the output reads as recognisable English prose (SC-007); paste a sample into `specs/003-llama2-minimal-soc/tasks.md` — expect simple, sometimes repetitive text, which is correct for a model this small — *Session C*
+- [X] T037 [HW] [US4] Generate at least 100 consecutive tokens confirming no hang, crash, or corruption (SC-006), and confirm the output reads as recognisable English prose (SC-007); paste a sample into `specs/003-llama2-minimal-soc/tasks.md` — expect simple, sometimes repetitive text, which is correct for a model this small — *Session C*
 - [X] T038 [HW] [US4] Run generation twice with identical model, prompt, and seed and confirm byte-identical output (SC-009, FR-014), recording both transcripts for comparison in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
-- [ ] T039 [HW] [US4] Confirm SC-008 (≥0.5 tokens/second) and SC-005a (rebuild → upload → restart in under 60 s without reloading the model); record both in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
+- [X] T039 [HW] [US4] Confirm SC-008 (≥0.5 tokens/second) and SC-005a (rebuild → upload → restart in under 60 s without reloading the model); record both in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
 
 **Checkpoint**: US4 — **DEMONSTRATED ON HARDWARE 2026-08-19.**
 
@@ -215,11 +215,30 @@ per-token time.
 - [X] T041 [US5] Compute `other` as a residual — total minus the sum of named categories — so the coverage claim is proven rather than estimated (FR-020, data-model.md entity 7)
 - [X] T042 [US5] Implement the Performance Report output in `FemtoRV/FIRMWARE/llama2/profile.c` per `contracts/console-interface.md`: token count, elapsed, rate, per-category percentages, largest category by name, and coverage percentage
 - [X] T043 [US5] Add a measurement mode flag to the generation entry point in `FemtoRV/FIRMWARE/llama2/llama2.c` so profiling can be enabled without a separate binary
-- [ ] T044 [HW] [US5] Run generation in measurement mode over at least 100 tokens and paste the full report into `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
-- [ ] T045 [HW] [US5] Confirm coverage ≥90% (SC-010) and that the largest category is named explicitly in the T044 report captured in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
-- [ ] T046 [US5] Record the measured breakdown in `research.md` under R9, replacing the expectation with the finding, and state plainly whether matrix multiply or the transcendental functions dominate
+- [X] T044 [HW] [US5] Run generation in measurement mode over at least 100 tokens and paste the full report into `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
+- [X] T045 [HW] [US5] Confirm coverage ≥90% (SC-010) and that the largest category is named explicitly in the T044 report captured in `specs/003-llama2-minimal-soc/tasks.md` — *Session C*
+- [X] T046 [US5] Record the measured breakdown in `research.md` under R9, replacing the expectation with the finding, and state plainly whether matrix multiply or the transcendental functions dominate
 
-**Checkpoint**: US5 complete — the accelerator decision now rests on measurement.
+**Checkpoint**: US5 — **MEASURED ON HARDWARE 2026-08-19.**
+
+```
+tokens: 110 in 90.6 s (1.21 tok/s)
+  matmul       61.3%  (1389782424 cycles)
+  attention    27.4%  (621744174 cycles)
+  rmsnorm       0.4%  (9448719 cycles)
+  rope          0.2%  (4525438 cycles)
+  sample        4.0%  (91136910 cycles)
+  other         6.6%  (149460323 cycles)
+largest: matmul
+coverage: 93.4%
+```
+
+SC-006 satisfied (110 tokens >= 100). SC-010 satisfied (93.4% >= 90%).
+
+**Conclusion for the accelerator**: matmul + attention = 88.7%, both matmul-shaped. Covering
+only the weight matmuls gives 2.5x end-to-end; covering attention as well gives 7.6x. The
+accelerator must do both. They differ only in what they stream — weights versus the KV cache
+— so one datapath with two source configurations serves both.
 
 ---
 

@@ -44,11 +44,11 @@
  * =================================================================== */
 
 #define GEN_PROMPT             "Once upon a time"
-#define GEN_NUM_TOKENS          60     /* generate at most this many tokens; clamped to seq_len */
+#define GEN_NUM_TOKENS         110     /* generate at most this many tokens; clamped to seq_len */
 #define GEN_TEMPERATURE_X100   100     /* temperature * 100 (0 = greedy argmax, 100 = 1.00) */
 #define GEN_TOPP_X100           90     /* top-p * 100 (<=0 or >=100 disables nucleus sampling) */
 #define GEN_SEED               2026u   /* RNG seed; 0 => derive from cycles() at startup */
-#define MEASURE_MODE             0     /* 1 = turn on profiling and print prof_report() at exit (T043) */
+#define MEASURE_MODE             1     /* 1 = turn on profiling and print prof_report() at exit (T043) */
 
 /* Board clock, used to convert cycles() into tokens/sec and ms (matches
  * model_load.c's CPU_HZ). */
@@ -739,9 +739,14 @@ int main(void) {
         uint64_t elapsed = t_end - t_start;
         if (elapsed == 0) elapsed = 1;
         uint64_t rate_x100 = ((uint64_t)(pos - 1) * 100ull * CPU_HZ) / elapsed;
-        printf("achieved %d.%d tok/s (%d tokens in %d cycles at %d Hz)\r\n",
+        /* Report elapsed in tenths of a second, NOT raw cycles: a 90 s run at
+         * 25 MHz is 2.27e9 cycles, which overflows the signed 32-bit int that
+         * printf's %d takes and printed as a negative number. */
+        uint32_t elapsed_tenths = (uint32_t)((elapsed * 10ull) / CPU_HZ);
+        printf("achieved %d.%d tok/s (%d tokens in %d.%d s)\r\n",
                (int)(rate_x100 / 100), (int)(rate_x100 % 100),
-               (int)(pos - 1), (int)elapsed, (int)CPU_HZ);
+               (int)(pos - 1), (int)(elapsed_tenths / 10),
+               (int)(elapsed_tenths % 10));
     }
 
     prof_run_end((uint32_t)pos);

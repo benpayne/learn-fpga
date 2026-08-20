@@ -268,13 +268,45 @@ separately, accumulating per-category cycle totals across a run and reporting at
 cycle counter already exists and already handles wraparound, which at 25 MHz matters over a
 long run.
 
-**Expectation worth recording now**: on a model this small the transcendental functions may
-be a far larger share than intuition suggests — the rotary encoding calls `powf`/`sinf`/`cosf`
-per rotation pair per layer, and softmax calls `expf` once per attention score, while the
-matrix multiplies are only ~260K operations per token. If the measurement confirms this, the
-cheap wins are precomputed rotary tables and a fast `expf` approximation, both software
-changes, before any hardware is designed. This measurement is the entire justification for
-User Story 5.
+**MEASURED ON HARDWARE 2026-08-19** — 110 tokens, 90.6 s, 1.21 tok/s (profiling adds ~12%
+overhead versus the clean 1.38 tok/s):
+
+| Category | Share | Cycles |
+|---|---|---|
+| **matmul** | **61.3%** | 1,389,782,424 |
+| **attention** | **27.4%** | 621,744,174 |
+| sample | 4.0% | 91,136,910 |
+| rmsnorm | 0.4% | 9,448,719 |
+| rope | 0.2% | 4,525,438 |
+| other (residual) | 6.6% | 149,460,323 |
+
+Coverage 93.4% (SC-010 requires >= 90%). Largest category: matmul.
+
+**The transcendental concern predicted above did NOT materialise, and it is worth being
+precise about why.** RoPE is 0.2%, not because the prediction was wrong in principle, but
+because this model's legacy export format ships precomputed `freq_cis` tables (research R5),
+so the rotation became table lookups instead of `powf`/`sinf`/`cosf`. Had the artifact used
+the newer format that recomputes them, this line would likely look very different. rmsnorm at
+0.4% shows `sqrtf` is simply cheap here.
+
+**The finding that should drive accelerator design.** matmul and attention together are
+**88.7%** of per-token time — and both are matrix-multiply shaped. attention alone is 27.4%,
+which is far too large to leave on the CPU:
+
+| Accelerate | At 50x | End-to-end speedup |
+|---|---|---|
+| matmul only (61.3%) | | **2.5x** |
+| matmul + attention (88.7%) | | **7.6x** |
+
+Accelerating only the weight matmuls and leaving attention on the CPU buys 2.5x. Covering
+both buys 7.6x. **The accelerator must handle attention as well as the weight matrices.**
+The two differ only in what they stream — attention reads the KV cache instead of weights —
+so one datapath with two source configurations covers both.
+
+The remaining 11.3% (sample 4.0% + other 6.6% + norms 0.6%) becomes the new Amdahl floor.
+Nothing there justifies hardware; if it ever matters, it is a software or clock-rate problem.
+
+This measurement is the deliverable that User Story 5 existed to produce.
 
 ---
 
