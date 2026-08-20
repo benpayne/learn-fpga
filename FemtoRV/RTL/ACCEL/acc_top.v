@@ -31,14 +31,11 @@
 //    MODE_ATT_SUM, contracts/accelerator-interface.md) -- same datapath,
 //    different address pattern per operand (DESIGN.md section 7).
 //
-// SCOPE NOTE: only MODE_MATMUL is implemented in this pass. Modes 1/2
-// (attention) are T064's job. desc_mode is accepted but not currently
-// validated or branched on -- every popped descriptor runs the matmul
-// address pattern regardless of its mode field. There is no ERR_MODE code
-// in acc_bits.vh to reject a non-matmul descriptor with, and inventing one
-// unilaterally would let this module's encoding drift from acc_regs' the
-// same way the original ERR_* duplication did. Flagged to the team lead
-// rather than worked around silently -- see the T034 report.
+// SCOPE NOTE: only MODE_MATMUL's address pattern is implemented in this
+// pass. Modes 1/2 (attention) are T064's job. A descriptor requesting any
+// other mode is rejected at accept time with ACC_ERR_MODE (acc_bits.vh) --
+// it never starts and the matmul datapath never runs under a mode it was
+// not asked for.
 //
 // Does NOT own: SDRAM arbitration priority (that is a 3-line reorder plus a
 // starvation counter inside muchtoremember_burst.v itself, DESIGN.md sec
@@ -525,6 +522,13 @@ module acc_top #(
     wire [15:0] accept_words_per_group_c = desc_gs >> LANES_SHIFT[4:0];
     wire [31:0] accept_scale_total_c = {16'b0, accept_groups_per_row_c} * {16'b0, desc_d};
 
+    // Only MODE_MATMUL's address pattern is implemented (T064 adds modes
+    // 1/2). A descriptor requesting another mode MUST be rejected loudly
+    // rather than silently run through the matmul datapath under a mode it
+    // never asked for -- that is the same failure shape as R16's runq.c
+    // truncation (a plausible wrong answer instead of an error).
+    wire accept_mode_bad  = (desc_mode != `ACC_MODE_MATMUL);
+
     wire accept_range_bad = (desc_n > MAX_N[15:0]) || (desc_d > MAX_D[15:0]) ||
                              (accept_scale_total_c > (32'd1 << SCALE_AWIDTH));
     wire accept_slot_bad  = (desc_out_slot >= NUM_SLOTS[7:0]) ||
@@ -583,9 +587,12 @@ module acc_top #(
                     op_busy_r <= 1'b0;
                     if (desc_valid) begin
                         desc_ack <= 1'b1;
-                        if (accept_range_bad || accept_slot_bad) begin
+                        if (accept_mode_bad || accept_range_bad || accept_slot_bad) begin
                             op_error_r      <= 1'b1;
-                            op_error_code_r <= accept_range_bad ? `ACC_ERR_RANGE : `ACC_ERR_SLOT;
+                            // Priority: mode first (cheapest, most fundamental -- a wrong mode
+                            // makes every other field's interpretation moot), then range, then slot.
+                            op_error_code_r <= accept_mode_bad  ? `ACC_ERR_MODE  :
+                                                accept_range_bad ? `ACC_ERR_RANGE : `ACC_ERR_SLOT;
                             // stays in S_IDLE -- rejected descriptor never starts (contract)
                         end else begin
                             op_w_q_base <= desc_w_q_base;
