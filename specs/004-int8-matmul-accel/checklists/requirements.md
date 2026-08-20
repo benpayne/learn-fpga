@@ -58,6 +58,27 @@ Resolving it surfaced a consistency problem that had to be fixed rather than lef
 - **FR-004b added**: the quality decision must be recorded with its evidence, so a later reader
   can tell whether the fallback was taken and why.
 
+**Iteration 3 — 2026-08-20 — still 16/16. Divergence measurement made concrete.**
+
+FR-004 required the reduced-versus-full-precision divergence to be "quantified, not merely
+judged by eye", but named no instrument, and SC-002 set no threshold. The task that judged
+quality was therefore going to be someone reading two paragraphs and forming an opinion — for a
+decision that gates every subsequent task in the feature.
+
+Now specified as **KL divergence between the two models' predicted token distributions**, with
+mean, 99th percentile, and top-1 agreement over at least 200 positions. SC-002 carries
+thresholds (mean KL < 0.01 nats, top-1 agreement > 95%).
+
+The more consequential change is *when*: FR-004c requires the measurement on the host, before
+any hardware run. Both models' distributions are obtainable there, so the go/no-go no longer
+waits on a board — a no-go answer costs minutes instead of a build-flash-upload cycle. The
+decision gate moved from the middle of the hardware session to the host-side work that precedes
+it, and the board run became confirmation.
+
+An assumption was added recording that the thresholds come from published work on far larger
+models and may not transfer to a 260K-parameter model with dim=64. The measured values must be
+recorded regardless, and the developer's reading of the text remains the final call.
+
 **Deliberate interpretation on "no implementation details".** The specification uses
 capability-level language throughout — "the accelerator", "reduced precision", "memory sharing
 policy" — rather than naming modules, signals, or register layouts. Those live in

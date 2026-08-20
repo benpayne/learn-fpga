@@ -51,10 +51,11 @@ changes, no simulation.
 
 1. **Given** a full-precision model, **When** the developer runs the conversion tool, **Then** a reduced-precision model is produced along with a record of its size and a checksum.
 2. **Given** the converted model on the board, **When** generation runs with the same prompt and seed as the full-precision version, **Then** the output is coherent English of comparable quality.
-3. **Given** both versions, **When** their outputs are compared, **Then** the degree of divergence is quantified and recorded, not merely judged by eye.
-4. **Given** a completed run, **When** the developer reads the summary, **Then** the reduced-precision generation rate and model size are reported.
-5. **Given** the host reference implementation, **When** it is run on the same inputs, **Then** it produces results that later hardware stages can be compared against exactly.
-6. **Given** the recorded output and divergence, **When** the developer judges quality, **Then** an explicit go/no-go decision on 8-bit is recorded — and if it is no-go, the feature switches to 16-bit weights before any hardware work begins.
+3. **Given** both versions running on the host, **When** their predicted token distributions are compared position by position, **Then** the mean and 99th-percentile divergence and the top-choice agreement rate are recorded — before any hardware is involved.
+4. **Given** those figures, **When** they are read against the thresholds in Success Criteria, **Then** the 8-bit go/no-go can be decided without waiting for a board.
+5. **Given** a completed run, **When** the developer reads the summary, **Then** the reduced-precision generation rate and model size are reported.
+6. **Given** the host reference implementation, **When** it is run on the same inputs, **Then** it produces results that later hardware stages can be compared against exactly.
+7. **Given** the recorded divergence figures and the generated text, **When** the developer judges quality, **Then** an explicit go/no-go decision on 8-bit is recorded — and if it is no-go, the feature switches to 16-bit weights before any hardware work begins.
 
 ---
 
@@ -190,7 +191,8 @@ story.
 - **FR-001**: The project MUST provide a host tool that converts a full-precision model to reduced precision, reporting the output size and a checksum.
 - **FR-002**: The system MUST run the reduced-precision model on the existing hardware with no accelerator present, so quantization can be evaluated independently.
 - **FR-003**: The project MUST provide a host reference implementation whose results later hardware stages can be compared against exactly.
-- **FR-004**: The system MUST report the divergence between reduced- and full-precision output quantitatively, not only as a subjective judgement.
+- **FR-004**: The system MUST report the divergence between reduced- and full-precision output quantitatively, not only as a subjective judgement. The measure MUST be the Kullback-Leibler divergence between the two models' predicted token distributions at matched positions, reported as mean and 99th percentile over a run, alongside the rate at which both models agree on the most likely token.
+- **FR-004c**: The divergence measurement MUST be performed on the host, before any hardware run. Both models' predicted distributions are obtainable there, so the quantization verdict does not depend on board availability and is not delayed behind it.
 - **FR-004a**: If 8-bit output quality proves unacceptable, the project MUST switch to 16-bit floating-point weights rather than accepting the degradation or changing model. This decision MUST be taken at the end of User Story 1, before any accelerator hardware is built.
 - **FR-004b**: The quality decision MUST be made from recorded evidence — the generated text alongside the measured divergence from full precision — and the decision and its basis MUST be written down, so a later reader can tell whether the fallback was taken and why.
 
@@ -242,7 +244,7 @@ story.
 ### Measurable Outcomes
 
 - **SC-001**: A developer can convert a model to reduced precision and run it on existing hardware without any hardware changes.
-- **SC-002**: Reduced-precision output is coherent English of comparable quality to full precision, with the divergence quantified.
+- **SC-002**: Reduced-precision output is coherent English of comparable quality to full precision, and the divergence from the full-precision model is measured: mean divergence below 0.01 nats and top-choice agreement above 95% over at least 200 token positions. These thresholds are guides drawn from published work on much larger models — the measured values MUST be recorded regardless, and a reading of the generated text remains the final judgement (see Assumptions).
 - **SC-003**: Reduced-precision model size is at most one third of the full-precision original with 8-bit weights, or at most one half if the 16-bit fallback is taken.
 - **SC-004**: The largest model that fits in available memory increases by at least a factor of three with 8-bit weights, or at least a factor of 1.9 if the 16-bit fallback is taken. **The capacity gain is roughly halved by the fallback** — this is its main cost and is the reason the 8-bit path is preferred where quality allows.
 - **SC-005**: Accelerator results are bit-for-bit identical to the host reference across at least a thousand randomised simulation cases.
@@ -261,6 +263,7 @@ story.
 
 - **Precision choice**: 8-bit integer weights with per-group scaling, matching the format used by the established upstream reference. Chosen for capacity and for having a tested reference implementation, not primarily for speed — see the Overview.
 - **Quantization risk is real and unquantified**: quantization error is proportionally worse on small models, and the current model is very small. User Story 1 exists specifically to measure this before any hardware is committed.
+- **Divergence thresholds are guides, not verdicts.** The 0.01-nat and 95%-agreement figures in SC-002 come from quantization work on models orders of magnitude larger than this one. On a 260K-parameter model with dim=64 they may prove too lenient or too strict. The measured values MUST be recorded and used to inform the decision; the developer's reading of the generated text is the final call, and the basis MUST be written down either way (FR-004b).
 - **Fallback is 16-bit floating point, decided before hardware.** If 8-bit output is unacceptable, the project switches to 16-bit rather than accepting degraded output or introducing a model-sourcing dependency. The costs are explicit and accepted: roughly half the capacity gain (about 3.0M parameters rather than 5.6M), floating-point rather than integer arithmetic hardware, and a host reference implementation that must be written because none exists upstream. Throughput is barely affected either way — about 11.3 versus 11.7 tokens per second — because the remaining processor work dominates.
 - **Group size defaults to 64**, read from the checkpoint header rather than fixed. `export.py` halves it if a dimension does not divide evenly; every quantized tensor in the current model is a multiple of 64, so no backoff is expected. A backoff would change the storage ratio and the accelerator's lane framing, so it must be recorded if it occurs.
 - **Bit-exact verification survives the fallback, but differently.** With 8-bit integer weights, accumulation is exactly reproducible and hardware can be compared bit-for-bit against the reference with no ambiguity. With 16-bit floating point, matching exactly requires the hardware and the reference to agree on rounding and accumulation order. That is achievable but must be specified deliberately rather than assumed, and it is a real reason to prefer the 8-bit path.
