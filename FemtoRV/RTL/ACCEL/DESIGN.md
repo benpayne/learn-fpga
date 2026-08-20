@@ -29,12 +29,17 @@ and it comes straight from the profile.
 
 ### Target
 
-| | Now | With accelerator |
-|---|---|---|
-| Accelerated work | 643 ms/token | **13.0 ms/token** |
-| Scalar remainder | 82 ms/token | 82 ms/token |
-| Token time | 725 ms | **95 ms** |
-| Rate | 1.38 tok/s | **~10.5 tok/s** |
+| | Now | fp32 accel | int8 accel |
+|---|---|---|---|
+| Accelerated work | 643 ms/token | 13.0 ms | **3.6 ms** |
+| Scalar remainder | 82 ms/token | 82 ms | 82 ms |
+| Token time | 725 ms | 95 ms | **85.6 ms** |
+| Rate | 1.38 tok/s | 10.5 tok/s | **~11.7 tok/s** |
+| End-to-end | — | 7.6x | **8.5x** |
+
+Note how little separates the two accelerated columns: the scalar remainder dominates both.
+int8 is chosen for **model capacity** (~5.3M parameters versus ~1.5M) and for being cheaper
+and more verifiable hardware — not for throughput. See section 3.4.
 
 Per-token work for stories260K (dim=64, hidden=172, 5 layers, 8 heads / 4 kv-heads,
 vocab=512), computed exactly:
@@ -139,15 +144,70 @@ issuing the next burst whenever occupancy drops below a threshold. This is the s
 structure as `RTL/SDRAM/video_fetch_engine.v`, which already does exactly this for scanlines
 and is proven in hardware.
 
-### 3.4 Numeric format
+### 3.4 Numeric format — int8 is the target, and probably the starting point
 
-Stage 1 uses **fp32**, because that is what the model file contains and what the current
-software does — so results can be compared bit-for-bit against the CPU implementation, which
-makes verification trivial. The MAC needs one `MULT18X18D`-based fp32 multiplier plus an
-adder; petitbateau already instantiates fp32 arithmetic that can be referenced.
+fp32 is what the model file contains, but it is **not** what this accelerator should be built
+around. Working the numbers through:
 
-Do not start with int8. Quantization changes the numerics, and debugging a new datapath and
-new numerics simultaneously is how weeks disappear.
+| Format | Weights/word | MAC/cycle | Accel time | Token time | Rate | End-to-end |
+|---|---|---|---|---|---|---|
+| fp32 | 1.00 | 1.00 | 12.96 ms | 95.0 ms | 10.5 tok/s | 7.63x |
+| fp16 | 2.00 | 2.00 | 6.48 ms | 88.5 ms | 11.3 tok/s | 8.19x |
+| int8 (Q8_0) | 3.56 | 3.56 | 3.64 ms | 85.6 ms | 11.7 tok/s | 8.47x |
+
+Q8_0 stores 32 int8 weights plus one fp32 scale = 9 words per 32 weights, hence 3.56 rather
+than 4.
+
+**The result that matters: going from fp32 to int8 buys only ~11% end-to-end.** Not 4x. The
+accelerated portion shrinks from 13.0 ms to 3.6 ms, but the scalar remainder is 82 ms and
+dominates either way. Anyone expecting a 4x speedup from int8 will be disappointed, and it is
+better to know that before building it.
+
+**So why still prefer int8?** Three reasons, none of which is raw speed:
+
+1. **Model capacity — the real win.** In the ~6 MB available for weights: fp32 caps at ~1.5M
+   parameters, fp16 ~3.0M, int8 ~5.3M. That is the difference between stories260K and
+   something genuinely more capable. Capacity, not throughput, is what int8 buys.
+2. **int8 hardware is cheaper than fp32.** An `int8 x int8 -> int32` MAC is a trivial DSP
+   mapping; ECP5 `MULT18X18D` can pack multiple. An fp32 multiplier needs a 24-bit mantissa
+   multiply plus exponent handling, alignment and normalisation — more LUTs, more DSPs, and
+   harder to close timing. **Four int8 lanes likely cost less than one fp32 lane.**
+3. **int8 is *more* verifiable, not less.** This reverses the original argument for fp32.
+   Integer accumulation is exactly reproducible — there is no rounding ambiguity, no
+   denormals, no ordering sensitivity. An `int8 x int8 -> int32` dot product on the FPGA can
+   be compared bit-for-bit against a C reference. The only float in Q8_0 is the per-group
+   scale multiply at the end.
+
+**fp16 and fp8 are the worst of the options here.** fp16 gets half of int8's bandwidth
+advantage while still requiring floating-point hardware, and llama2.c has no fp16 path — you
+would have to write both the quantizer and the reference implementation. fp8 has int8's width
+with float complexity and, again, no reference. int8 has an established, tested reference in
+upstream `runq.c` (Q8_0). Use it.
+
+### 3.5 The verification argument, restated
+
+The original reason to start with fp32 was that bit-exact comparison against the existing CPU
+implementation makes every test conclusive. That reasoning is sound and should be kept — but
+it does **not** require fp32. It requires *a bit-exact reference*, and int8 provides a better
+one.
+
+The way to keep it: **port upstream `runq.c` (int8) to the CPU first, with no RTL at all.**
+That step:
+
+- validates that Q8_0 quantization produces acceptable text on this model, before any hardware
+  is committed;
+- produces a CPU int8 baseline to measure the accelerator against;
+- produces the bit-exact reference that stages 0-4 compare to;
+- is pure software, so it iterates in minutes rather than synthesis cycles.
+
+Only then build the accelerator, directly in int8. This removes the fp32 datapath from the
+plan entirely rather than building hardware that gets thrown away.
+
+**Risk to check in that software stage**: quantization error is proportionally worse on very
+small models, and stories260K is very small (dim=64). Q8_0 may degrade its output noticeably.
+If it does, that is an argument for fp16 as a fallback — which is why the datapath should be
+built **format-parameterised** (lane count and element width as parameters) rather than
+hard-wired to int8. Decide with measured output quality, not in advance.
 
 ---
 
@@ -160,16 +220,14 @@ still delivers one fp32 weight per cycle. Lanes must be fed, and there is only o
 
 ### 4.2 What actually adds lanes: narrower data
 
-**int8 (Q8_0) is the real scaling path.** One 32-bit word carries four int8 weights, so the
-same bandwidth supports **4 MACs/cycle**:
+Lanes come from element width, not replication — see section 3.4 for the full comparison and
+the decision. In short: one 32-bit word carries four int8 weights, so the same SDRAM bandwidth
+supports ~3.56 MACs/cycle with Q8_0 framing. That is where lane count comes from.
 
-| Format | Weights/word | MACs/cycle | Model capacity in 8 MB |
-|---|---|---|---|
-| fp32 | 1 | 1 | ~1.8M params |
-| int8 | 4 | 4 | ~7M params |
-
-int8 buys 4x throughput *and* 4x model size from unchanged hardware bandwidth. This is the
-right second generation. It is a Stage 5 item because it changes numerics.
+The important caveat, repeated because it is easy to forget: this multiplies the *accelerated*
+portion only, and that portion is already small relative to the scalar remainder. The
+throughput gain is ~11% end-to-end. **Lanes buy model capacity; they do not buy much speed
+until the scalar work is also addressed.**
 
 ### 4.3 What else adds throughput: clock
 
@@ -374,11 +432,22 @@ with a measurement in Stage 4, not upfront.
 Each stage has an exit criterion that can fail. A stage is not done because the code is
 written; it is done when its criterion is met.
 
+### Stage -1 — int8 in software, no RTL
+Port upstream `runq.c` (Q8_0) to the CPU. Quantize the model on the host. Run it on the board
+using the existing minimal profile.
+**Exit**: generated text is acceptable quality against the fp32 output — this is the
+quantization risk, and stories260K is small enough that it is a real risk. Record the CPU int8
+tok/s as the baseline, and keep the host `runq.c` as the bit-exact reference for every later
+stage. **If quality degrades unacceptably here, switch the target to fp16 before building any
+hardware** — that decision costs nothing at this point and a great deal later.
+
 ### Stage 0 — MAC datapath in simulation
-Build the fp32 MAC and accumulator alone. Cocotb testbench in `FemtoRV/TEST/`.
-**Exit**: MAC results are bit-identical to the host's fp32 for a few thousand random vectors,
-including denormals, zero, and sign cases. Bit-identical matters — it is what makes every
-later comparison against the CPU trivially conclusive.
+Build the int8 MAC and int32 accumulator alone, with lane count and element width as
+parameters. Cocotb testbench in `FemtoRV/TEST/`.
+**Exit**: dot-product results are bit-identical to the host int8 reference for a few thousand
+random vectors, including saturation and sign cases. Integer arithmetic makes this exact and
+unambiguous — no denormal or rounding-order questions. Verify the per-group fp32 scale
+multiply separately.
 
 ### Stage 1 — full accelerator against a simulated SDRAM
 Add the FIFO, control FSM, x/out BRAMs, and CSRs. Drive it with the existing SDRAM model.
@@ -413,11 +482,26 @@ Add modes 1 and 2, move attention off the CPU.
 **Exit**: still byte-identical output; end-to-end approaching 7.6x; profile shows the scalar
 remainder dominating. Decide the strided-burst question from 7 with measured numbers.
 
-### Stage 6 — optional: clock increase, then int8
-Raise the system clock (there is room to ~40 MHz measured, and the design should be re-timed
-for it), re-measure, then consider int8/Q8_0 for 4 lanes and 4x model capacity.
-**Exit**: for int8, output is no longer bit-identical, so the criterion changes to a
-perplexity or output-similarity check against the fp32 reference. Define that before starting.
+### Stage 6 — clock increase, then attack the scalar remainder
+By this point the scalar work is ~86% of token time and is the bottleneck. Two levers, in
+order:
+
+1. **Raise the system clock.** Measured ceiling is 40.76 MHz on the minimal profile; the
+   design must be re-timed for whatever target is chosen. This speeds up the scalar work and
+   the accelerator together, which is why it beats more accelerator lanes.
+2. **Optimise the scalar remainder in software.** The measured residual is sample 4.0%, other
+   6.6% (SwiGLU's `expf` per hidden element, residual adds, embedding copy), rmsnorm 0.4%. A
+   fast `expf` approximation is the obvious first move and costs no hardware.
+
+**Exit**: re-profile and confirm the balance. Only consider more accelerator lanes *after*
+the scalar side stops dominating — otherwise they buy the ~11% shown in section 3.4 and
+nothing more.
+
+### Stage 7 — larger model
+The point of int8 was capacity, not speed. With ~5.3M parameters now addressable, retrain or
+obtain a larger TinyStories-class model and confirm the loader's bounds checks handle it.
+**Exit**: a model several times larger than stories260K generates coherent text within the
+memory map, with output quality visibly better than the 260K baseline.
 
 ### Why this order
 
