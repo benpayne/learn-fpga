@@ -749,19 +749,31 @@ weights, so one datapath serves both.
 ## Active Technologies
 - C (RISC-V bare metal, rv32imafc/ilp32f) + Verilog-2001 RTL + Yosys/nextpnr-ecp5/ecppack + riscv64-unknown-elf-gcc 8.3.0 (003-llama2-minimal-soc)
 - FAT-formatted SD card for model/vocabulary artifacts; 8 MB external SDRAM at runtime (003-llama2-minimal-soc)
+- Verilog-2001 RTL + C bare-metal (rv32imafc/ilp32f) + cocotb/Icarus + upstream runq.c as the Q8_0 reference (004-int8-matmul-accel)
 
 - Verilog (FPGA RTL) + Yosys/nextpnr-ecp5 (FPGA synthesis) + Cocotb (testbenches)
 - C (RISC-V firmware, rv32imfc) + RISC-V GCC toolchain
 - Python (upload tools, testbenches)
 - Target: Colorlight i5 (ECP5 LFE5U-25F), 25 MHz
 
-### Sub-project: 003-llama2-minimal-soc (current branch)
+### Sub-project: 004-int8-matmul-accel (current branch)
+- Hardware matrix-multiply accelerator, 8-bit integer weights (Q8_0)
+- Targets matmul (61.3%) + attention (27.4%) = 88.7% of per-token time
+- Memory-bound by design: 1 x 32-bit SDRAM port = 4 int8 weights/cycle = 4 MAC lanes.
+  More lanes need more bandwidth, not more multipliers.
+- int8 chosen for CAPACITY (~5.3M params vs ~1.5M), not speed — the scalar
+  remainder dominates, so int8 vs fp32 is only ~11% end-to-end.
+- Design rationale: `FemtoRV/RTL/ACCEL/DESIGN.md`; spec in `specs/004-int8-matmul-accel/`
+
+### Sub-project: 003-llama2-minimal-soc
 - Minimal SoC profile: CPU + SDRAM + UART only, all other peripherals stripped
 - Goal: run llama2.c (stories260K, ~1MB fp32) from SDRAM, output over serial
 - Purpose: free FPGA capacity and establish a measured baseline for a future
   MatMul accelerator. See `specs/003-llama2-minimal-soc/spec.md`.
 
 ## Recent Changes
+- 004-int8-matmul-accel: int8 MatMul accelerator — spec, plan and design.
+  See `FemtoRV/RTL/ACCEL/DESIGN.md` for the architecture rationale.
 - 003-llama2-minimal-soc: minimal SoC profile (CPU + SDRAM + UART + SD), llama2.c bring-up,
   and a per-token timing baseline for future accelerator work. Plan and research in
   `specs/003-llama2-minimal-soc/`.
