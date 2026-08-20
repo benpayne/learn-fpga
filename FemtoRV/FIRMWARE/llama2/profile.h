@@ -14,6 +14,9 @@ typedef enum {
     PROF_RMSNORM,
     PROF_ROPE,
     PROF_SAMPLE,
+    PROF_QUANT,     /* activation quantization (runq.c only, feature 004 R2) --
+                     * new scalar work the int8 path adds before every matmul;
+                     * unused (always 0) by the fp32 llama2.c binary. */
     PROF_NCAT
 } prof_cat_t;
 

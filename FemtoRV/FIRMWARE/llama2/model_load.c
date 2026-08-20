@@ -66,6 +66,7 @@ const char *ml_strerror(ml_status_t s) {
     case ML_ERR_TOO_BIG:        return "model would overflow its memory region";
     case ML_ERR_READ:           return "read failed part-way through the file (card removed?)";
     case ML_ERR_VOCAB_MISMATCH: return "tokenizer token count does not match model vocab_size";
+    case ML_ERR_WRONG_FORMAT:   return "file format does not match what this loader expects (Q8_0 vs legacy fp32)";
     default:                    return "unknown error";
     }
 }
@@ -173,6 +174,16 @@ ml_status_t ml_load_model(const char *path, ModelConfig *cfg, ml_report_t *rep) 
         return ML_ERR_TRUNCATED;
     }
 
+    /* research R4: a Q8_0 file's first 4 bytes are its magic, which would
+     * otherwise be silently misread as this format's `dim` field (0x3432
+     * of it, anyway) and likely fail in_range() below in a confusing way,
+     * or -- worse -- occasionally pass it by chance. Reject loudly and
+     * specifically instead. */
+    if ((uint32_t)le_i32(hdr + 0) == Q8_0_MAGIC) {
+        fl_fclose(f);
+        return ML_ERR_WRONG_FORMAT;
+    }
+
     int32_t dim       = le_i32(hdr + 0);
     int32_t hidden    = le_i32(hdr + 4);
     int32_t n_layers  = le_i32(hdr + 8);
@@ -239,9 +250,110 @@ ml_status_t ml_load_model(const char *path, ModelConfig *cfg, ml_report_t *rep) 
     return ML_OK;
 }
 
+/* -------------------------------------------------------------- Q8_0 model */
+
+static int is_pow2(int32_t v) {
+    return v > 0 && (v & (v - 1)) == 0;
+}
+
+ml_status_t ml_load_model_q8(const char *path, Q8Config *cfg,
+                              uint8_t *shared_classifier, int32_t *group_size,
+                              ml_report_t *rep) {
+    ml_status_t st = ml_mount();
+    if (st != ML_OK)
+        return st;
+
+    void *f = fl_fopen(path, "r");
+    if (!f)
+        return ML_ERR_NO_FILE;
+
+    Q8Header hdr;
+    if (fl_fread(&hdr, 1, (int)sizeof(hdr), f) != (int)sizeof(hdr)) {
+        fl_fclose(f);
+        return ML_ERR_TRUNCATED;
+    }
+
+    /* research R4: the other half of the format guard -- a legacy fp32
+     * file has no magic at all, so this MUST be checked before trusting
+     * anything else in the header (a legacy header's first bytes are its
+     * `dim` field, essentially arbitrary w.r.t. Q8_0_MAGIC). */
+    if (hdr.magic != Q8_0_MAGIC) {
+        fl_fclose(f);
+        return ML_ERR_WRONG_FORMAT;
+    }
+    if (hdr.version != Q8_0_VERSION) {
+        fl_fclose(f);
+        return ML_ERR_BAD_HEADER;
+    }
+
+    Q8Config c = hdr.config;
+    int32_t gs = hdr.group_size;
+
+    if (!in_range(c.dim, 1, 4096) ||
+        !in_range(c.hidden_dim, 1, 65536) ||
+        !in_range(c.n_layers, 1, 64) ||
+        !in_range(c.n_heads, 1, 1024) ||
+        !in_range(c.n_kv_heads, 1, 1024) ||
+        !in_range(c.vocab_size, 1, 65536) ||
+        !in_range(c.seq_len, 1, 8192) ||
+        (c.dim % c.n_heads) != 0 ||
+        !is_pow2(gs) ||
+        (c.dim % gs) != 0 || (c.hidden_dim % gs) != 0) {
+        /* FR-009 (data-model entity 4): every tensor's element count MUST
+         * be an exact multiple of GS, and GS itself MUST be a supported
+         * power of two -- reject explicitly here rather than let quantize()
+         * or matmul_q8() silently compute a partial/garbage last group. */
+        fl_fclose(f);
+        return ML_ERR_BAD_HEADER;
+    }
+
+    uint8_t sc = hdr.shared_classifier ? 1 : 0;
+    uint32_t total_bytes = q8_checkpoint_bytes(&c, gs, sc);  /* includes the 256-byte header */
+    uint32_t tensor_bytes = total_bytes - Q8_0_HEADER_BYTES;
+
+    /* Refuse BEFORE loading anything if it can't fit -- SAME region/limit
+     * as the legacy loader (see model_load.h's file-header note on why). */
+    if (tensor_bytes > ML_WEIGHTS_LIMIT) {
+        fl_fclose(f);
+        return ML_ERR_TOO_BIG;
+    }
+
+    /* Verify the file is exactly as long as the header implies. */
+    if (fl_fseek(f, 0, SEEK_END) != 0) {
+        fl_fclose(f);
+        return ML_ERR_READ;
+    }
+    long file_len = fl_ftell(f);
+    if (file_len < 0 || (uint32_t)file_len != total_bytes) {
+        fl_fclose(f);
+        return ML_ERR_TRUNCATED;
+    }
+    if (fl_fseek(f, (long)Q8_0_HEADER_BYTES, SEEK_SET) != 0) {
+        fl_fclose(f);
+        return ML_ERR_READ;
+    }
+
+    uint64_t t0 = cycles();
+    st = stream_to(f, (uint8_t *)ML_WEIGHTS_BASE, tensor_bytes);
+    uint64_t t1 = cycles();
+
+    fl_fclose(f);
+    if (st != ML_OK)
+        return st;
+
+    *cfg = c;
+    *shared_classifier = sc;
+    *group_size = gs;
+    fill_report(rep, tensor_bytes, t1 - t0);
+    return ML_OK;
+}
+
 /* ------------------------------------------------------------ tokenizer */
 
-ml_status_t ml_load_tokenizer(const char *path, const ModelConfig *cfg, ml_report_t *rep) {
+/* Shared implementation: both formats' tokenizer file is identical (the
+ * tokenizer is fp32 vocab/scores, unaffected by weight quantization), so
+ * only the expected vocab_size differs by caller. */
+static ml_status_t load_tokenizer_impl(const char *path, uint32_t vocab_size, ml_report_t *rep) {
     ml_status_t st = ml_mount();
     if (st != ML_OK)
         return st;
@@ -294,11 +406,19 @@ ml_status_t ml_load_tokenizer(const char *path, const ModelConfig *cfg, ml_repor
         count++;
     }
 
-    if (count != (uint32_t)cfg->vocab_size)
+    if (count != vocab_size)
         return ML_ERR_VOCAB_MISMATCH;
 
     fill_report(rep, total, t1 - t0);
     return ML_OK;
+}
+
+ml_status_t ml_load_tokenizer(const char *path, const ModelConfig *cfg, ml_report_t *rep) {
+    return load_tokenizer_impl(path, (uint32_t)cfg->vocab_size, rep);
+}
+
+ml_status_t ml_load_tokenizer_q8(const char *path, const Q8Config *cfg, ml_report_t *rep) {
+    return load_tokenizer_impl(path, (uint32_t)cfg->vocab_size, rep);
 }
 
 /* ---------------------------------------------------------------- report */

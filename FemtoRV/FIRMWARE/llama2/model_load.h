@@ -14,11 +14,38 @@
  * freq_cis tables. A 1 MB region was tried first and the FR-008 bounds
  * check correctly refused to load rather than overrunning the tokenizer.
  * 2 MB leaves headroom for a larger model without another map change.
+ *
+ * *** Feature 004 (int8 MatMul accel) update ***
+ * The Q8_0 checkpoint (tools/model.q8.bin) is only 299,008 bytes -- 26.6%
+ * of the legacy fp32 file's 1,056,540 bytes, per q8_format.h's sizing
+ * (default GS=64). It is loaded into the SAME ML_WEIGHTS_BASE region with
+ * the SAME ML_WEIGHTS_LIMIT (2 MB); the region was deliberately NOT shrunk
+ * to fit the smaller file, because it is the REGION SIZE that bounds how
+ * big a model this firmware can load, not the amount of SDRAM available
+ * (research R5) -- shrinking it would only make a future larger model fail
+ * sooner, for no memory actually reclaimed (the next region, the tokenizer,
+ * starts at a fixed address regardless). ml_load_model_q8() (below) is the
+ * loader for this format; it streams ONLY the tensor data (i.e. bytes
+ * AFTER the 256-byte header) to ML_WEIGHTS_BASE, exactly as the legacy
+ * loader already streams only the bytes after ITS 28-byte header -- so
+ * pointer arithmetic against ML_WEIGHTS_BASE never needs a header-size
+ * offset on this target, matching runq_host.c's read_checkpoint().
+ *
+ * *** hidden_dim WARNING ***
+ * model.q8.bin has hidden_dim=192 (NOT 172, the legacy stories260K value).
+ * Every RunState buffer sized off hidden_dim (hb, hb2, the w1/w2/w3 matmul
+ * shapes, hq in runq.c) MUST read hidden_dim from the loaded Q8Config, the
+ * same way dim/n_layers/etc. already are -- never hardcode 172 or assume
+ * the two model files share dimensions. Getting this wrong does not fail
+ * loudly: it silently misaligns every buffer after the first mis-sized
+ * one, producing corrupted-but-plausible-looking activations rather than
+ * a crash (research R5 / this file's recurring failure mode).
  */
 #ifndef MODEL_LOAD_H
 #define MODEL_LOAD_H
 
 #include <stdint.h>
+#include "q8_format.h"
 
 #define ML_WEIGHTS_BASE   0x900000u
 #define ML_WEIGHTS_LIMIT  0x200000u   /* 2 MB -- see note above */
@@ -51,7 +78,13 @@ typedef enum {
     ML_ERR_BAD_HEADER,     /* header fields out of sane bounds       */
     ML_ERR_TOO_BIG,        /* would overflow its memory region       */
     ML_ERR_READ,           /* read failed part-way (card removed?)   */
-    ML_ERR_VOCAB_MISMATCH  /* tokenizer count != model vocab_size    */
+    ML_ERR_VOCAB_MISMATCH, /* tokenizer count != model vocab_size    */
+    ML_ERR_WRONG_FORMAT    /* Q8_0 magic present/absent where the caller
+                             * required the opposite (research R4) -- the
+                             * silent-wrong-output failure mode this loader
+                             * exists to prevent. Loud and distinct from
+                             * ML_ERR_BAD_HEADER on purpose: a wrong format
+                             * is a caller/file mismatch, not a corrupt file. */
 } ml_status_t;
 
 const char *ml_strerror(ml_status_t s);
@@ -66,14 +99,42 @@ typedef struct {
 /* Mount the card. Must be called once before the loaders. */
 ml_status_t ml_mount(void);
 
-/* Load weights to ML_WEIGHTS_BASE. Fills cfg and rep (rep may be NULL). */
+/* Load weights to ML_WEIGHTS_BASE. Fills cfg and rep (rep may be NULL).
+ * Legacy fp32 format (28-byte header, no magic). REJECTS a Q8_0 file
+ * (detected by its magic occupying this format's first 4 header bytes)
+ * with ML_ERR_WRONG_FORMAT rather than misinterpreting the magic as
+ * garbage config fields (research R4). */
 ml_status_t ml_load_model(const char *path, ModelConfig *cfg, ml_report_t *rep);
+
+/* Load a Q8_0 quantized checkpoint (q8_format.h) to ML_WEIGHTS_BASE, SAME
+ * region/limit as the legacy loader above (see the file-header note on
+ * why the region isn't shrunk). Streams only the tensor data -- the bytes
+ * AFTER the 256-byte header -- so pointer arithmetic on the target never
+ * needs a header offset (matches runq_host.c's read_checkpoint()).
+ *
+ * REQUIRES the file to start with Q8_0_MAGIC; returns ML_ERR_WRONG_FORMAT
+ * immediately (before trusting any other header field) if it does not --
+ * this is the autodetect/reject-loudly half of feature 004's format
+ * guard, the other half being ml_load_model()'s check above (research R4).
+ *
+ * Fills *cfg, *shared_classifier, *group_size straight from the header
+ * (group_size is a FILE PARAMETER, not a compile-time constant -- research
+ * R3 -- so callers MUST read it from here, never assume GS=64). */
+ml_status_t ml_load_model_q8(const char *path, Q8Config *cfg,
+                              uint8_t *shared_classifier, int32_t *group_size,
+                              ml_report_t *rep);
 
 /* Load tokenizer to ML_TOKENIZER_BASE. Verifies token count == cfg->vocab_size
  * and returns ML_ERR_VOCAB_MISMATCH otherwise -- this catches a mismatched
  * model/tokenizer pair, which otherwise yields fluent but WRONG text. */
 ml_status_t ml_load_tokenizer(const char *path, const ModelConfig *cfg,
                               ml_report_t *rep);
+
+/* Same as ml_load_tokenizer(), for a Q8Config -- the tokenizer file format
+ * itself does not change between feature 003 and 004 (it is always fp32
+ * vocab/scores), only which config's vocab_size it is checked against. */
+ml_status_t ml_load_tokenizer_q8(const char *path, const Q8Config *cfg,
+                                 ml_report_t *rep);
 
 /* Print a human-readable load report to serial. */
 void ml_print_report(const char *what, const ml_report_t *rep);
