@@ -38,7 +38,7 @@ and it comes straight from the profile.
 | End-to-end | — | 7.6x | **8.5x** |
 
 Note how little separates the two accelerated columns: the scalar remainder dominates both.
-int8 is chosen for **model capacity** (~5.3M parameters versus ~1.5M) and for being cheaper
+int8 is chosen for **model capacity** (~5.6M parameters versus ~1.5M) and for being cheaper
 and more verifiable hardware — not for throughput. See section 3.4.
 
 Per-token work for stories260K (dim=64, hidden=172, 5 layers, 8 heads / 4 kv-heads,
@@ -153,10 +153,12 @@ around. Working the numbers through:
 |---|---|---|---|---|---|---|
 | fp32 | 1.00 | 1.00 | 12.96 ms | 95.0 ms | 10.5 tok/s | 7.63x |
 | fp16 | 2.00 | 2.00 | 6.48 ms | 88.5 ms | 11.3 tok/s | 8.19x |
-| int8 (Q8_0) | 3.56 | 3.56 | 3.64 ms | 85.6 ms | 11.7 tok/s | 8.47x |
+| int8 (Q8_0) | 3.76 | 3.76 | 3.44 ms | 85.4 ms | 11.7 tok/s | 8.49x |
 
-Q8_0 stores 32 int8 weights plus one fp32 scale = 9 words per 32 weights, hence 3.56 rather
-than 4.
+Q8_0 stores GS int8 weights plus one fp32 scale. At the upstream default GS=64 that is 68 bytes
+per 64 weights = 1.0625 B/weight, hence 3.76 weights per 32-bit word rather than 4. (An earlier
+revision of this document assumed GS=32 and an interleaved layout; both were wrong — see
+research R1 and R3.)
 
 **The result that matters: going from fp32 to int8 buys only ~11% end-to-end.** Not 4x. The
 accelerated portion shrinks from 13.0 ms to 3.6 ms, but the scalar remainder is 82 ms and
@@ -166,7 +168,7 @@ better to know that before building it.
 **So why still prefer int8?** Three reasons, none of which is raw speed:
 
 1. **Model capacity — the real win.** In the ~6 MB available for weights: fp32 caps at ~1.5M
-   parameters, fp16 ~3.0M, int8 ~5.3M. That is the difference between stories260K and
+   parameters, fp16 ~3.0M, int8 ~5.6M. That is the difference between stories260K and
    something genuinely more capable. Capacity, not throughput, is what int8 buys.
 2. **int8 hardware is cheaper than fp32.** An `int8 x int8 -> int32` MAC is a trivial DSP
    mapping; ECP5 `MULT18X18D` can pack multiple. An fp32 multiplier needs a 24-bit mantissa
@@ -222,7 +224,8 @@ still delivers one fp32 weight per cycle. Lanes must be fed, and there is only o
 
 Lanes come from element width, not replication — see section 3.4 for the full comparison and
 the decision. In short: one 32-bit word carries four int8 weights, so the same SDRAM bandwidth
-supports ~3.56 MACs/cycle with Q8_0 framing. That is where lane count comes from.
+supports ~3.76 MACs/cycle with Q8_0 framing at the default group size of 64. That is where lane
+count comes from.
 
 The important caveat, repeated because it is easy to forget: this multiplies the *accelerated*
 portion only, and that portion is already small relative to the scalar remainder. The
@@ -498,7 +501,7 @@ the scalar side stops dominating — otherwise they buy the ~11% shown in sectio
 nothing more.
 
 ### Stage 7 — larger model
-The point of int8 was capacity, not speed. With ~5.3M parameters now addressable, retrain or
+The point of int8 was capacity, not speed. With ~5.6M parameters now addressable, retrain or
 obtain a larger TinyStories-class model and confirm the loader's bounds checks handle it.
 **Exit**: a model several times larger than stories260K generates coherent text within the
 memory map, with output quality visibly better than the 260K baseline.

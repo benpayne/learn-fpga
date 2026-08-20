@@ -30,10 +30,12 @@ int8 array first, then the whole scale array.
 
 **This is better for the accelerator, and it changes the datapath.**
 
-- The weight stream is dense int8 — **exactly 4 weights per 32-bit word, no framing overhead**,
-  so the MAC lanes run at their full rate rather than the 3.56 the design assumed.
-- Scales are a second, much smaller stream: `size/GS` floats. For a 64x64 matrix at GS=32 that
-  is 128 floats = 512 bytes, about 3% of the data.
+- The weight `q` stream is dense int8 — **exactly 4 weights per 32-bit word within the block, no
+  interleaved framing**, so the inner loop runs the lanes at full rate. Averaged over the small
+  separate scale block the effective figure is 3.76 weights/word at the default GS=64, versus
+  the 3.56 the design assumed from an interleaved GS=32 layout.
+- Scales are a second, much smaller stream: `size/GS` floats. At the default GS=64, a 64x64
+  matrix has 64 scales = 256 bytes, about 1.5% of the data.
 
 **Decision**: **prefetch the scale block into BRAM at the start of each operation**, then stream
 int8 weights as one dense burst sequence. This gives a clean single-stream inner loop at 4
@@ -78,8 +80,18 @@ justifies it.
 must treat it as a runtime value, not a synthesis constant. It bounds the int32 accumulator's
 range before each rescale, so it also affects saturation behaviour (see R9).
 
+**VERIFIED default: 64.** `export.py` declares `def version2_export(model, filepath,
+group_size=64)` and backs off by halving while `dim % group_size != 0`. Checked against this
+model's tensor sizes — token embedding 32768, wq/wo 4096, wk/wv 2048, w1/w2/w3 11008 — all
+multiples of 64, so **no backoff is expected and GS should be 64**.
+
+That gives `(64 + 4) / 64 = 1.0625` bytes per weight, **26.6% of fp32**, and 3.76 weights per
+32-bit word once the separate scale block is amortised in.
+
 **Decision**: `GS` is an operation-descriptor field. Support the common power-of-two values;
-reject others explicitly rather than silently mis-computing (FR-009).
+reject others explicitly rather than silently mis-computing (FR-009). Task T009 must record the
+value the tool actually emits — if a backoff occurs, the storage ratio and lane framing change
+and every figure derived from GS=64 needs revisiting.
 
 ## R4. Quantized file header — VERIFIED
 
@@ -93,7 +105,7 @@ exactly the kind of failure that produces plausible-but-wrong output.
 
 ## R5. Model size collapses — and the memory map should be revisited
 
-At roughly 1.125 bytes per parameter (1 int8 + 4 bytes per GS=32 group) versus 4:
+At **1.0625 bytes per parameter** (64 int8 + one 4-byte scale per GS=64 group) versus 4:
 
 | | fp32 | Q8_0 |
 |---|---|---|
@@ -104,7 +116,7 @@ under 0.3 MB, and the 2 MB region would hold a model of roughly 1.8M parameters.
 
 **Decision**: keep the 2 MB region for now — it is already allocated and unused space costs
 nothing — but note that the capacity ceiling is set by the *region*, not the memory. Growing to
-the ~5.3M parameters SC-004 targets requires enlarging the region, which is a one-line change
+the ~5.6M parameters SC-004 targets requires enlarging the region, which is a one-line change
 given the 3 MB currently marked free. Do it when a larger model actually exists.
 
 ## R6. int8 MAC hardware cost — cheap enough that DSPs are optional
@@ -155,11 +167,11 @@ exist.
 ## R9. Accumulator saturation — behaviour must be defined, not discovered
 
 `int32` accumulating `GS` products of two int8 values: worst case per product is 127*127 =
-16,129, so GS=32 gives at most 516,128 — far inside int32. **No saturation is possible within a
-group**, which is presumably why `runq.c` never checks for it.
+16,129, so the default GS=64 gives at most 1,032,256 — far inside int32. **No saturation is
+possible within a group**, which is presumably why `runq.c` never checks for it.
 
 **Decision**: use int32 accumulation per group and rescale at group boundaries, matching
-`runq.c` exactly. Document that overflow is structurally impossible for GS <= 131,072 rather
+`runq.c` exactly. Document that overflow is structurally impossible for GS <= 133,144 rather
 than adding saturation logic that would never fire and could not be tested meaningfully. The
 edge case in the spec is therefore satisfied by proof rather than by code.
 
@@ -203,7 +215,7 @@ Per the spec's FR-004a, resolved by the user. What changes:
 - Bit-exactness stops being free. Hardware and reference must agree on rounding mode and
   accumulation order, which must be specified deliberately.
 - A host reference implementation must be written; none exists upstream (FR-011a).
-- Capacity gain roughly halves (~3.0M parameters rather than ~5.3M).
+- Capacity gain roughly halves (~3.0M parameters rather than ~5.6M).
 - Lanes drop from 4 to 2, so the accelerated portion takes 6.5 ms rather than 3.6 ms —
   **an end-to-end difference of about 3%**, because the scalar remainder dominates.
 

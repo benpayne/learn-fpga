@@ -26,8 +26,8 @@ The Q8_0 checkpoint. Format verified against upstream `runq.c` (research R1, R4)
 - Magic and version MUST be checked; a legacy-format file loaded as Q8_0 (or vice versa) is a
   silent-wrong-output failure, which is the class this project most needs to prevent.
 - `GS` MUST be read from the header and carried into every operation descriptor.
-- Quantized size is approximately `params * (1 + 4/GS)` bytes — ~1.125 at GS=32, versus 4.0 for
-  fp32.
+- Quantized size is `params * (1 + 4/GS)` bytes — **1.0625 at the default GS=64**, versus 4.0
+  for fp32, i.e. 26.6%.
 
 **Relationships**: paired with the same vocabulary artifact as feature 003 (unchanged, still
 fp32 scores). The model/vocabulary matching rule from feature 003 (FR-018a there) still applies.
@@ -45,8 +45,8 @@ How a weight matrix appears to the accelerator once loaded.
 
 **Rules**
 - The `q` block is the dense burst stream; it is what sets throughput.
-- The `s` block is ~3% of the data and is fetched once at operation start (research R1). For a
-  64x64 matrix at GS=32 it is 512 bytes.
+- The `s` block is ~1.5% of the data at GS=64 and is fetched once at operation start (research
+  R1). For a 64x64 matrix that is 64 scales = 256 bytes.
 - The accelerator MUST NOT interleave the two streams; the prefetch keeps the inner loop single-
   source and running at full lane rate.
 

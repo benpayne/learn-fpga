@@ -19,7 +19,7 @@ that measurement rather than from assumption.
 **Two outcomes are expected, and they are not equally important.** Throughput improves from
 1.38 to roughly 11.7 tokens/second. But reduced precision is chosen mainly for **capacity**:
 it raises the largest model that fits in available memory from roughly 1.5 million parameters
-to roughly 5.3 million. The throughput difference between full and reduced precision is only
+to roughly 5.6 million. The throughput difference between full and reduced precision is only
 about 11%, because the remaining processor work dominates either way. Anyone expecting a
 fourfold speed-up from narrower weights will be disappointed; the gain is in what can be run
 at all.
@@ -261,7 +261,8 @@ story.
 
 - **Precision choice**: 8-bit integer weights with per-group scaling, matching the format used by the established upstream reference. Chosen for capacity and for having a tested reference implementation, not primarily for speed — see the Overview.
 - **Quantization risk is real and unquantified**: quantization error is proportionally worse on small models, and the current model is very small. User Story 1 exists specifically to measure this before any hardware is committed.
-- **Fallback is 16-bit floating point, decided before hardware.** If 8-bit output is unacceptable, the project switches to 16-bit rather than accepting degraded output or introducing a model-sourcing dependency. The costs are explicit and accepted: roughly half the capacity gain (about 3.0M parameters rather than 5.3M), floating-point rather than integer arithmetic hardware, and a host reference implementation that must be written because none exists upstream. Throughput is barely affected either way — about 11.3 versus 11.7 tokens per second — because the remaining processor work dominates.
+- **Fallback is 16-bit floating point, decided before hardware.** If 8-bit output is unacceptable, the project switches to 16-bit rather than accepting degraded output or introducing a model-sourcing dependency. The costs are explicit and accepted: roughly half the capacity gain (about 3.0M parameters rather than 5.6M), floating-point rather than integer arithmetic hardware, and a host reference implementation that must be written because none exists upstream. Throughput is barely affected either way — about 11.3 versus 11.7 tokens per second — because the remaining processor work dominates.
+- **Group size defaults to 64**, read from the checkpoint header rather than fixed. `export.py` halves it if a dimension does not divide evenly; every quantized tensor in the current model is a multiple of 64, so no backoff is expected. A backoff would change the storage ratio and the accelerator's lane framing, so it must be recorded if it occurs.
 - **Bit-exact verification survives the fallback, but differently.** With 8-bit integer weights, accumulation is exactly reproducible and hardware can be compared bit-for-bit against the reference with no ambiguity. With 16-bit floating point, matching exactly requires the hardware and the reference to agree on rounding and accumulation order. That is achievable but must be specified deliberately rather than assumed, and it is a real reason to prefer the 8-bit path.
 - **Expected gain**: roughly 8.5x end-to-end, from feature 003's measurement that 88.7% of per-token time is accelerable. Accelerating only the weight multiplies would cap this near 2.5x, which is why attention is in scope.
 - **The remaining processor work becomes dominant**: after this feature, roughly 86% of token time is work this accelerator does not touch. That is expected and quantified, not a failure. Addressing it is separate, later work.

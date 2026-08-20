@@ -22,8 +22,13 @@ cd FemtoRV/FIRMWARE/llama2/tools
 ./quantize_model.sh
 ```
 
-Produces a Q8_0 checkpoint. Expect roughly **0.3 MB versus 1.06 MB** for fp32 — about 1.125
-bytes per parameter at group size 32. Record the size, checksum and group size.
+Produces a Q8_0 checkpoint. Expect roughly **0.28 MB versus 1.06 MB** for fp32 — 1.0625 bytes
+per parameter at the default group size of 64. Record the size, checksum and group size.
+
+`export.py` defaults `group_size=64` and halves it if a dimension does not divide evenly. Every
+quantized tensor in this model is a multiple of 64, so no backoff should occur — if the script
+reports one, record it, because it changes the storage ratio and the accelerator's lane
+framing.
 
 ### 2. Generate the golden reference (host)
 
