@@ -447,6 +447,124 @@ suggests doing it first is safe, but it should be a deliberate decision rather t
 
 ---
 
+## 9a. Reusing the existing video/SDRAM path — what is already there
+
+The GPU framebuffer path was built to stream pixels out of SDRAM, and it turns out to be
+almost exactly the infrastructure this accelerator needs. Findings from reading the RTL:
+
+### The burst port is generic, not video-specific
+
+`muchtoremember_burst.v` exposes a second port alongside the CPU's single-word port:
+
+```verilog
+input         burst_rd,        // pulse to start
+input  [25:0] burst_addr,      // arbitrary start address
+input  [8:0]  burst_len,       // 1-256 words, per request
+output [31:0] burst_dout,
+output        burst_valid, burst_done, burst_busy
+```
+
+Nothing here is about video. Arbitrary address, per-request length, streaming handshake — this
+is the accelerator's weight-fetch interface as specified in section 3. **Use it unchanged.**
+All the video-specific behaviour (scanline stride, hsync/vsync timing, framebuffer base) lives
+one level up in `video_fetch_engine.v`, not in the controller.
+
+The port is also already proven: 6/6 cocotb tests pass including 256-word bursts and
+row-crossing, and it measured 0.98 words/cycle.
+
+### The burst path is already wired up and currently idle
+
+`video_fetch_engine` is instantiated under `` `ifdef NRV_IO_SDRAM ``, **not** under
+`` `ifdef NRV_IO_GPU ``. So in the minimal LLM profile it is still instantiated — but its
+inputs (`gpu_hsync_start`, `gpu_vsync_start`, `gpu_v_count`) are undriven wires, so it never
+issues a burst and yosys prunes it. Confirmed by the resource report: the minimal profile uses
+16 DP16KD, exactly the 32 KB boot ROM (16 x 2 KB), so the fetch engine's FIFO and line buffer
+were optimised away entirely.
+
+**Practical consequence**: there is no GPU to "replace" — it is already gone from this profile.
+What remains is a live, tested burst port with nothing attached to it. The weight fetch engine
+drops into precisely the instantiation site `video_fetch_engine` occupies today.
+
+### What must change: the priority order
+
+This is the one real modification, and it is small. Today, in the controller's IDLE state:
+
+```verilog
+if (refresh_pending)                      ... // refresh
+else if (burst_busy)                      ... // burst wins over CPU
+else if ((|wmask_sticky) | rd_sticky)     ... // CPU single-word last
+```
+
+Reorder to put the CPU ahead of the burst:
+
+```verilog
+if (refresh_pending)                      ...
+else if ((|wmask_sticky) | rd_sticky)     ... // CPU first
+else if (burst_busy)                      ... // burst second
+```
+
+**Bursts are already atomic** — once the FSM enters `s_burst_act` it stays there until the
+burst completes and only then returns to `s_idle`. So swapping these two branches yields
+exactly the "CPU priority, preemption only at burst boundaries" semantics of section 6.2, for
+free. The burst-length bound in 6.3 then caps CPU worst-case latency.
+
+Add the anti-starvation credit from 6.2 as a guard on the CPU branch:
+
+```verilog
+else if (((|wmask_sticky) | rd_sticky) && !accel_starved) ...
+```
+
+where `accel_starved` asserts after the burst port has been denied for N consecutive idle
+cycles. Per the workload analysis in 6.1 it should essentially never fire; a counter on it
+belongs in `ACC_PERF` so that assumption is checked rather than trusted.
+
+**Do not change this ordering while the GPU profile still exists** without re-testing it. The
+existing order was correct for video — a starved scanline fetch is visible corruption — and
+`colorlight_i5` still builds the GPU. Either make the priority a parameter or gate the swap on
+the profile. The SC-011 no-regression check from feature 003 covers this.
+
+### What is NOT there: a write path
+
+**The burst port is read-only.** There is no burst write; the video path never needed one. The
+accelerator's results therefore need another route. Options, in order of preference:
+
+1. **Keep results in accelerator BRAM and map it into the address space.** Outputs are small —
+   `d` floats, 256 B typically and 2 KB for the classifier (`d`=512). One BRAM, normal CPU
+   loads, no write path at all. Recommended.
+2. Write back through the CPU's single-word port. Works, but `d` single-word writes at ~10
+   cycles each is ~15% overhead on a `64x64` matmul — measurable and avoidable.
+3. Add a burst write port to the controller. Most work, least benefit; the volume does not
+   justify it.
+
+Option 1 also removes any coherency question: results never enter SDRAM, so the CPU cache
+cannot hold a stale copy.
+
+### Also reusable, with care
+
+- `video_line_buffer.v` — ping-pong double buffering. Useful if weight streaming later wants to
+  overlap fetch and compute across tiles; not needed for the single-lane design, where one FIFO
+  suffices.
+- The `fetch_enabled` gating and VSync FIFO flush in `femtosoc.v` are video-specific lifecycle
+  management. The accelerator's equivalent is "flush the FIFO on ABORT or at descriptor start",
+  which is simpler.
+
+### Revised effort estimate
+
+| Component | Status |
+|---|---|
+| SDRAM burst port | **exists, unchanged** |
+| Burst arbitration | **3-line reorder** + credit counter |
+| Weight fetch engine | new, but `video_fetch_engine.v` is the template |
+| FIFO | new, or adapt the video FIFO |
+| MAC + accumulator | new |
+| CSR block + descriptor queue | new |
+| Result BRAM + address decode | new, small |
+
+Roughly half the memory-side work is already done and proven in hardware. The genuinely new
+RTL is the MAC datapath, the control FSM, and the CPU-facing registers.
+
+---
+
 ## 10. What to reuse
 
 - `RTL/SDRAM/muchtoremember_burst.v` — burst reads at 0.98 words/cycle, row-crossing handled
