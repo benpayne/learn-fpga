@@ -399,8 +399,35 @@ module acc_top #(
                                            // repeats -- unlike the activation scale below)
     reg [31:0] w_scale_q;
 
+    // BUG FIX (T036 integration testbench, research.md -- see the write-up
+    // there for the full cycle-by-cycle trace): this register used to be
+    // updated on EVERY issue_read_c cycle, i.e. once per address-phase word,
+    // not once per group. group_count_q itself already advances correctly
+    // (on a group's own LAST address-phase word, still using the
+    // not-yet-incremented index -- see is_group_last_c below), so the read
+    // at that exact cycle produces the right value... but then the very
+    // next address-phase cycle -- the NEW group's first word -- re-reads
+    // weight_scale_mem using the NOW-incremented group_count_q and
+    // overwrites w_scale_q with the WRONG (next) group's scale, one cycle
+    // before acc_mac's group_done was ever going to consume the correct
+    // one. Concretely (data-model.md's own worked shape): row 0's group_acc
+    // came out bit-exact (50166, matching the host reference), but row 0's
+    // rescaled result used w_s[1] instead of w_s[0], because group_count_q
+    // had already advanced by the time this register last latched a value.
+    // The MAC unit tests (acc_mac_tb.py, T029-31) could never catch this --
+    // they drive one group in isolation, and this bug only appears when one
+    // group is immediately followed by another, which is every real
+    // back-to-back streaming operation.
+    //
+    // Fix: only re-latch on a group's own last address-phase word
+    // (is_group_last_c), using group_count_q's value AS OF THAT CYCLE
+    // (still not yet incremented -- the increment below is a non-blocking
+    // assignment that only takes effect after this edge). w_scale_q then
+    // holds that group's own scale steadily from this point until the
+    // NEXT group's own last word overwrites it -- which is long after
+    // acc_mac needed it, not one cycle before.
     always @(posedge clk) begin
-        if (issue_read_c) w_scale_q <= weight_scale_mem[group_count_q];
+        if (issue_read_c && is_group_last_c) w_scale_q <= weight_scale_mem[group_count_q];
     end
 
     // =======================================================================
@@ -433,10 +460,18 @@ module acc_top #(
 
     reg [31:0] x_data_q, x_scale_q;
 
+    // x_data_q (the xq element stream) genuinely needs a fresh read every
+    // address-phase word, so it stays gated on issue_read_c alone.
+    // x_scale_q is the activation-side twin of w_scale_q above and has the
+    // SAME bug for the same reason (act_group_idx_q advances on a group's
+    // own last word, and an unconditional re-read on the very next cycle
+    // -- the new group's first word -- would overwrite it with the next
+    // group's scale before acc_mac's group_done consumes it). Same fix:
+    // only re-latch on is_group_last_c.
     always @(posedge clk) begin
         if (issue_read_c) begin
-            x_data_q  <= act_mem[act_xq_addr_c];
-            x_scale_q <= act_mem[act_xs_addr_c];
+            x_data_q <= act_mem[act_xq_addr_c];
+            if (is_group_last_c) x_scale_q <= act_mem[act_xs_addr_c];
         end
     end
 

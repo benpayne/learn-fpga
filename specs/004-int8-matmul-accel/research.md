@@ -960,6 +960,103 @@ needs a genuinely different firmware config knows to fix it first**, and restore
 
 ---
 
+## R25. KV-cache stride waste (T072, 2026-08-20) — measured before any attention RTL exists
+
+**Method**: analytical, not simulated. The waste is a pure geometry/layout fact independent of
+which numeric datapath T064 eventually builds, and it is derivable exactly from facts already
+established (DESIGN.md sec 7's layout/stride note) plus R19's already-measured burst-efficiency
+table. A cocotb testbench would need to model the KV-cache streaming datapath to produce this
+number, and that datapath does not exist yet (T064 has not started) -- building a simulation
+vehicle for hardware that isn't designed would be simulating the analysis's own assumption, not
+checking it. Per the task's own guidance, this is the cheaper method and it produces a fully
+defensible number: the ratio below follows from division, not from anything that could differ
+between implementations of the same fetch pattern. No RTL was touched, and none was added.
+
+### The geometry, for this model
+
+```
+dim = 64, n_heads = 8, n_kv_heads = 4          (given)
+head_size = dim / n_heads           = 8         elements
+kv_dim    = head_size * n_kv_heads  = 32         elements
+stride    = kv_dim * 4 bytes (fp32) = 128 bytes  per position   (DESIGN.md sec 7, confirmed)
+BURST_LEN = 128 words = 512 bytes                (R19's decision) = 4 positions/burst
+```
+
+The KV cache is `[layer][pos][kv_dim]`: every position's 128-byte block holds all
+`n_kv_heads = 4` heads' key (or value) vectors packed contiguously, 32 bytes each. A burst can
+only read a contiguous byte range -- it has no way to skip the other three heads' 32 bytes out
+of every 128 while it reads.
+
+### The waste ratio -- one number, independent of burst length or position count
+
+If the attention datapath processes **one kv_head's stream at a time** (the natural reading of
+DESIGN.md sec 7's own framing, "streams the key cache" for a given head), a burst covering `P`
+positions delivers `P * 128` bytes, of which only `P * 32` bytes -- that one head's slice -- is
+used:
+
+```
+useful fraction = head_size * 4 / stride = 32 / 128 = 1 / n_kv_heads = 25%
+wasted fraction = 75%                     ("roughly four positions' worth" fetched per head
+                                            wanted was the right intuition -- it is exactly 4x)
+```
+
+This ratio is **independent of burst length and independent of how many positions are
+streamed** -- it falls straight out of `head_size / kv_dim = 1 / n_kv_heads`, a property of the
+tensor layout, not of the fetch mechanics. Longer bursts change SDRAM protocol efficiency (R19);
+they do not change what fraction of a fetched byte is useful.
+
+### Combined with R19: the effective delivered bandwidth
+
+R19 measured 91.3% raw SDRAM efficiency at `BURST_LEN=128` with the CPU idle. A naive
+one-kv_head-at-a-time attention fetch would multiply that by the 25% useful fraction above:
+
+```
+effective useful bandwidth = 91.3% x 25% = 22.8%
+```
+
+Attention would be spending SDRAM cycles at barely over a fifth of the roofline this whole
+design is bounded by (DESIGN.md sec 2: "purely memory-bound... throughput is set by how fast
+weights arrive"). Since attention's K/V-streaming phases are memory-bound the same way the
+weight matmul is, this maps directly to the K-cache and V-cache streaming portions of attention
+time each taking roughly **4x longer** than the bytes actually needed would require -- not a
+rounding error, the dominant cost of running attention naively.
+
+**A sharper version of the same problem, if GQA sharing is also not exploited**: `n_heads=8`
+query heads share only `n_kv_heads=4` distinct key/value streams (2 query heads per kv_head). A
+datapath that re-fetches per *query* head rather than per *kv_head* doubles the traffic again --
+8 full-range passes instead of 4 -- for a floor of 25% useful fraction becoming an actual 12.5%
+realized if that grouping is missed too. This is a separate mistake from the stride waste itself
+and is called out because it is the more likely of the two to be introduced by accident if T064
+is written head-by-head without checking for it.
+
+### Recommendation: do NOT add a strided fetch mode
+
+The 75% waste is real, but it is avoidable **without any new fetch-engine RTL and without a
+strided burst mode**, because the waste is a *consumption* problem, not a *fetch* problem: all
+four heads' data is already sitting in the same 128-byte block the burst delivers. If T064's
+attention datapath is designed to consume **all `n_kv_heads` interleaved slices from a single
+contiguous stream pass** -- running up to 4 independent dot-product accumulations (one per
+kv_head, serving up to 8 query heads via GQA sharing) off the *same* fetched words, rather than
+re-streaming the position range once per head -- every byte fetched becomes useful and the waste
+disappears entirely. `acc_weight_fetch.v`'s burst mechanism and `muchtoremember_burst.v`'s burst
+port already deliver exactly the bytes needed for this; nothing there has to change. This is
+purely a requirement on T064's not-yet-written control/accumulator structure, and it should be
+stated as one when that task is specified: **stream once per position range, demultiplex four
+heads' worth of dot products from it, not four (or eight) separate streams.**
+
+**What a strided fetch mode would cost, for the record, since the alternative was rejected
+rather than merely not chosen**: `muchtoremember_burst.v`'s burst state machine would need a
+programmable skip count (capture `head_size` words, skip `kv_dim - head_size` words, repeat) in
+its column-address advance -- new state and a new register in the same FSM DESIGN.md sec 9a
+already restricted to a 3-line reorder to keep changes isolated, plus the consumer side would
+need to track which fetched words are "real" versus "skipped" if the FIFO write path is not also
+made conditional on the same counter. That is genuinely new control logic in a controller this
+project has deliberately kept minimal (research R10), for a problem the datapath-level fix above
+solves at zero fetch-engine cost. Build it only if a future measurement, once T064 exists and can
+actually be profiled, shows the datapath-level fix was not enough -- not before.
+
+---
+
 ## R26. T036's scale-timing bug — root cause, fix, and a second bug it uncovered (2026-08-20)
 
 ### The bug T035/T036 exposed
@@ -1086,104 +1183,7 @@ should treat this as the first thing to check, not a formality.
 
 ---
 
-## R25. KV-cache stride waste (T072, 2026-08-20) — measured before any attention RTL exists
-
-**Method**: analytical, not simulated. The waste is a pure geometry/layout fact independent of
-which numeric datapath T064 eventually builds, and it is derivable exactly from facts already
-established (DESIGN.md sec 7's layout/stride note) plus R19's already-measured burst-efficiency
-table. A cocotb testbench would need to model the KV-cache streaming datapath to produce this
-number, and that datapath does not exist yet (T064 has not started) -- building a simulation
-vehicle for hardware that isn't designed would be simulating the analysis's own assumption, not
-checking it. Per the task's own guidance, this is the cheaper method and it produces a fully
-defensible number: the ratio below follows from division, not from anything that could differ
-between implementations of the same fetch pattern. No RTL was touched, and none was added.
-
-### The geometry, for this model
-
-```
-dim = 64, n_heads = 8, n_kv_heads = 4          (given)
-head_size = dim / n_heads           = 8         elements
-kv_dim    = head_size * n_kv_heads  = 32         elements
-stride    = kv_dim * 4 bytes (fp32) = 128 bytes  per position   (DESIGN.md sec 7, confirmed)
-BURST_LEN = 128 words = 512 bytes                (R19's decision) = 4 positions/burst
-```
-
-The KV cache is `[layer][pos][kv_dim]`: every position's 128-byte block holds all
-`n_kv_heads = 4` heads' key (or value) vectors packed contiguously, 32 bytes each. A burst can
-only read a contiguous byte range -- it has no way to skip the other three heads' 32 bytes out
-of every 128 while it reads.
-
-### The waste ratio -- one number, independent of burst length or position count
-
-If the attention datapath processes **one kv_head's stream at a time** (the natural reading of
-DESIGN.md sec 7's own framing, "streams the key cache" for a given head), a burst covering `P`
-positions delivers `P * 128` bytes, of which only `P * 32` bytes -- that one head's slice -- is
-used:
-
-```
-useful fraction = head_size * 4 / stride = 32 / 128 = 1 / n_kv_heads = 25%
-wasted fraction = 75%                     ("roughly four positions' worth" fetched per head
-                                            wanted was the right intuition -- it is exactly 4x)
-```
-
-This ratio is **independent of burst length and independent of how many positions are
-streamed** -- it falls straight out of `head_size / kv_dim = 1 / n_kv_heads`, a property of the
-tensor layout, not of the fetch mechanics. Longer bursts change SDRAM protocol efficiency (R19);
-they do not change what fraction of a fetched byte is useful.
-
-### Combined with R19: the effective delivered bandwidth
-
-R19 measured 91.3% raw SDRAM efficiency at `BURST_LEN=128` with the CPU idle. A naive
-one-kv_head-at-a-time attention fetch would multiply that by the 25% useful fraction above:
-
-```
-effective useful bandwidth = 91.3% x 25% = 22.8%
-```
-
-Attention would be spending SDRAM cycles at barely over a fifth of the roofline this whole
-design is bounded by (DESIGN.md sec 2: "purely memory-bound... throughput is set by how fast
-weights arrive"). Since attention's K/V-streaming phases are memory-bound the same way the
-weight matmul is, this maps directly to the K-cache and V-cache streaming portions of attention
-time each taking roughly **4x longer** than the bytes actually needed would require -- not a
-rounding error, the dominant cost of running attention naively.
-
-**A sharper version of the same problem, if GQA sharing is also not exploited**: `n_heads=8`
-query heads share only `n_kv_heads=4` distinct key/value streams (2 query heads per kv_head). A
-datapath that re-fetches per *query* head rather than per *kv_head* doubles the traffic again --
-8 full-range passes instead of 4 -- for a floor of 25% useful fraction becoming an actual 12.5%
-realized if that grouping is missed too. This is a separate mistake from the stride waste itself
-and is called out because it is the more likely of the two to be introduced by accident if T064
-is written head-by-head without checking for it.
-
-### Recommendation: do NOT add a strided fetch mode
-
-The 75% waste is real, but it is avoidable **without any new fetch-engine RTL and without a
-strided burst mode**, because the waste is a *consumption* problem, not a *fetch* problem: all
-four heads' data is already sitting in the same 128-byte block the burst delivers. If T064's
-attention datapath is designed to consume **all `n_kv_heads` interleaved slices from a single
-contiguous stream pass** -- running up to 4 independent dot-product accumulations (one per
-kv_head, serving up to 8 query heads via GQA sharing) off the *same* fetched words, rather than
-re-streaming the position range once per head -- every byte fetched becomes useful and the waste
-disappears entirely. `acc_weight_fetch.v`'s burst mechanism and `muchtoremember_burst.v`'s burst
-port already deliver exactly the bytes needed for this; nothing there has to change. This is
-purely a requirement on T064's not-yet-written control/accumulator structure, and it should be
-stated as one when that task is specified: **stream once per position range, demultiplex four
-heads' worth of dot products from it, not four (or eight) separate streams.**
-
-**What a strided fetch mode would cost, for the record, since the alternative was rejected
-rather than merely not chosen**: `muchtoremember_burst.v`'s burst state machine would need a
-programmable skip count (capture `head_size` words, skip `kv_dim - head_size` words, repeat) in
-its column-address advance -- new state and a new register in the same FSM DESIGN.md sec 9a
-already restricted to a 3-line reorder to keep changes isolated, plus the consumer side would
-need to track which fetched words are "real" versus "skipped" if the FIFO write path is not also
-made conditional on the same counter. That is genuinely new control logic in a controller this
-project has deliberately kept minimal (research R10), for a problem the datapath-level fix above
-solves at zero fetch-engine cost. Build it only if a future measurement, once T064 exists and can
-actually be profiled, shows the datapath-level fix was not enough -- not before.
-
----
-
-## R25. Hardware session plan — two bitstreams, and one the R20 fix destroyed (2026-08-20)
+## R27. Hardware session plan — two bitstreams, and one the R20 fix destroyed (2026-08-20)
 
 ### The R20 rename overwrote the feature-003 bitstream
 
@@ -1223,5 +1223,40 @@ an **intermittent** one is timing. They call for entirely different next steps, 
 run they look identical. `acc_test.c` should therefore repeat its comparison many times and
 report whether failures are stable, rather than reporting one pass or fail — that turns an
 ambiguous session into a diagnostic one, at no extra operator cost.
+
+---
+
+## R28. Display-profile regression PASSES (T047/T056/T078, measured 2026-08-20)
+
+`make colorlight_i5.synth` after every shared-RTL change in this feature. Exit status **0**
+(checked directly, not through a pipe), nextpnr "Program finished normally".
+
+| | T006 baseline | Now | Delta |
+|---|---|---|---|
+| LUT4 | 13,937 (57%) | **13,825 (56%)** | **-112** |
+| DP16KD | 40/56 (71%) | 40/56 (71%) | 0 |
+| MULT18X18D | 15/28 (53%) | 15/28 (53%) | 0 |
+| EHXPLLL | 2/2 | 2/2 | 0 |
+| Max frequency `clk` | 32.6 MHz | **33.33 MHz** | +0.73 |
+| `clk_pixel` | — | 55.71 MHz (PASS at 25) | — |
+| `clk_tmds` | — | 352.61 MHz (PASS at 125) | — |
+
+**SC-014 satisfied**: the full-featured configuration still builds, with memory and multiplier
+usage bit-identical to the baseline and timing slightly better.
+
+The -112 LUT delta is worth naming rather than rounding away as noise. The display profile's
+own RTL did not change — every accelerator addition in `femtosoc.v` sits behind
+`ifdef NRV_IO_ACCEL`, which this profile does not define. What *did* change underneath it is
+**`RTL/SDRAM/muchtoremember_burst.v`**, which both profiles share: this feature added the
+`CPU_PRIORITY` and `STARVE_LIMIT` parameters and the `starve_guard_fired` output. With
+`CPU_PRIORITY` defaulting to 0 the behaviour is the original burst-first arbitration, but the
+restructuring evidently let the synthesizer fold a little logic it previously could not.
+
+A change that makes a shared module **smaller and faster** is the benign direction, and the
+behavioural equivalence is what R23's `burst_len=64` cross-check against R19's original numbers
+was for. But it is a real difference in a module the working display profile depends on, and
+recording it as "no change" would have been wrong. The only thing that would settle it
+completely is running the display profile on hardware — not part of this feature's scope, and
+flagged here so it is a known open item rather than an assumed one.
 
 ---

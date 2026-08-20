@@ -22,7 +22,10 @@ static void acc_matmul_q8(int out_slot, const QuantizedTensor *w,
     acc_set(ACC_GS, gs);
     acc_set(ACC_MODE, ACC_MODE_MATMUL);
     acc_set(ACC_CTRL, ACC_START);
-    while (acc_get(ACC_STATUS) & ACC_BUSY) { /* spin */ }
+    uint32_t status;
+    do {
+        status = acc_get(ACC_STATUS);
+    } while ((status & ACC_BUSY) || !(status & (ACC_DONE | ACC_ERR)));
 }
 ```
 
@@ -38,6 +41,20 @@ static void acc_matmul_q8(int out_slot, const QuantizedTensor *w,
 **Contract on the spin loop**: it MUST fit the CPU instruction cache. If it does not, waiting
 generates SDRAM traffic that competes with the very transfer being waited on (FR-015). Check
 this in the disassembly rather than assuming it.
+
+**A `!BUSY` read alone is NOT sufficient to conclude the operation is finished — this is a real
+race, not a theoretical one; T035/T036's integration testbench hit it on the very first
+operation it ever ran.** `BUSY` (`acc_regs.v`'s status word, bit 0) is an unlatched passthrough
+of `acc_top.v`'s `op_busy_r` register: it reads 0 the same cycle the control FSM leaves
+`S_RUNNING`. `DONE` (bit 1) is `acc_top.v`'s one-cycle `op_done` pulse, and `acc_regs.v` only
+captures that pulse into its own `done_latched` register on `acc_regs`' *own* next clock edge —
+one cycle after `BUSY` has already dropped. A driver that spins on `while (status & ACC_BUSY)`
+alone, as an earlier revision of this example did, can sample `STATUS` in exactly that one-cycle
+window and see `BUSY==0` with neither `DONE` nor `ERR` set yet, and incorrectly treat the
+operation as abandoned or the result buffer as unwritten. The fixed idiom above closes the
+window by also requiring `DONE` or `ERR`, both of which are genuinely latched (they hold until
+read/overwritten, so there is no equivalent race waiting the other way around). Any driver that
+checks `DONE` explicitly instead of using the blocking form above MUST apply the same rule.
 
 ---
 

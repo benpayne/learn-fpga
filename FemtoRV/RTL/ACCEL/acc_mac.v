@@ -381,7 +381,39 @@ module acc_mac #(
                 if (same_sign) begin
                     mag_wide = {1'b0, mant_hi_ext} + {1'b0, mant_lo_shifted};
                 end else begin
-                    mag_wide = {1'b0, mant_hi_ext - mant_lo_shifted}; // always >= 0: hi has larger magnitude
+                    // BUG FIX (found via T035/T036 integration testing --
+                    // acc_mac.v itself was unit-tested 1000/1000 bit-exact
+                    // in acc_mac_tb.py, but that suite never chained three
+                    // real-data groups through a same-magnitude-order
+                    // subtraction the way a real matmul row does; see
+                    // research.md for the reproduction and exact-arithmetic
+                    // proof this was really the wrong answer, not a
+                    // reference-model bug).
+                    //
+                    // mant_lo_shifted is mant_lo_ext right-shifted by
+                    // exp_diff and TRUNCATED (align_sticky flags that real
+                    // bits were dropped). For addition that only makes the
+                    // sum an UNDER-estimate of the true value, which is
+                    // exactly what the guard/sticky convention below
+                    // expects ("bits live below what we kept, so lean
+                    // toward rounding up"). For SUBTRACTION it is the
+                    // opposite: hi - trunc(lo) OVER-shoots the true
+                    // difference, because we subtracted less than the true
+                    // lo. Left uncorrected, the result can round the wrong
+                    // way at exactly the boundary this project's test
+                    // suite caught (mantissa 0xCEE680 was correct, this
+                    // path produced 0xCEE681).
+                    //
+                    // Fix: when any bits were truncated off the subtrahend
+                    // (align_sticky), subtract the CEILING of mant_lo_shifted
+                    // instead of the floor -- i.e. subtract one extra unit
+                    // in the subtrahend's own LSB. That makes the result a
+                    // valid lower bound of the true difference again, so
+                    // the same guard/sticky rounding logic used for
+                    // addition is correct here too. align_sticky is folded
+                    // into the VALUE here, not into `sticky` below, to
+                    // avoid double-counting it.
+                    mag_wide = {1'b0, mant_hi_ext} - {1'b0, mant_lo_shifted} - {27'b0, align_sticky};
                 end
 
                 if (mag_wide == 28'b0) begin
@@ -405,7 +437,12 @@ module acc_mac #(
 
                     mant_window = norm_field[26:3];
                     guard       = norm_field[2];
-                    sticky      = align_sticky | rshift_sticky | norm_field[1] | norm_field[0];
+                    // align_sticky is included here for the same_sign
+                    // (addition) path only -- the subtraction path already
+                    // folded it into mag_wide's value above, via the
+                    // ceiling adjustment, so including it again here would
+                    // double-count it and bias rounding the wrong way.
+                    sticky      = (same_sign & align_sticky) | rshift_sticky | norm_field[1] | norm_field[0];
                     round_up    = guard & (sticky | mant_window[0]);
                     mant_rounded = {1'b0, mant_window} + round_up;
                     if (mant_rounded[24]) begin
