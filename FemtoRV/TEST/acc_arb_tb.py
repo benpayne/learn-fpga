@@ -227,10 +227,20 @@ async def cpu_hammer(dut):
 # ---------------------------------------------------------------------
 # Scenario driver
 # ---------------------------------------------------------------------
-async def run_scenario(dut, burst_len, cpu_period, duration_cycles):
+async def run_scenario(dut, burst_len, cpu_period, duration_cycles=None, target_bursts=None):
     """Runs a continuous accelerator burst stream, plus a CPU side driven
-    according to cpu_period, concurrently for duration_cycles, then
-    measures both sides. Returns a dict of results.
+    according to cpu_period, concurrently, then measures both sides.
+    Returns a dict of results.
+
+    Exactly one of duration_cycles / target_bursts must be given:
+      duration_cycles -- run for a fixed number of cycles (throughput is
+                         an approximation -- the last burst in flight when
+                         time runs out is not counted).
+      target_bursts    -- run until the accelerator has COMPLETED this many
+                         bursts, then stop. Gives an exact, reproducible
+                         burst count per measurement (statistical
+                         confidence is visible directly in the result)
+                         instead of an estimated one.
 
     cpu_period:
       None      -- CPU idle, no traffic.
@@ -239,6 +249,9 @@ async def run_scenario(dut, burst_len, cpu_period, duration_cycles):
       "hammer"  -- continuous, always-pending CPU load (see cpu_hammer);
                    no per-request latencies are collected in this mode.
     """
+    assert (duration_cycles is None) != (target_bursts is None), \
+        "run_scenario: pass exactly one of duration_cycles or target_bursts"
+
     clock = Clock(dut.clk, CLK_PERIOD_NS, unit="ns")
     cocotb.start_soon(clock.start())
 
@@ -267,7 +280,14 @@ async def run_scenario(dut, burst_len, cpu_period, duration_cycles):
     elif cpu_period is not None:
         cpu_task = cocotb.start_soon(cpu_traffic_generator(dut, cpu_period, cpu_stats))
 
-    await ClockCycles(dut.clk, duration_cycles)
+    if target_bursts is not None:
+        elapsed = 0
+        while accel_stats["bursts"] < target_bursts:
+            await RisingEdge(dut.clk)
+            elapsed += 1
+        duration_cycles = elapsed
+    else:
+        await ClockCycles(dut.clk, duration_cycles)
 
     accel_task.cancel()
     if cpu_task is not None:
@@ -343,6 +363,51 @@ async def test_cpu_heavy_load(dut):
     assert r["words_per_cycle"] > 0.02, "accelerator was fully starved, not merely degraded"
 
 
+# ---------------------------------------------------------------------
+# The three scenarios above were written and last measured against
+# burst_len=64, the pre-R19 default. R19/T041 decided BURST_LEN=128 for
+# the production config (acc_top.v/femtosoc.v both instantiate it that
+# way), so an SC-007/SC-008 verdict against the actual shipped
+# configuration needs its own measurement, not an extrapolation from the
+# 64-word numbers above. Mirrors test_cpu_light_load/test_cpu_heavy_load/
+# test_starvation_guard_fires_under_pathological_load exactly, at
+# burst_len=128, with the same thresholds (the "one burst boundary" bound
+# in SC-007 scales with burst_len, so 64+80 -> 128+80 below).
+# ---------------------------------------------------------------------
+@cocotb.test()
+async def test_cpu_light_load_bl128(dut):
+    """burst_len=128 (production default) counterpart of test_cpu_light_load."""
+    r = await run_scenario(dut, burst_len=128, cpu_period=500, duration_cycles=10000)
+    log_result(dut, "cpu-light-bl128", r)
+
+    assert r["cpu_count"] > 3, "CPU generator did not run enough requests"
+    assert r["words_per_cycle"] > 0.7, f"accelerator throughput degraded too much under light load: {r['words_per_cycle']:.3f}"
+    assert r["cpu_max_wait"] < 128 + 80, f"CPU worst-case wait exceeded one burst by a wide margin: {r['cpu_max_wait']}"
+
+
+@cocotb.test()
+async def test_cpu_heavy_load_bl128(dut):
+    """burst_len=128 (production default) counterpart of test_cpu_heavy_load
+    -- the actual SC-007/SC-008 measurement against the shipped
+    configuration, not the pre-decision burst_len=64 one above."""
+    r = await run_scenario(dut, burst_len=128, cpu_period=20, duration_cycles=10000)
+    log_result(dut, "cpu-heavy-bl128", r)
+
+    assert r["cpu_count"] > 50, "CPU generator did not run enough requests"
+    assert r["cpu_max_wait"] < 128 + 80, f"CPU worst-case wait grew with load -- arbitration is not bounding it: {r['cpu_max_wait']}"
+    assert r["words_per_cycle"] > 0.02, "accelerator was fully starved, not merely degraded"
+
+
+@cocotb.test()
+async def test_starvation_guard_fires_bl128(dut):
+    """burst_len=128 counterpart of test_starvation_guard_fires_under_pathological_load."""
+    r = await run_scenario(dut, burst_len=128, cpu_period="hammer", duration_cycles=10000)
+    log_result(dut, "pathological-bl128", r)
+
+    assert r["starve_guard_fired"] > 0, "guard never fired even under continuous CPU pressure -- accelerator would starve forever"
+    assert r["accel_bursts"] > 0, "accelerator made zero progress despite the anti-starvation guard"
+
+
 @cocotb.test()
 async def test_starvation_guard_fires_under_pathological_load(dut):
     """Deliberately pathological: CPU issues a request every single cycle,
@@ -358,34 +423,43 @@ async def test_starvation_guard_fires_under_pathological_load(dut):
     assert r["accel_bursts"] > 0, "accelerator made zero progress despite the anti-starvation guard"
 
 
+# Target burst counts for the two sweeps below. The CPU-idle sweep is the
+# SC-006 gate (>= 90% of theoretical rate with no competing traffic) and a
+# design-parameter decision hangs on it, so it gets the larger sample. The
+# cpu_period=100 sweep is supplementary "realistic load" context for the
+# same table and gets a smaller, still much-improved, sample.
+SWEEP_TARGET_BURSTS_IDLE = 3000
+SWEEP_TARGET_BURSTS_LOADED = 1000
+SC006_THRESHOLD = 0.90
+
+
 @cocotb.test()
 async def test_burst_length_sweep(dut):
     """Sweep BURST_LEN across 16/32/64/128/256 words at a fixed, moderate
-    CPU miss rate (every 100 cycles). Produces the measured efficiency-vs-
-    latency table that replaces the ESTIMATED table in ACCEL/DESIGN.md sec
-    6.3 (constitution Principle VI: measurements replace estimates)."""
+    CPU miss rate (every 100 cycles), each length run until
+    SWEEP_TARGET_BURSTS_LOADED bursts have completed. Produces the
+    measured efficiency-vs-latency table that replaces the ESTIMATED table
+    in ACCEL/DESIGN.md sec 6.3 (constitution Principle VI: measurements
+    replace estimates)."""
     burst_lengths = [16, 32, 64, 128, 256]
     results = []
     for bl in burst_lengths:
-        # Scale duration so every length gets a comparable number of bursts
-        # (~25) rather than a comparable number of cycles.
-        duration = max(6000, bl * 25 + 2000)
-        r = await run_scenario(dut, burst_len=bl, cpu_period=100, duration_cycles=duration)
+        r = await run_scenario(dut, burst_len=bl, cpu_period=100, target_bursts=SWEEP_TARGET_BURSTS_LOADED)
         log_result(dut, f"sweep bl={bl}", r)
         results.append(r)
 
     dut._log.info("=" * 78)
-    dut._log.info("Measured burst-length sweep (cpu_period=100 cycles):")
-    dut._log.info(f"{'burst':>6} {'eff%':>7} {'cpu_max':>8} {'cpu_mean':>9} {'guard_fired':>12}")
+    dut._log.info(f"Measured burst-length sweep (cpu_period=100 cycles, target {SWEEP_TARGET_BURSTS_LOADED} bursts/length):")
+    dut._log.info(f"{'burst':>6} {'eff%':>7} {'bursts':>7} {'cpu_n':>6} {'cpu_max':>8} {'cpu_mean':>9} {'guard_fired':>12}")
     for r in results:
         dut._log.info(
-            f"{r['burst_len']:>6} {r['words_per_cycle']*100:>6.1f}% "
-            f"{r['cpu_max_wait']:>8} {r['cpu_mean_wait']:>9.1f} {r['starve_guard_fired']:>12}"
+            f"{r['burst_len']:>6} {r['words_per_cycle']*100:>6.1f}% {r['accel_bursts']:>7} "
+            f"{r['cpu_count']:>6} {r['cpu_max_wait']:>8} {r['cpu_mean_wait']:>9.1f} {r['starve_guard_fired']:>12}"
         )
     dut._log.info("=" * 78)
 
     for r in results:
-        assert r["accel_bursts"] > 5, f"burst_len={r['burst_len']}: too few bursts completed to trust the measurement"
+        assert r["accel_bursts"] >= SWEEP_TARGET_BURSTS_LOADED, f"burst_len={r['burst_len']}: target burst count not reached"
         assert r["words_per_cycle"] > 0.3, f"burst_len={r['burst_len']}: efficiency implausibly low ({r['words_per_cycle']:.3f})"
 
     # Efficiency should increase monotonically with burst length (longer
@@ -400,26 +474,32 @@ async def test_burst_length_sweep_cpu_idle(dut):
     the unshared roofline per burst length -- this is the like-for-like
     comparison against ACCEL/DESIGN.md sec 6.3's ESTIMATED table, which
     modelled pure burst efficiency (setup-cycle overhead amortised over
-    burst_len words) with no CPU contention at all. The cpu-load sweep
-    above additionally measures what the design document did not attempt
-    to estimate: efficiency under real arbitration contention."""
+    burst_len words) with no CPU contention at all, AND the direct SC-006
+    gate ('sustain at least 90% of the theoretical memory rate with no
+    competing traffic'). Each length runs until SWEEP_TARGET_BURSTS_IDLE
+    bursts have completed -- two to three orders of magnitude more samples
+    than the first pass (25-375 bursts), because this measurement decides
+    a design parameter (the default BURST_LEN)."""
     burst_lengths = [16, 32, 64, 128, 256]
     results = []
     for bl in burst_lengths:
-        duration = max(6000, bl * 25 + 2000)
-        r = await run_scenario(dut, burst_len=bl, cpu_period=None, duration_cycles=duration)
+        r = await run_scenario(dut, burst_len=bl, cpu_period=None, target_bursts=SWEEP_TARGET_BURSTS_IDLE)
         log_result(dut, f"idle-sweep bl={bl}", r)
         results.append(r)
 
     dut._log.info("=" * 78)
-    dut._log.info("Measured burst-length sweep, CPU idle (unshared roofline):")
-    dut._log.info(f"{'burst':>6} {'eff%':>7} {'bursts':>7}")
+    dut._log.info(f"Measured burst-length sweep, CPU idle / SC-006 gate (target {SWEEP_TARGET_BURSTS_IDLE} bursts/length):")
+    dut._log.info(f"{'burst':>6} {'eff%':>7} {'bursts':>7} {'cycles':>10} {'SC-006(>=90%)':>14}")
     for r in results:
-        dut._log.info(f"{r['burst_len']:>6} {r['words_per_cycle']*100:>6.1f}% {r['accel_bursts']:>7}")
+        verdict = "PASS" if r["words_per_cycle"] >= SC006_THRESHOLD else "FAIL"
+        dut._log.info(
+            f"{r['burst_len']:>6} {r['words_per_cycle']*100:>6.1f}% {r['accel_bursts']:>7} "
+            f"{r['duration_cycles']:>10} {verdict:>14}"
+        )
     dut._log.info("=" * 78)
 
     for r in results:
-        assert r["accel_bursts"] > 5, f"burst_len={r['burst_len']}: too few bursts completed to trust the measurement"
+        assert r["accel_bursts"] >= SWEEP_TARGET_BURSTS_IDLE, f"burst_len={r['burst_len']}: target burst count not reached"
 
     effs = [r["words_per_cycle"] for r in results]
     assert effs == sorted(effs), f"efficiency did not increase monotonically with burst length: {effs}"

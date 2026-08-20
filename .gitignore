@@ -36,3 +36,6 @@ sim_build/
 *.fst
 *.vcd
 pico_rom_emulator/build/
+
+# host-built verification harness binary (FIRMWARE/llama2/tools)
+verify_fw_math

@@ -855,3 +855,69 @@ is rescaled with the **next** group's scale. Confirmed arithmetically — hardwa
 figures; it does **not** produce correct results, and Session B must wait for the fix.
 
 ---
+
+## R23. SC-007 / SC-008 measured under CPU contention (T044, 2026-08-20)
+
+R19 measured burst efficiency under CPU load as part of deciding `BURST_LEN`, but never framed
+the result against SC-007 ("CPU worst-case wait is bounded, documented, and no worse than the
+chosen transfer size implies") or SC-008 ("accelerator throughput degrades gradually under
+sustained processor traffic and never reaches zero") by name, and its own light/heavy/
+pathological scenario tests (`acc_arb_tb.py`) were hardcoded to `burst_len=64` — the pre-R19
+default, not the `BURST_LEN=128` the profile actually ships (R19's decision, R22's synthesized
+config). This section is the explicit SC-007/SC-008 verdict against the shipped configuration,
+plus a rerun of the original `burst_len=64` scenarios as a same-testbench sanity cross-check.
+Testbench: `acc_arb_tb.py` (`make MODULE=acc_arb_tb SIM=icarus`), 6/6 original tests + 3 new
+`_bl128` tests, all PASS.
+
+### burst_len=128 (production) — the SC-007/SC-008 gate
+
+| Scenario | cpu_period | accel eff | CPU n | CPU max wait | CPU mean wait | guard_fired |
+|---|---|---|---|---|---|---|
+| idle (R19, for reference) | none | 91.3% | 0 | — | — | 0 |
+| light | 500 cyc | 90.4% | 17 | **67** | 66.8 | 0 |
+| heavy | 20 cyc | 87.5% | 68 | **128** | 126.2 | 0 |
+| pathological (hammer, every cycle) | 1 cyc | 53.8% | — | — | — | **42** |
+
+**SC-007 — PASS.** CPU worst-case wait under heavy contention (every 20 cycles, the CPU as busy
+as any realistic miss rate gets) is exactly **128 cycles — one burst length, no more**. That is
+the tightest possible confirmation of "no worse than the chosen transfer size implies": the
+worst case does not merely stay bounded, it equals the bound. Light load's 67-cycle max is
+consistent with the same one-burst ceiling (partial overlap with an in-flight burst rather than
+the full length).
+
+**SC-008 — PASS.** Efficiency degrades smoothly as CPU load rises — 91.3% (idle) -> 90.4% (light)
+-> 87.5% (heavy) — a shallow, monotonic decline, not a cliff. Even the deliberately pathological
+hammer scenario (CPU pending literally every cycle, not a load any real firmware can produce)
+holds 53.8%, more than half the unshared roofline, because the anti-starvation guard forces a
+burst through periodically. Throughput never approaches zero at any tested load.
+
+**Guard usage — as designed.** `starve_guard_fired=0` at every realistic load (idle/light/heavy)
+confirms the guard is not needed in practice, matching the workload analysis in DESIGN.md 6.1.
+`starve_guard_fired=42` under the hammer scenario proves the mechanism itself works: without it,
+`cpu_pending` never drops for even one cycle under that driver, and CPU_PRIORITY=1 alone would
+starve the accelerator completely (0 bursts, 0.0% eff) rather than the measured 53.8%.
+
+### burst_len=64 (historical) — same scenarios, for cross-check against R19
+
+| Scenario | cpu_period | accel eff | CPU n | CPU max wait | CPU mean wait | guard_fired |
+|---|---|---|---|---|---|---|
+| idle | none | 85.7% | 0 | — | — | 0 |
+| light | 500 cyc | 84.8% | 18 | 30 | 28.6 | 0 |
+| heavy | 20 cyc | 79.4% | 123 | **64** | 60.7 | 0 |
+| pathological (hammer) | 1 cyc | 37.1% | — | — | — | **58** |
+
+Same pattern at the old burst length: heavy-load CPU max wait (64 cycles) again equals exactly
+one burst, and pathological-load efficiency (37.1%) matches R19's own "Starvation guard:
+unreachable under realistic load" section number for number — same deterministic testbench, same
+RTL, same result, as expected. Included for completeness now that the SC-007/SC-008 gates have a
+dedicated write-up; R19 remains the source for the `BURST_LEN` decision itself.
+
+### Test additions
+
+Three new `@cocotb.test()` functions added to `acc_arb_tb.py` — `test_cpu_light_load_bl128`,
+`test_cpu_heavy_load_bl128`, `test_starvation_guard_fires_bl128` — mirroring the existing
+64-word scenarios at `burst_len=128`, with the SC-007 bound scaled accordingly (`128 + 80`
+cycles instead of `64 + 80`). The original three are left unmodified as the R19 cross-check
+above relies on them measuring exactly what they always measured.
+
+---
