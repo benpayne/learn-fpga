@@ -959,3 +959,269 @@ needs a genuinely different firmware config knows to fix it first**, and restore
 `colorlight_i5_llm` after the regression run.
 
 ---
+
+## R26. T036's scale-timing bug — root cause, fix, and a second bug it uncovered (2026-08-20)
+
+### The bug T035/T036 exposed
+
+`acc_top.v`'s `w_scale_q`/`x_scale_q` registers (the weight- and activation-side per-group
+rescale factors fed to `acc_mac`) were re-latched from `weight_scale_mem[group_count_q]` /
+`act_mem[act_xs_addr_c]` on **every** `issue_read_c` cycle, not once per group. `group_count_q`
+itself already advances correctly — on a group's own last address-phase word, using the
+not-yet-incremented index — but the very next address-phase cycle (the *next* group's first
+word) re-reads the scale memories using the now-incremented index and overwrites the register,
+one cycle before `acc_mac`'s `group_done` was ever going to consume the value that was correct.
+Net effect: every group immediately followed by another group — i.e. essentially every group in
+every real operation — got rescaled with the wrong (next) group's scale.
+
+Reproduction (wq, layer 0, row 0, x_slot random int8): `mac_group_acc = 50166`, bit-exact match
+to the independent Python reference, proving the integer datapath was never at fault.
+`mac_row_result` came out `0x423f57a1 = 47.8356`. `50166 * w_s[1](0.004365294...) *
+xs[0](0.21843788) = 47.8356` exactly — row 0 rescaled with row 1's weight scale. The correct
+value, `50166 * w_s[0](0.002416676...) * xs[0] = 26.4823`, is what the fix now produces.
+
+**Why `acc_mac.v`'s own 1000/1000 bit-exact unit tests never caught this**: they drive one group
+in isolation (or, in `test_multi_group_row`, several groups fed directly by the testbench with
+full control over timing). The bug only exists in the interaction between `acc_top`'s continuous,
+back-to-back address-phase streaming and its own scale-register update cadence — a defect at
+the integration level, invisible to any test that doesn't stream two real groups through real
+`acc_weight_fetch`/SDRAM timing back to back. This is the reason Principle III (bottom-up,
+unit-then-subsystem-then-integrated) exists.
+
+**Fix**: gate the `w_scale_q`/`x_scale_q` register updates on `issue_read_c && is_group_last_c`
+instead of `issue_read_c` alone, so each register only re-latches once per group, using
+`group_count_q`/`act_group_idx_q` at the one cycle they are guaranteed to still hold the
+completing group's own index. Verified BURST_LEN-independent: identical pass/fail behaviour
+measured at BURST_LEN 64, 128 and 256 (the bug's visibility had appeared to depend on burst
+length before the fix — every 8th row of `wq` matched, coinciding with the one row boundary per
+burst that landed on a FIFO-empty stall — but that was burst timing coincidentally inserting the
+missing settle cycle sometimes, not the actual cause; the fix works because the mechanism itself
+is now correct, not because of timing).
+
+### The second bug this fix's own verification uncovered
+
+After the scale-timing fix, `wq` (1 group/row), `w1` (1 group/row) and the classifier (1
+group/row) passed bit-exact immediately. `w2` (192x64, **3 groups/row** — the shape whose
+pre-padding inner dimension caused R16) still showed 1 mismatched row out of 64, off by exactly
+1 ULP: hardware produced `0xc3ec31d6 (-472.38934...)`, the reference expected `0xc3ec31d5
+(-472.38931...)`.
+
+Independent exact-arithmetic check (Python `Decimal`, computing the true infinite-precision sum
+of the two real float32 operands and rounding once): the correctly-rounded IEEE754 result is
+`...d5`, matching the reference — not a reference-model bug.
+
+Traced to a real bug in `acc_mac.v`'s `fp_add32`, present since T030 and NOT triggered by
+1000/1000 unit-test vectors: the subtraction path (`same_sign == 0`) aligns the smaller operand
+by right-shifting and **truncating** it, tracking an `align_sticky` flag for any bits lost. For
+addition this is correct — truncating the smaller addend makes the raw sum an *under*-estimate of
+the true value, exactly what the guard/sticky round-to-nearest convention expects. For
+subtraction it is backwards: `hi - truncate(lo)` is an *over*-estimate of the true difference,
+because less was subtracted than the true value. Left as `align_sticky` OR'd into the ordinary
+sticky bit, this can bias the final round-to-nearest-even decision the wrong way at exactly the
+boundary this case hit (guard=1, and the old sticky computation said "round up" when the
+correctly-rounded answer required rounding down). Confirmed the diagnosis by re-deriving `mag_wide`
+by hand for this pair and showing the pre-rounding mantissa was already the correct answer —
+only the round-up decision was wrong.
+
+**Fix**: for the subtraction path only, when `align_sticky` indicates bits were truncated off the
+subtrahend, subtract the *ceiling* of the shifted subtrahend (add 1) instead of the floor, before
+computing `mag_wide`. This restores `hi - ceil(lo)` as a valid lower bound of the true difference,
+which makes the existing guard/sticky rounding logic correct again for both paths. `align_sticky`
+is now folded into `mag_wide`'s value for the subtraction path (not also OR'd into `sticky`,
+which would double-count it) and still OR'd into `sticky` unchanged for the addition path.
+
+**Verification**: `acc_mac_tb.py` still 7/7, still 1000/1000 bit-identical after the fix (no
+regression against the existing unit suite). `acc_unit_tb.py`: `wq`, `w1`, `w2`, `classifier` all
+pass bit-exact at BURST_LEN 64/128/256. `test_row_interleave_no_gap` (gs=LANES=4, the documented,
+intentionally-unenforced "acc_top must not interleave a second row's groups into acc_mac before
+the first row's last row_valid" contract) still fails, as expected — confirmed by inspection that
+its failure mode is gross corruption (results differing by orders of magnitude, including sign
+flips), the signature of accumulator cross-contamination between rows, not a residual 1-ULP
+rounding issue. This is the SAME known, documented architectural limitation from T030 (`GS_MIN=4`
+with `LANES=4` genuinely violates the undocumented "gs/LANES >= pipeline depth" assumption); it is
+not something either of this entry's two fixes touches, and this model never uses `gs` below 64.
+Left open for a design decision (raise `GS_MIN`, or add stall logic in `acc_top`) rather than
+patched under this fix's scope.
+
+### Synthesis smoke check after the fix
+
+Per Principle I and R21/R22's own lesson ("simulation says nothing about synthesizability"),
+re-ran R21's exact standalone reproducer (`share` omitted, per `BOARDS/colorlight_i5_llm.mk`'s
+`YOSYS_LLM_COARSE`) against the post-fix `acc_top.v`/`acc_mac.v`, under `ulimit -v 8000000` (R21:
+the unguarded run reached 21 GB RSS before being OOM-killed):
+
+```
+yosys -p "read_verilog -I. acc_top.v acc_mac.v acc_regs.v acc_weight_fetch.v;
+          synth_ecp5 -abc9 -top acc_top -run begin:coarse; <YOSYS_LLM_COARSE>;
+          synth_ecp5 -abc9 -top acc_top -run map_ram:end; stat"
+```
+
+**Exit status 0** (checked directly, not through a pipe — R21's own lesson), 21.7s CPU, 226 MB
+peak RSS. No hang, no OOM, `share` avoidance still works on the changed logic.
+
+| | LUT4 | CCU2C | TRELLIS_FF | MULT18X18D | DP16KD |
+|---|---|---|---|---|---|
+| `acc_top`, pre-fix (R21) | 2,784 | — | 1,279 | 17 | 33 |
+| `acc_top`, post-fix (this entry) | 2,914 | 682 | 1,343 | 17 | 33 |
+| Delta | +130 (+4.7%) | — | +64 (+5.0%) | +0 | +0 |
+
+Both fixes are pure combinational-logic changes (an extra subtraction/mux in `fp_add32`, a
+changed clock-enable condition on two registers) — no new multiplier, no new memory, matching
+the small LUT/FF growth and zero DSP/BRAM change.
+
+**Timing was NOT re-measured, and that gap matters more than the resource table above.**
+`acc_top` cannot be placed standalone (236 top-level port bits against CABGA381's 197 usable
+`TRELLIS_IO` — nextpnr correctly refuses; a submodule's wide internal buses are not real pins).
+A real `fmax` number requires the full `femtosoc.v`-top board build R22 already ran once. R22's
+build — run on the **pre-fix** RTL — found the critical path is `acc_mac.v`'s fp32 rescale itself
+(`u_mac.s3_rescaled_f_q -> u_mac.row_result_q`, 35.5 ns, 26.21 MHz achieved against a 25 MHz
+target — only 4.8% margin) and explicitly warned its bitstream must not be flashed because it
+contained this entry's first bug. This entry's `fp_add32` fix adds a subtraction and a mux
+*directly onto that same path* (the row-accumulate call in `fp_add32`, which is exactly
+`s3_rescaled_f_q`'s consumer). Given the margin was already thin before any of this change,
+**a full board-level timing re-close is required before the next flash, and should not be assumed
+to still pass at 25 MHz** — it may well still clear, but that is a measurement to make, not an
+assumption to carry forward. Whoever runs the next `colorlight_i5_llm` build (R22's "Session B")
+should treat this as the first thing to check, not a formality.
+
+---
+
+## R25. KV-cache stride waste (T072, 2026-08-20) — measured before any attention RTL exists
+
+**Method**: analytical, not simulated. The waste is a pure geometry/layout fact independent of
+which numeric datapath T064 eventually builds, and it is derivable exactly from facts already
+established (DESIGN.md sec 7's layout/stride note) plus R19's already-measured burst-efficiency
+table. A cocotb testbench would need to model the KV-cache streaming datapath to produce this
+number, and that datapath does not exist yet (T064 has not started) -- building a simulation
+vehicle for hardware that isn't designed would be simulating the analysis's own assumption, not
+checking it. Per the task's own guidance, this is the cheaper method and it produces a fully
+defensible number: the ratio below follows from division, not from anything that could differ
+between implementations of the same fetch pattern. No RTL was touched, and none was added.
+
+### The geometry, for this model
+
+```
+dim = 64, n_heads = 8, n_kv_heads = 4          (given)
+head_size = dim / n_heads           = 8         elements
+kv_dim    = head_size * n_kv_heads  = 32         elements
+stride    = kv_dim * 4 bytes (fp32) = 128 bytes  per position   (DESIGN.md sec 7, confirmed)
+BURST_LEN = 128 words = 512 bytes                (R19's decision) = 4 positions/burst
+```
+
+The KV cache is `[layer][pos][kv_dim]`: every position's 128-byte block holds all
+`n_kv_heads = 4` heads' key (or value) vectors packed contiguously, 32 bytes each. A burst can
+only read a contiguous byte range -- it has no way to skip the other three heads' 32 bytes out
+of every 128 while it reads.
+
+### The waste ratio -- one number, independent of burst length or position count
+
+If the attention datapath processes **one kv_head's stream at a time** (the natural reading of
+DESIGN.md sec 7's own framing, "streams the key cache" for a given head), a burst covering `P`
+positions delivers `P * 128` bytes, of which only `P * 32` bytes -- that one head's slice -- is
+used:
+
+```
+useful fraction = head_size * 4 / stride = 32 / 128 = 1 / n_kv_heads = 25%
+wasted fraction = 75%                     ("roughly four positions' worth" fetched per head
+                                            wanted was the right intuition -- it is exactly 4x)
+```
+
+This ratio is **independent of burst length and independent of how many positions are
+streamed** -- it falls straight out of `head_size / kv_dim = 1 / n_kv_heads`, a property of the
+tensor layout, not of the fetch mechanics. Longer bursts change SDRAM protocol efficiency (R19);
+they do not change what fraction of a fetched byte is useful.
+
+### Combined with R19: the effective delivered bandwidth
+
+R19 measured 91.3% raw SDRAM efficiency at `BURST_LEN=128` with the CPU idle. A naive
+one-kv_head-at-a-time attention fetch would multiply that by the 25% useful fraction above:
+
+```
+effective useful bandwidth = 91.3% x 25% = 22.8%
+```
+
+Attention would be spending SDRAM cycles at barely over a fifth of the roofline this whole
+design is bounded by (DESIGN.md sec 2: "purely memory-bound... throughput is set by how fast
+weights arrive"). Since attention's K/V-streaming phases are memory-bound the same way the
+weight matmul is, this maps directly to the K-cache and V-cache streaming portions of attention
+time each taking roughly **4x longer** than the bytes actually needed would require -- not a
+rounding error, the dominant cost of running attention naively.
+
+**A sharper version of the same problem, if GQA sharing is also not exploited**: `n_heads=8`
+query heads share only `n_kv_heads=4` distinct key/value streams (2 query heads per kv_head). A
+datapath that re-fetches per *query* head rather than per *kv_head* doubles the traffic again --
+8 full-range passes instead of 4 -- for a floor of 25% useful fraction becoming an actual 12.5%
+realized if that grouping is missed too. This is a separate mistake from the stride waste itself
+and is called out because it is the more likely of the two to be introduced by accident if T064
+is written head-by-head without checking for it.
+
+### Recommendation: do NOT add a strided fetch mode
+
+The 75% waste is real, but it is avoidable **without any new fetch-engine RTL and without a
+strided burst mode**, because the waste is a *consumption* problem, not a *fetch* problem: all
+four heads' data is already sitting in the same 128-byte block the burst delivers. If T064's
+attention datapath is designed to consume **all `n_kv_heads` interleaved slices from a single
+contiguous stream pass** -- running up to 4 independent dot-product accumulations (one per
+kv_head, serving up to 8 query heads via GQA sharing) off the *same* fetched words, rather than
+re-streaming the position range once per head -- every byte fetched becomes useful and the waste
+disappears entirely. `acc_weight_fetch.v`'s burst mechanism and `muchtoremember_burst.v`'s burst
+port already deliver exactly the bytes needed for this; nothing there has to change. This is
+purely a requirement on T064's not-yet-written control/accumulator structure, and it should be
+stated as one when that task is specified: **stream once per position range, demultiplex four
+heads' worth of dot products from it, not four (or eight) separate streams.**
+
+**What a strided fetch mode would cost, for the record, since the alternative was rejected
+rather than merely not chosen**: `muchtoremember_burst.v`'s burst state machine would need a
+programmable skip count (capture `head_size` words, skip `kv_dim - head_size` words, repeat) in
+its column-address advance -- new state and a new register in the same FSM DESIGN.md sec 9a
+already restricted to a 3-line reorder to keep changes isolated, plus the consumer side would
+need to track which fetched words are "real" versus "skipped" if the FIFO write path is not also
+made conditional on the same counter. That is genuinely new control logic in a controller this
+project has deliberately kept minimal (research R10), for a problem the datapath-level fix above
+solves at zero fetch-engine cost. Build it only if a future measurement, once T064 exists and can
+actually be profiled, shows the datapath-level fix was not enough -- not before.
+
+---
+
+## R25. Hardware session plan — two bitstreams, and one the R20 fix destroyed (2026-08-20)
+
+### The R20 rename overwrote the feature-003 bitstream
+
+R20 renamed this profile's artifacts to `femtosoc_llm.*` so the two profiles would stop
+colliding. That name was **already occupied**: `femtosoc_llm.bit` dated 2026-08-18 was feature
+003's working minimal-SoC image, produced by the manual `cp femtosoc.bit femtosoc_llm.bit` step
+the rename replaced. The first accelerator build overwrote it.
+
+No real loss — it regenerates by building this profile with `NRV_IO_ACCEL` undefined — but worth
+recording plainly: **the fix for a filename collision collided with a file.** A rename that
+claims a name should check whether anything is standing there. Recorded rather than quietly
+rebuilt, because "the bitstream on disk is not the one its name implies" is precisely the class
+of failure R20 exists to prevent, and it happened once more on the way to preventing it.
+
+### Two bitstreams, deliberately
+
+| Bitstream | `NRV_IO_ACCEL` | Fmax | Used by |
+|---|---|---|---|
+| `femtosoc_llm_soft.bit` | undefined | 40.76 MHz (R14/003) | **Session A** — T022-T026 |
+| `femtosoc_llm.bit` | defined | 26.21 MHz (R22) | **Sessions B and C** — T053+ |
+
+Session A validates the Q8_0 **software** path, which is the golden reference every later
+hardware result is compared against. Running it on the accelerator bitstream would work — the
+accelerator is an idle peripheral that `runq.bin` never issues to — but it would put the
+reference measurement on a build with 4.8% timing margin. If Session A then disagreed with the
+host transcript, "quantization port bug" and "marginal timing" would be indistinguishable, and
+the reference would be the thing in doubt. Building the no-accelerator image costs one
+synthesis run and removes that ambiguity entirely.
+
+**Session A is otherwise unblocked** and does not wait on the scale-timing fix. Its only missing
+prerequisite is the physical card copy left over from T021.
+
+### Session B must distinguish intermittent from consistent failure
+
+At 4.8% margin this matters more than usual. A **consistent** bit-exact mismatch is a logic bug;
+an **intermittent** one is timing. They call for entirely different next steps, and on a single
+run they look identical. `acc_test.c` should therefore repeat its comparison many times and
+report whether failures are stable, rather than reporting one pass or fail — that turns an
+ambiguous session into a diagnostic one, at no extra operator cost.
+
+---
