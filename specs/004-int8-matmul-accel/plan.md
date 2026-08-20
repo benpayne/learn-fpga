@@ -52,20 +52,28 @@ measurements: the quality impact of quantization (User Story 1) and the burst-le
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-**No constitution file exists.** `.specify/memory/constitution.md` is still absent, as it was in
-feature 003.
+**A constitution now exists** (`.specify/memory/constitution.md` v1.0.0, ratified 2026-08-20),
+adopted partly on the strength of the practices this feature's plan already assumed. Evaluating
+this plan against its six principles:
 
-**Result**: no gates are defined, so there are none to violate. Recorded explicitly rather than
-passed silently.
+| Principle | Status | Evidence in this plan |
+|---|---|---|
+| I. Simulate before hardware | ✅ PASS | Stories 2 and 3 are simulation-only and precede all hardware work |
+| II. Cocotb is the verification record | ✅ PASS | Three testbenches planned, registered in `TEST/Makefile` per the build contract |
+| III. Unit → subsystem → integrated | ✅ PASS | Six stories map exactly onto MAC → full unit → arbiter → hardware isolated → integrated |
+| IV. Golden reference precedes hardware | ✅ PASS | Host `runq.c` is the reference; User Story 1 produces it before any RTL exists |
+| V. Additive profiles; shared RTL demands regression | ⚠ **JUSTIFIED DEVIATION** | This feature edits shared RTL — see Complexity Tracking |
+| VI. Measurements replace estimates | ✅ PASS | Research marks estimates explicitly; Stories 1 and 3 convert them to measurements |
 
-**Recommendation, now stronger than in feature 003**: this project has demonstrated principles
-worth enforcing — additive build profiles over destructive edits, no unverified performance
-claims in documentation, measurements recorded in place of estimates, cocotb coverage for new
-RTL, and bit-exact references before hardware. Feature 003 followed all of these and it visibly
-paid off. This feature changes *shared* RTL for the first time, which makes a written
-no-regression rule more valuable than before. `/speckit.constitution` would make them binding.
+**Principle V requires attention.** This feature modifies `muchtoremember_burst.v`, which both
+profiles use. The constitution permits this only with a recorded justification and a mandatory
+regression of every affected configuration. Both are in place: the justification is in
+Complexity Tracking, and SC-014 plus the build contract make the full-profile rebuild a required
+step rather than a formality.
 
-**Post-Phase-1 re-check**: unchanged. One item is recorded in Complexity Tracking below.
+**Post-Phase-1 re-check**: unchanged. The design does not add complexity beyond the two items in
+Complexity Tracking, and the deviation from Principle V is recorded as the constitution
+requires.
 
 ## Project Structure
 

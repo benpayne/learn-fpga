@@ -8,7 +8,14 @@ description: "Task list template for feature implementation"
 **Input**: Design documents from `/specs/[###-feature-name]/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
-**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
+**Tests**: The examples below include test tasks. Tests are OPTIONAL for software - only
+include them if explicitly requested in the feature specification.
+
+**EXCEPTION — RTL work**: the project constitution (`.specify/memory/constitution.md`,
+Principles I-III) makes verification mandatory for hardware. Any feature containing RTL MUST
+include cocotb testbench tasks, and those tasks MUST precede the corresponding synthesis and
+hardware tasks. Simulation before hardware is non-negotiable; a testbench registered in
+`TEST/Makefile` is part of the definition of done, not an optional extra.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
