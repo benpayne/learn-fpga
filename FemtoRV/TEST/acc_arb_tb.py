@@ -392,3 +392,34 @@ async def test_burst_length_sweep(dut):
     # bursts amortise the fixed setup cost over more words).
     effs = [r["words_per_cycle"] for r in results]
     assert effs == sorted(effs), f"efficiency did not increase monotonically with burst length: {effs}"
+
+
+@cocotb.test()
+async def test_burst_length_sweep_cpu_idle(dut):
+    """Same sweep as test_burst_length_sweep, but with the CPU idle, i.e.
+    the unshared roofline per burst length -- this is the like-for-like
+    comparison against ACCEL/DESIGN.md sec 6.3's ESTIMATED table, which
+    modelled pure burst efficiency (setup-cycle overhead amortised over
+    burst_len words) with no CPU contention at all. The cpu-load sweep
+    above additionally measures what the design document did not attempt
+    to estimate: efficiency under real arbitration contention."""
+    burst_lengths = [16, 32, 64, 128, 256]
+    results = []
+    for bl in burst_lengths:
+        duration = max(6000, bl * 25 + 2000)
+        r = await run_scenario(dut, burst_len=bl, cpu_period=None, duration_cycles=duration)
+        log_result(dut, f"idle-sweep bl={bl}", r)
+        results.append(r)
+
+    dut._log.info("=" * 78)
+    dut._log.info("Measured burst-length sweep, CPU idle (unshared roofline):")
+    dut._log.info(f"{'burst':>6} {'eff%':>7} {'bursts':>7}")
+    for r in results:
+        dut._log.info(f"{r['burst_len']:>6} {r['words_per_cycle']*100:>6.1f}% {r['accel_bursts']:>7}")
+    dut._log.info("=" * 78)
+
+    for r in results:
+        assert r["accel_bursts"] > 5, f"burst_len={r['burst_len']}: too few bursts completed to trust the measurement"
+
+    effs = [r["words_per_cycle"] for r in results]
+    assert effs == sorted(effs), f"efficiency did not increase monotonically with burst length: {effs}"

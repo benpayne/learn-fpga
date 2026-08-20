@@ -67,18 +67,26 @@
  *
  * --dump-logits FILE
  *
- *   Appends one record per generated position (pos = 0 .. steps-1, in
- *   generation order, INCLUDING prompt-forced positions) to FILE. Each
- *   record is:
+ *   Writes ALL generated positions' RAW, pre-softmax, pre-temperature
+ *   logit vectors to FILE in ONE fixed-header binary format -- this exact
+ *   layout is a cross-agent format decision (shared with tools/run_host.c,
+ *   the fp32 sibling reference) so the two dumps can be compared without
+ *   guessing at each other's byte layout:
  *
- *     int32   pos           (4 bytes, little-endian, host native int)
- *     float32 logits[0..vocab_size-1]   (vocab_size * 4 bytes, native fp32)
+ *     int32   magic       = 0x4C4F4754  ('LOGT', little-endian)
+ *     int32   n_positions
+ *     int32   vocab_size
+ *     float32 logits[n_positions * vocab_size]   // row-major, one row per position
  *
- *   back-to-back with no separator or padding. vocab_size is NOT stored
- *   in this file -- a reader gets it from the checkpoint header (it is
- *   already reading the same checkpoint to compute its own comparison
- *   values). This is the RAW, pre-softmax, pre-temperature logit vector:
- *   exactly what forward() returns, before sample() touches it.
+ *   All fields little-endian (this host is little-endian; a plain fwrite
+ *   of native int32/float32 already matches). Rows are in GENERATION
+ *   ORDER and INCLUDE positions consumed by the prompt (pos = 0 ..
+ *   num_prompt_tokens-2 are prompt-forced; a comparison tool that wants
+ *   only the "free-running" continuation should skip those rows itself --
+ *   this dump does not distinguish them). Because n_positions/vocab_size
+ *   go in the header, the buffer is accumulated in memory during
+ *   generation and the file is written once at the end (see
+ *   dump_logits_write_and_free()), not streamed record-by-record.
  * ------------------------------------------------------------------
  *
  * Build:  gcc -O2 -o runq_host runq_host.c -lm
@@ -115,7 +123,11 @@ static int   g_dump_mm_layer = -2;   /* -2 = disabled; -1 = classifier (wcls) */
 static long  g_dump_mm_pos = -1;     /* -1 = every matching position */
 static long  g_cur_pos = -1;         /* current generation position, set by generate() */
 
-static FILE *g_dump_logits_fp = NULL;
+static char  *g_dump_logits_path = NULL;
+static float *g_dump_logits_buf = NULL;   /* [capacity * vocab_size] floats, row-major */
+static long   g_dump_logits_count = 0;    /* positions actually written so far */
+static long   g_dump_logits_capacity = 0; /* rows allocated (== steps, an upper bound) */
+static int    g_dump_logits_vocab = 0;
 
 /* ----------------------------------------------------------------------
  * Transformer model
@@ -954,12 +966,48 @@ long time_in_ms() {
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
-/* Write one --dump-logits record for the RAW (pre-softmax) logits at
- * `pos`. See file header for the format. NOT upstream. */
-static void dump_logits_record(FILE *fp, int pos, float *logits, int vocab_size) {
-    int32_t pos32 = (int32_t)pos;
-    fwrite(&pos32, sizeof(pos32), 1, fp);
-    fwrite(logits, sizeof(float), (size_t)vocab_size, fp);
+/* Append one position's RAW (pre-softmax) logit row to the in-memory
+ * --dump-logits buffer. `vocab_size` must match g_dump_logits_vocab (the
+ * caller always passes transformer->config.vocab_size, which is fixed for
+ * the whole run). See file header for the on-disk format. NOT upstream. */
+static void dump_logits_append(float *logits, int vocab_size) {
+    if (!g_dump_logits_buf) return;
+    if (g_dump_logits_count >= g_dump_logits_capacity) {
+        fprintf(stderr, "--dump-logits: more positions generated than the %ld-row buffer "
+                "allowed for; dropping the rest\n", g_dump_logits_capacity);
+        return;
+    }
+    memcpy(g_dump_logits_buf + (size_t)g_dump_logits_count * (size_t)vocab_size,
+           logits, sizeof(float) * (size_t)vocab_size);
+    g_dump_logits_count++;
+}
+
+/* Write the accumulated --dump-logits buffer out as ONE file with the
+ * shared fixed header (magic/n_positions/vocab_size), then free it. Called
+ * once, after generate()/chat() returns -- n_positions isn't known until
+ * generation actually stops (it can be less than `steps` if a BOS token
+ * ends the sequence early), so the header can't be written up front. */
+static void dump_logits_write_and_free(void) {
+    if (!g_dump_logits_path || !g_dump_logits_buf) return;
+    FILE *fp = fopen(g_dump_logits_path, "wb");
+    if (!fp) {
+        fprintf(stderr, "couldn't open --dump-logits file %s\n", g_dump_logits_path);
+        free(g_dump_logits_buf);
+        g_dump_logits_buf = NULL;
+        return;
+    }
+    int32_t magic = 0x4C4F4754; /* 'LOGT', per the cross-agent format decision */
+    int32_t n_positions = (int32_t)g_dump_logits_count;
+    int32_t vocab_size = (int32_t)g_dump_logits_vocab;
+    fwrite(&magic, sizeof(magic), 1, fp);
+    fwrite(&n_positions, sizeof(n_positions), 1, fp);
+    fwrite(&vocab_size, sizeof(vocab_size), 1, fp);
+    fwrite(g_dump_logits_buf, sizeof(float), (size_t)n_positions * (size_t)vocab_size, fp);
+    fclose(fp);
+    fprintf(stderr, "--dump-logits: wrote %d positions x %d vocab -> %s\n",
+            n_positions, vocab_size, g_dump_logits_path);
+    free(g_dump_logits_buf);
+    g_dump_logits_buf = NULL;
 }
 
 // ----------------------------------------------------------------------------
@@ -990,11 +1038,10 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
 
-        // NOT upstream: dump the RAW, pre-softmax logit vector before
-        // sample() gets a chance to mutate `logits` in place.
-        if (g_dump_logits_fp) {
-            dump_logits_record(g_dump_logits_fp, pos, logits, transformer->config.vocab_size);
-        }
+        // NOT upstream: buffer the RAW, pre-softmax logit vector before
+        // sample() gets a chance to mutate `logits` in place. Written out
+        // as one file (with n_positions in its header) after the loop.
+        dump_logits_append(logits, transformer->config.vocab_size);
 
         // advance the state state machine
         if (pos < num_prompt_tokens - 1) {
@@ -1118,9 +1165,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
 
-        if (g_dump_logits_fp) { // NOT upstream
-            dump_logits_record(g_dump_logits_fp, pos, logits, transformer->config.vocab_size);
-        }
+        dump_logits_append(logits, transformer->config.vocab_size); // NOT upstream
 
         next = sample(sampler, logits);
         pos++;
@@ -1267,19 +1312,28 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "--dump-mm: dumping layer=%s matrix=%s pos=%s -> %s\n",
                 layer_str, matrix_str, pos_str ? pos_str : "(all)", dump_mm_out_path);
     }
-    if (dump_logits_path) {
-        g_dump_logits_fp = fopen(dump_logits_path, "wb");
-        if (!g_dump_logits_fp) {
-            fprintf(stderr, "couldn't open --dump-logits file %s\n", dump_logits_path);
-            exit(EXIT_FAILURE);
-        }
-        fprintf(stderr, "--dump-logits: writing raw per-position logit vectors -> %s\n", dump_logits_path);
-    }
-
     // build the Transformer via the model .bin file
     Transformer transformer;
     build_transformer(&transformer, checkpoint_path);
     if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // override to ~max length
+
+    // NOT upstream: --dump-logits needs vocab_size (from the checkpoint)
+    // and steps (an upper bound on how many positions will be generated)
+    // to size its buffer, so this has to wait until after build_transformer
+    // and the steps clamp above.
+    if (dump_logits_path) {
+        g_dump_logits_path = dump_logits_path;
+        g_dump_logits_vocab = transformer.config.vocab_size;
+        g_dump_logits_capacity = steps;
+        g_dump_logits_buf = malloc((size_t)g_dump_logits_capacity * (size_t)g_dump_logits_vocab * sizeof(float));
+        if (!g_dump_logits_buf) {
+            fprintf(stderr, "couldn't allocate --dump-logits buffer (%ld positions x %d vocab)\n",
+                    g_dump_logits_capacity, g_dump_logits_vocab);
+            exit(EXIT_FAILURE);
+        }
+        fprintf(stderr, "--dump-logits: buffering up to %ld positions x %d vocab -> %s\n",
+                g_dump_logits_capacity, g_dump_logits_vocab, dump_logits_path);
+    }
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
@@ -1299,12 +1353,13 @@ int main(int argc, char *argv[]) {
         error_usage();
     }
 
+    dump_logits_write_and_free(); // NOT upstream: writes the file now that n_positions is known
+
     // memory and file handles cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
     if (g_dump_mm_fp) fclose(g_dump_mm_fp);
-    if (g_dump_logits_fp) fclose(g_dump_logits_fp);
     return 0;
 }
 #endif

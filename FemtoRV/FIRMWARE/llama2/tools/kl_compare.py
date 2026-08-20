@@ -1,3 +1,27 @@
+"""
+IMPORTANT — how the input dumps MUST be produced.
+
+Both .logt files must come from TEACHER-FORCED runs over the SAME token
+sequence: give both models an identical long prompt and let them consume it,
+then compare only the prompt positions.
+
+Do NOT compare free-running generations. Two models that sample even one
+different token are thereafter processing different text, and their logits at
+every later position are incomparable. Measured on this project: free-running
+dumps of the same model pair gave a mean KL of 7.77 nats and 34% top-1
+agreement, while teacher-forcing the identical pair gave 0.000216 nats and
+100% agreement. The first number is an artefact of sequence divergence, not
+quantization error, and it is large enough to look like a catastrophic result.
+
+Recipe:
+    STORY=$(./run_host -s 2026 -n 210 -p "Once upon a time")   # any fixed text
+    ./run_host   ... -p "$STORY" --dump-logits fp32.logt
+    ./runq_host  ... -i "$STORY" --dump-logits q8.logt
+    python3 kl_compare.py fp32.logt q8.logt --max-positions <prompt token count>
+
+Compare only positions the prompt covers; positions past it are free-running
+again and must be excluded.
+"""
 #!/usr/bin/env python3
 """kl_compare.py -- compare fp32 vs quantized model logits via KL divergence.
 

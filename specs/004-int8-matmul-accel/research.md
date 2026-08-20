@@ -391,6 +391,50 @@ software and the accelerator; or choose a model whose hidden_dim divides cleanly
 
 ---
 
+## R17. Quantization QUALITY measured — int8 passes decisively (T013, 2026-08-20)
+
+Teacher-forced comparison of the fp32 and Q8_0 (GS=4) models over 140 matched positions:
+
+| Metric | Value | SC-002 threshold |
+|---|---|---|
+| mean KL | **0.000216 nats** | < 0.01 — passes by 46x |
+| median KL | 0.000133 | |
+| p99 KL | 0.001113 | |
+| max KL | 0.001643 | |
+| top-1 agreement | **100.00%** | > 95% |
+
+**VERDICT: PASS, decisively. Quantization quality is not a problem for this model.**
+
+### Methodological correction, recorded because it nearly caused a wrong verdict
+
+The first attempt let both models **generate freely** from the same seed and compared their
+logits position by position. That produced **mean KL 7.77 nats and 34% top-1 agreement** — a
+catastrophic-looking result that would have failed the gate and sent the feature to fp16.
+
+It was an artefact. Once the two models sample even one different token (fp32 chose "big box",
+the quantized model "big tree"), they are processing **different text**, and every later
+position is incomparable. The measurement was capturing sequence divergence, not quantization
+error.
+
+The correct method is **teacher-forcing**: give both models an identical long prompt, let them
+consume it, and compare only the prompt positions where both saw the same tokens. Same model
+pair, same files, correct method: 0.000216 nats instead of 7.77 — a factor of 36,000.
+
+This requirement is now documented at the top of `kl_compare.py`. **Anyone re-running the gate
+must teacher-force.** A free-running comparison does not merely add noise; it produces a
+confident, plausible, and completely wrong answer.
+
+### Consequence for the decision
+
+The quality question raised in the spec's Assumptions — "quantization error is proportionally
+worse on small models, and this one is very small" — is answered: **it is not a problem here.**
+The 46x margin also implies larger group sizes would still pass comfortably, so the GS cap in
+R16 is a storage-and-lanes problem, not a quality one. That materially strengthens the case for
+padding `hidden_dim` to recover GS: it costs a little model size and buys back both capacity
+and MAC lanes, at no measured quality risk.
+
+---
+
 ## R11. Verification strategy
 
 **MEASURED baseline** (feature 003): 1.38 tok/s; matmul 61.3%, attention 27.4%; SDRAM burst
