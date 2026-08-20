@@ -23,6 +23,10 @@ else ifeq ($(MODULE),acc_mac_tb)
   TOPLEVEL := acc_mac
 else ifeq ($(MODULE),acc_unit_tb)
   VERILOG_SOURCES = acc_unit_wrapper.v ../RTL/ACCEL/acc_top.v ../RTL/ACCEL/acc_mac.v ../RTL/ACCEL/acc_weight_fetch.v ../RTL/ACCEL/acc_regs.v ../RTL/SDRAM/muchtoremember_burst.v
+  # acc_regs.v (and acc_top.v) `include "acc_bits.vh" -- icarus does not search
+  # an including file's own directory by default, only cwd + -I, so this is
+  # needed the same way the PS2 branch below needs -I$(LIB_DIR).
+  COMPILE_ARGS += -I../RTL/ACCEL
   TOPLEVEL := acc_unit_wrapper
 else ifeq ($(MODULE),acc_arb_tb)
   VERILOG_SOURCES = acc_arb_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v
