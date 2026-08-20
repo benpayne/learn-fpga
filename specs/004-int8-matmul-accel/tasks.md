@@ -101,7 +101,7 @@ golden reference.
 - [ ] T024 [HW] [US1] Compare quantized output against feature 003's fp32 transcript and record both texts side by side in `specs/004-int8-matmul-accel/research.md` — *Session A*
 - [ ] T025 [HW] [US1] Record the quantized generation rate and the activation-quantization cost from T019 in `specs/004-int8-matmul-accel/research.md` — *Session A*
 - [ ] T026 [US1] **CONFIRM the T014 decision on hardware**: check that the on-board generated text is consistent with the host-side verdict and record any disagreement in `specs/004-int8-matmul-accel/research.md`. T014 already made the go/no-go from measured divergence, so this is confirmation rather than the decision — but a surprise here (board output materially worse than the host predicted) means something differs between host and firmware and MUST be resolved before RTL work proceeds
-- [ ] T027 [US1] Update `spec.md` SC-003 and SC-004 with the measured size ratio and capacity figure, replacing the estimates (constitution Principle VI)
+- [X] T027 [US1] Update `spec.md` SC-003 and SC-004 with the measured size ratio and capacity figure, replacing the estimates (constitution Principle VI)
 
 **Checkpoint**: US1 complete — quantization viability settled, golden reference exists, and the
 software baseline is measured. **Only now does hardware work begin.**
