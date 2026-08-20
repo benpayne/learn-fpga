@@ -368,23 +368,31 @@ wrong here, where a starved CPU means a stalled pipeline and nothing to show for
 Longer bursts are more efficient but make a CPU miss wait longer. From the cocotb burst
 measurements (~6 cycles setup, then one word/cycle):
 
-| Burst | Efficiency | CPU worst-case stall |
-|---|---|---|
-| 16 words | 72.7% | 22 cyc (0.9 us) |
-| 32 words | 84.2% | 38 cyc (1.5 us) |
-| **64 words** | **91.4%** | **70 cyc (2.8 us)** |
-| 128 words | 95.5% | 134 cyc (5.4 us) |
-| 256 words | 97.7% | 262 cyc (10.5 us) |
+**MEASURED** (cocotb, 3000 bursts per point idle / 1000 loaded — research R19). The table that
+was here previously was an ESTIMATE derived from a ~6-cycle per-burst overhead, and it was
+wrong by 8-13 points:
 
-**Recommend 64 words.** A normal CPU cache miss is ~10-15 cycles; 64-word bursts raise the
-worst case to ~70, which is noticeable but not pathological, and 91% efficiency keeps the
-accelerator near its roofline. 256-word bursts would make a single cache miss cost 262
-cycles — at 5.3 CPI that is ~50 instructions of stall for one miss, which is the kind of
-thing that quietly destroys the scalar performance that dominates after Stage 3.
+| Burst | Idle eff (SC-006 gate) | Loaded eff | CPU worst-case wait | Estimated eff (wrong) |
+|---|---|---|---|---|
+| 16 words | 62.7% FAIL | 59.4% | 34 cyc | 72.7% |
+| 32 words | 76.4% FAIL | 72.9% | 34 cyc | 84.2% |
+| 64 words | 85.7% **FAIL** | 82.4% | 57 cyc | 91.4% |
+| **128 words** | **91.3% PASS** | **87.5%** | **48 cyc** | 95.5% |
+| 256 words | pending | 92.7% | 179 cyc | 97.7% |
 
-Make the burst length a parameter and sweep it in Stage 4 with `ACC_PERF`. This table is
-derived from simulation; the real answer depends on refresh interaction and should be
-measured.
+**Recommend 128 words**, revised from 64. SC-006 requires >= 90% of the theoretical rate with no
+competing traffic; 64 words delivers 85.7% and does not meet it. 128 clears it at 91.3% and,
+usefully, also has a *lower* CPU worst-case wait than 64 (48 vs 57 cycles) — it is better on
+both axes, not a trade. 256 buys 5 more points of efficiency for 3.7x the CPU latency, which is
+a bad trade given that scalar work dominates after integration.
+
+**Why the estimate was wrong** — worth keeping, because the same mistake is easy to repeat.
+Real per-burst overhead is ~9.5 cycles at 16 words rising to ~14 at 256, not the ~6 assumed.
+The missing cost is SDRAM protocol overhead the estimate omitted: tRP recovery between
+back-to-back bursts on top of ACTIVATE/CAS setup, plus a row crossing every 256 words. The
+6-cycle figure came from a burst test measuring bare CAS setup — one phase of the protocol,
+not the full burst-to-burst turnaround. **An estimate taken from one phase of a pipelined
+protocol will understate a design that pays all of them.**
 
 ### 6.4 The accelerator must bypass the CPU cache
 
