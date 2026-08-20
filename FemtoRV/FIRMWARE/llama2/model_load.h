@@ -3,10 +3,17 @@
  *
  * Memory layout (see specs/003-llama2-minimal-soc/data-model.md entity 2):
  *   0x800000  program image        (1 MB)
- *   0x900000  model weights        (1 MB)
- *   0xA00000  tokenizer            (64 KB)
- *   0xA10000  activations/KV cache (~960 KB)
+ *   0x900000  model weights        (2 MB)
+ *   0xB00000  tokenizer            (64 KB)
+ *   0xB10000  activations/KV cache (~960 KB)
+ *   0xC00000  free                 (3 MB)
  *   0xF00000  stack (grows down)
+ *
+ * NOTE on the weights region: stories260K's weights are 1,056,512 bytes --
+ * just OVER 1 MB, because the legacy export format carries the precomputed
+ * freq_cis tables. A 1 MB region was tried first and the FR-008 bounds
+ * check correctly refused to load rather than overrunning the tokenizer.
+ * 2 MB leaves headroom for a larger model without another map change.
  */
 #ifndef MODEL_LOAD_H
 #define MODEL_LOAD_H
@@ -14,10 +21,10 @@
 #include <stdint.h>
 
 #define ML_WEIGHTS_BASE   0x900000u
-#define ML_WEIGHTS_LIMIT  0x100000u   /* 1 MB */
-#define ML_TOKENIZER_BASE 0xA00000u
+#define ML_WEIGHTS_LIMIT  0x200000u   /* 2 MB -- see note above */
+#define ML_TOKENIZER_BASE 0xB00000u
 #define ML_TOKENIZER_LIMIT 0x10000u   /* 64 KB */
-#define ML_RUNSTATE_BASE  0xA10000u
+#define ML_RUNSTATE_BASE  0xB10000u
 #define ML_RUNSTATE_LIMIT 0xF0000u    /* 960 KB */
 
 /* Model header: 7 little-endian int32 at the start of model.bin.

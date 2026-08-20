@@ -37,14 +37,26 @@ file is valid. One configuration ↔ one pin file.
 
 Non-overlapping regions in the 8 MB external RAM, satisfying FR-007.
 
-| Region | Base | Size | Written by | Lifetime |
-|---|---|---|---|---|
-| Program image | `0x800000` | 1 MB | serial upload | per rebuild |
-| Model weights | `0x900000` | 1 MB | card load | per power cycle |
-| Vocabulary | `0xA00000` | 64 KB | card load | per power cycle |
-| Activations + KV cache | `0xA10000` | ~960 KB | program, at runtime | per run |
-| Free | `0xB00000` | 4 MB | — | — |
-| Stack | `0xF00000`-`0xFFFFF0` | 1 MB | processor | always |
+| Region | Base | Size | Needs | Written by | Lifetime |
+|---|---|---|---|---|---|
+| Program image | `0x800000` | 1 MB | 64 KB | serial upload | per rebuild |
+| Model weights | `0x900000` | 2 MB | 1,056,512 B | card load | per power cycle |
+| Vocabulary | `0xB00000` | 64 KB | 6,227 B | card load | per power cycle |
+| Activations + KV cache | `0xB10000` | ~960 KB | 676,192 B | program, at runtime | per run |
+| Free | `0xC00000` | 3 MB | — | — | — |
+| Stack | `0xF00000`-`0xFFFFF0` | 1 MB | — | processor | always |
+
+**CORRECTED 2026-08-19 after a hardware failure.** The weights region was originally sized at
+1 MB, from an estimate of "~1.04 MB" rounded down. The real figure is **1,056,512 bytes —
+7,936 bytes OVER 1 MB**, because the legacy export format carries precomputed `freq_cis`
+tables. On the board the FR-008 bounds check refused the load with "model would overflow its
+memory region" rather than overrunning the vocabulary region.
+
+That is the check doing exactly its job. Silently overflowing would have corrupted the
+tokenizer and produced fluent-but-wrong text — the single failure mode this feature has
+worked hardest to make impossible, and one that would have been extremely expensive to
+diagnose over a serial console. The lesson is narrow but worth keeping: **size regions from
+the measured artifact, not from a rounded estimate.**
 
 **Rules**
 - A load that would exceed its region must be refused and reported (FR-008), not truncated
