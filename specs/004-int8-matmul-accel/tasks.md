@@ -218,7 +218,7 @@ length from measurement.
 ## Phase 9: Polish & Cross-Cutting Concerns
 
 - [ ] T073 [P] Update `specs/004-int8-matmul-accel/quickstart.md` with all measured numbers, replacing the illustrative ones
-- [ ] T074 [P] Update `FemtoRV/RTL/ACCEL/DESIGN.md` to correct the two assumptions Phase 0 overturned — Q8_0 uses separate blocks rather than interleaving, and the activation vector is quantized too — so the design document stops disagreeing with the implementation
+- [X] T074 [P] Update `FemtoRV/RTL/ACCEL/DESIGN.md` to correct the two assumptions Phase 0 overturned — Q8_0 uses separate blocks rather than interleaving, and the activation vector is quantized too — so the design document stops disagreeing with the implementation
 - [ ] T075 [P] Update `CLAUDE.md` with the accelerator build commands, its resource figures, and the final measured rate
 - [ ] T076 Walk `quickstart.md` end to end from a clean checkout to confirm SC-012's reproducibility intent; fix any step needing knowledge not written down
 - [ ] T077 [P] Record follow-on findings for the next feature in `specs/004-int8-matmul-accel/accelerator-outcome.md`: the measured scalar remainder, the clock-increase opportunity from feature 003's 40.76 MHz ceiling, and whether int8's capacity gain is worth exploiting with a larger model

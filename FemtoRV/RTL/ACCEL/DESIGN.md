@@ -41,7 +41,7 @@ Note how little separates the two accelerated columns: the scalar remainder domi
 int8 is chosen for **model capacity** (~5.6M parameters versus ~1.5M) and for being cheaper
 and more verifiable hardware — not for throughput. See section 3.4.
 
-Per-token work for stories260K (dim=64, hidden=172, 5 layers, 8 heads / 4 kv-heads,
+Per-token work for stories260K (dim=64, hidden_dim=192, 5 layers, 8 heads / 4 kv-heads,
 vocab=512), computed exactly:
 
 ```
@@ -95,10 +95,16 @@ The board has 20 spare multipliers; this design uses one or two of them.
 
 llama2's matmul is `out[i] = sum_j W[i*n + j] * x[j]` for `i` in `0..d`.
 
-- `x` — the input vector. Small: `n` floats, 256 B (dim=64) to 688 B (hidden=172). **Fits in
+- `x` — the input vector, **itself quantized** to Q8_0 by the CPU before each call, not fp32.
+  An earlier revision of this document had it as plain floats; upstream `runq.c` calls
+  `quantize()` on the activation vector too, so the datapath is `int8 x int8 -> int32`
+  throughout and there is no mixed-precision multiply anywhere (research R2). Small:
+  `n` int8 plus `n/GS` fp32 scales — 320 B at dim=64, 960 B at hidden_dim=192. **Fits in
   BRAM and is reused `d` times.**
-- `W` — the weight matrix. Large: `d*n` floats, streamed from SDRAM, **used once**.
-- `out` — `d` floats. Small, lands in BRAM.
+- `W` — the weight matrix. Large: `d*n` int8 plus `d*n/GS` fp32 scales, streamed from SDRAM,
+  **used once**.
+- `out` — `d` fp32. Small, lands in BRAM. Output stays fp32 because the next operation
+  (a norm, a softmax, a residual add) is scalar CPU float work that expects it.
 
 So the shape is: hold `x` on-chip, stream `W`, produce `out` on-chip. That is a DMA engine
 with a MAC on the end.
@@ -156,9 +162,15 @@ around. Working the numbers through:
 | int8 (Q8_0) | 3.76 | 3.76 | 3.44 ms | 85.4 ms | 11.7 tok/s | 8.49x |
 
 Q8_0 stores GS int8 weights plus one fp32 scale. At the upstream default GS=64 that is 68 bytes
-per 64 weights = 1.0625 B/weight, hence 3.76 weights per 32-bit word rather than 4. (An earlier
-revision of this document assumed GS=32 and an interleaved layout; both were wrong — see
-research R1 and R3.)
+per 64 weights = 1.0625 B/weight, hence 3.76 weights per 32-bit word rather than 4.
+
+**Two assumptions in the first revision of this document were overturned by Phase 0** (research
+R1, R2, R3). First, it assumed scales were *interleaved* with the weights they scale; Q8_0
+actually stores them as two **separate blocks** — the whole int8 array, then the whole fp32
+scale array — which is why `acc_weight_fetch.v` is a two-phase FSM that prefetches the scale
+block into BRAM before streaming dense int8, rather than the single mixed stream first
+imagined. Second, it assumed GS=32; the file parameter is GS=64, and GS is read from the
+header rather than compiled in.
 
 **The result that matters: going from fp32 to int8 buys only ~11% end-to-end.** Not 4x. The
 accelerated portion shrinks from 13.0 ms to 3.6 ms, but the scalar remainder is 82 ms and
@@ -462,7 +474,7 @@ multiply separately.
 
 ### Stage 1 — full accelerator against a simulated SDRAM
 Add the FIFO, control FSM, x/out BRAMs, and CSRs. Drive it with the existing SDRAM model.
-**Exit**: a `64x64` and a `172x64` matmul produce bit-identical results to the host, and the
+**Exit**: a `64x64` and a `192x64` matmul produce bit-identical results to the host, and the
 FIFO never underruns at full burst rate. Report achieved words/cycle.
 
 ### Stage 2 — arbiter in simulation

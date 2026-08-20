@@ -663,3 +663,40 @@ states but stays inside the burst. The three-line-reorder simplification is ther
 
 ---
 
+
+## R20. Both synthesis profiles write the same artifact filenames (found 2026-08-20)
+
+`BOARDS/colorlight_i5.mk` and `BOARDS/colorlight_i5_llm.mk` both derive their outputs from
+`$(PROJECTNAME)`, which is `femtosoc` in both cases. So `make colorlight_i5.synth` and
+`make colorlight_i5_llm.synth` write the **same four files**:
+
+| File | Written by | Consequence |
+|---|---|---|
+| `femtosoc.json` | both | concurrent runs corrupt each other |
+| `femtosoc_out.config` | both | ditto |
+| `femtosoc.bit` | both | **the flashed bitstream is whichever profile ran last** |
+| `femtosoc.svf` | both | ditto |
+
+Two distinct failure modes, and the second is the dangerous one:
+
+1. **Concurrent** runs interleave writes to `femtosoc.json` and produce garbage. Found while
+   holding back the T047/T056 display-profile regression: an LLM-profile `yosys` was already
+   running, and starting the regression would have clobbered it. Same class as the `sim_build/`
+   collision hit earlier in this feature — shared build state with no per-consumer namespace.
+
+2. **Sequential** runs silently overwrite. Nothing in the filename says which profile is inside
+   `femtosoc.bit`, so flashing it programs whichever synthesis ran most recently. A wrong-profile
+   board looks like a hardware fault, not a build accident, and the two profiles differ in
+   exactly the peripherals whose absence is hardest to read from a serial log. The stale
+   `femtosoc_llm.bit` in the tree (dated 2026-08-18, from a one-off manual rename) is the
+   residue of someone already tripping over this.
+
+**Decision**: give the LLM profile its own artifact basename so the two bitstreams can coexist
+and are self-identifying. Deferred until the in-flight LLM synthesis finishes rather than
+editing a makefile out from under a running job.
+
+**Bearing on this feature**: T047/T050/T056 all run synthesis, in two different profiles, and
+the SC-014 regression compares one against the other. That comparison is only trustworthy if
+each profile's artifacts survive the other's run.
+
+---
