@@ -693,13 +693,32 @@ Built to run llama2.c and to free capacity for a future MatMul accelerator.
 cd FemtoRV
 make colorlight_i5_llm.firmware_config       # generates FIRMWARE/config.mk for this profile
 (cd FIRMWARE/monitor && make clean monitor.hex)
-make colorlight_i5_llm.synth                 # -> femtosoc.bit
-cp femtosoc.bit femtosoc_llm.bit             # both profiles write the same filename!
+make colorlight_i5_llm.synth                 # -> femtosoc_llm.bit (renamed 2026-08-20)
 openFPGALoader -c cmsisdap -v --file-type bin femtosoc_llm.bit
 
 (cd FIRMWARE/llama2/tools && ./fetch_model.sh)   # model.bin + tokenizer.bin -> FAT SD card
 cd FIRMWARE/llama2 && make upload                # upload over XMODEM, run, stream output
 ```
+
+The manual `cp femtosoc.bit femtosoc_llm.bit` step is gone: this profile now writes its own
+`femtosoc_llm.{json,bit,svf,_out.config}` via `LLM_ARTIFACT` in `BOARDS/colorlight_i5_llm.mk`.
+Both profiles previously derived every artifact from `$(PROJECTNAME)` (= `femtosoc`), so a
+sequential build left a bitstream whose filename did not say which profile was inside it, and
+a concurrent build corrupted both netlists. See `specs/004-int8-matmul-accel/research.md` R20.
+
+### Two traps in this profile's build, both non-obvious
+
+**`synth_ecp5`'s `share` pass does not terminate on `RTL/ACCEL/acc_mac.v`.** It grew to 21 GB
+and was OOM-killed. `BOARDS/colorlight_i5_llm.mk` therefore runs the coarse stage explicitly
+with `share` omitted; do not "simplify" it back to a plain `synth_ecp5` call. Scoped to this
+profile only, so the display profile's flow and its regression baseline are unaffected.
+Reproduce in seconds with `yosys -p "read_verilog -I. acc_mac.v; synth_ecp5 -top acc_mac"`.
+Details in R21.
+
+**Never read a synthesis result through a pipe.** `make ... | tee log` reports `tee`'s exit
+status, so a `Killed` make looks like success. Use `make > log 2>&1; echo $?`, or set
+`pipefail`. This produced a confidently-reported "completed, exit code 0" for a run that had
+been OOM-killed.
 
 `make upload` / `make upload_sd_bench` / `make upload_sdram_memtest` each upload, run, and
 stream program output, exiting after an idle period. Override the port with `PORT=...`.
