@@ -134,19 +134,59 @@ quant_matrices = [tok_emb] + wq + wk + wv + wo + w1 + w2 + w3
 if wcls is not None:
     quant_matrices.append(wcls)
 
-# ---- group size: back off (halve) while any tensor doesn't divide evenly ----
-def gs_divides_all(gs):
+# ---- group size: back off (halve) while it doesn't divide evenly ----
+#
+# Two DIFFERENT divisibility requirements are in play, and both must hold:
+#
+# 1. Total tensor size divisible by GS -- what upstream export.py's
+#    quantize_q80() asserts (it reshapes the whole flat tensor into
+#    (-1, group_size) groups, so it just needs numel % GS == 0).
+#
+# 2. dim % GS == 0 AND hidden_dim % GS == 0 -- NOT checked by export.py
+#    (which only backs off against `dim`, per research R3), but REQUIRED
+#    by the runtime matmul()/quantize() in runq.c. Those functions use
+#    `n` (= dim for wq/wk/wv/wo/w1/wcls calls, = hidden_dim for the w2
+#    call and for quantizing the hq activation) as a PER-ROW length: the
+#    inner loop `for (j = 0; j <= n - GS; j += GS)` resets at the start
+#    of every row/vector. If GS does not divide n, the last (n % GS)
+#    elements of EVERY row -- and of the activation vector itself, whose
+#    own quantize() only fills q[0 .. GS*(n/GS)-1] via integer division
+#    -- are silently dropped from the dot product instead of merely
+#    losing precision. This is NOT a total-size problem so requirement 1
+#    alone does not catch it; it must be checked separately.
+#
+# Empirically: for this model dim=64 is a multiple of every power-of-two
+# GS down to 1, but hidden_dim=172 = 4 * 43 (43 is prime), so GS=64/32/16/8
+# all silently corrupt the w2 matmul and the hq activation quantization
+# even though every tensor's TOTAL size is a clean multiple of 64. Only
+# backing off to GS=4 satisfies both requirements. Verified against actual
+# generated text quality, not just arithmetic (see research.md R15) --
+# GS=64 here produces degenerate repeated-token output, not merely "some
+# divergence".
+def gs_divides_all_tensors(gs):
     return all(m.size % gs == 0 for m in quant_matrices)
+
+def gs_divides_all_row_lengths(gs):
+    return (dim % gs == 0) and (hidden_dim % gs == 0)
+
+def gs_ok(gs):
+    return gs_divides_all_tensors(gs) and gs_divides_all_row_lengths(gs)
 
 gs = REQUESTED_GS
 backoff_occurred = False
-while gs > 1 and not gs_divides_all(gs):
+while gs > 1 and not gs_ok(gs):
+    reasons = []
+    if not gs_divides_all_tensors(gs):
+        reasons.append("a tensor's total size is not a multiple of it")
+    if not gs_divides_all_row_lengths(gs):
+        reasons.append("dim (%d) or hidden_dim (%d) is not a multiple of it -- "
+                        "runq.c's matmul()/quantize() would silently truncate rows"
+                        % (dim, hidden_dim))
     gs //= 2
     backoff_occurred = True
-    print("BACKOFF: reducing group size to %d (a tensor size was not a multiple of the "
-          "previous group size)" % gs, file=sys.stderr)
-if not gs_divides_all(gs):
-    print("ERROR: no group size >= 1 evenly divides every quantized tensor", file=sys.stderr)
+    print("BACKOFF: reducing group size to %d (%s)" % (gs, "; ".join(reasons)), file=sys.stderr)
+if not gs_ok(gs):
+    print("ERROR: no group size >= 1 satisfies both divisibility requirements", file=sys.stderr)
     sys.exit(1)
 
 # ---- Q8_0 symmetric quantization, matching export.py's quantize_q80() ----

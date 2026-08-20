@@ -93,13 +93,26 @@ justifies it.
 must treat it as a runtime value, not a synthesis constant. It bounds the int32 accumulator's
 range before each rescale, so it also affects saturation behaviour (see R9).
 
-**VERIFIED default: 64.** `export.py` declares `def version2_export(model, filepath,
-group_size=64)` and backs off by halving while `dim % group_size != 0`. Checked against this
-model's tensor sizes — token embedding 32768, wq/wo 4096, wk/wv 2048, w1/w2/w3 11008 — all
-multiples of 64, so **no backoff is expected and GS should be 64**.
+**CORRECTION (research R15, T009, 2026-08-20): the "no backoff, GS=64" claim below was
+WRONG for this model.** It checked only that each tensor's *total* element count divides GS
+evenly (matching `export.py`'s own — incomplete — backoff check against `dim`). It missed that
+runtime `runq.c`'s `matmul()`/`quantize()` ALSO require GS to divide `hidden_dim` (172 here,
+not a multiple of 64), because those functions group per matmul-row / per-activation-vector,
+not per whole tensor. The measured, verified-by-generated-text value for this model is
+**GS=4**, not 64. See R15 for the full explanation and corrected figures — every number below
+this line in this subsection is the SUPERSEDED estimate, kept only so the mistake and its
+correction are both visible.
 
-That gives `(64 + 4) / 64 = 1.0625` bytes per weight, **26.6% of fp32**, and 3.76 weights per
-32-bit word once the separate scale block is amortised in.
+**~~VERIFIED default: 64.~~ SUPERSEDED — see correction above.** `export.py` declares `def
+version2_export(model, filepath, group_size=64)` and backs off by halving while `dim %
+group_size != 0`. Checked against this model's tensor sizes — token embedding 32768, wq/wo
+4096, wk/wv 2048, w1/w2/w3 11008 — all multiples of 64, so **no backoff is expected and GS
+should be 64**. *(This reasoning checked total tensor size only; it did not check `hidden_dim`,
+which is what actually forces the backoff to GS=4 — see R15.)*
+
+~~That gives `(64 + 4) / 64 = 1.0625` bytes per weight, **26.6% of fp32**, and 3.76 weights per
+32-bit word once the separate scale block is amortised in.~~ At the actual GS=4: `(4 + 4) / 4 =
+2.0` bytes per weight, **50% of fp32** for the quantized portion.
 
 **Decision**: `GS` is an operation-descriptor field. Support the common power-of-two values;
 reject others explicitly rather than silently mis-computing (FR-009). Task T009 must record the
@@ -237,28 +250,144 @@ state. Tasks T047, T056 and T078 re-run this comparison.
 
 ---
 
-## R15. Measured quantization results (T009, measured 2026-08-20)
+## R15. Measured quantization results (T009, measured 2026-08-20) — CORRECTED, GS != 64
 
-`quantize_model.sh` on the fp32 stories260K checkpoint:
+**An earlier version of this section reported GS=64 with no backoff. That was WRONG and has
+been replaced.** A GS=64 checkpoint loads without error, matches `q8_checkpoint_bytes()`
+byte-for-byte, and LOOKS fine by every size/header check — but running it through
+`runq_host` produces degenerate, repeated-token garbage ("there there there there ... upon
+upon upon..."), not merely "some divergence". This is exactly the silent-wrong-output failure
+class this project is built to catch, and it was only caught by actually generating text and
+reading it (T010's verification step), not by any size or checksum check. **Trust generated
+text over header arithmetic.**
+
+**Root cause**: two DIFFERENT divisibility requirements exist, and only one of them was
+checked.
+
+1. Total tensor size divisible by GS — what upstream `export.py`'s `quantize_q80()` asserts
+   (`w.numel() % group_size == 0`), and what `q8_format.h`'s `q8_checkpoint_bytes()` and this
+   feature's earlier size arithmetic verified. GS=64 passes this for every tensor in this
+   model, including w2 (11,008 elements, evenly divisible by 64).
+
+2. **`dim % GS == 0` AND `hidden_dim % GS == 0`** — NOT checked by `export.py` (which only
+   backs off against `dim`; see R3), but REQUIRED by runtime `runq.c`. `matmul()`'s inner loop
+   (`for (j = 0; j <= n - GS; j += GS)`) resets at the start of every output row, using `n` as
+   a PER-ROW length — `n = dim` for the wq/wk/wv/wo/w1/wcls calls, but **`n = hidden_dim` for
+   the w2 call**, and `quantize()` uses the same `n` (via integer division `n / GS`) to size
+   the activation vector it fills. If GS does not divide `n`, the last `n % GS` elements of
+   EVERY row of that matmul — and of the corresponding quantized activation vector, whose own
+   `quantize()` silently leaves that tail unfilled — never enter the dot product. This is a
+   row/vector-tail truncation, not a rounding-precision loss, and it is invisible to any
+   total-size check.
+
+For this model: `dim = 64` (divisible by every power of two down to 1) but
+`hidden_dim = 172 = 2² x 43` (43 is prime), so the largest power-of-two group size dividing
+*both* is **4**. GS=64/32/16/8 all silently corrupt the w2 matmul and the hq activation
+quantization despite passing every size/checksum check.
+
+**Corrected measured results**, `quantize_model.sh` on the fp32 stories260K checkpoint:
 
 | | Value |
 |---|---|
-| Output size | **278,608 bytes** |
+| Output size | **521,728 bytes** |
 | fp32 original | 1,056,540 bytes |
-| Ratio | **0.264** (SC-003 wants <= 1/3 — passes) |
-| Bytes per parameter | 1.0714 |
-| Group size | **64 — no backoff occurred** |
+| Ratio | **0.494** (49.4% of fp32) |
+| Bytes per parameter (quantized weights) | **2.0000** = 1 + 4/GS at GS=4 |
+| Group size | **4 — BACKED OFF from requested 64** (64→32→16→8→4) |
 | magic / version | `0x616b3432` / 2, verified |
 | shared_classifier | 1 |
+| sha256 | `c8c032d04f8a48b2c8f9b708cc571a895d45fe23521f47f542b897d64ad77c50` |
 
-**Independent cross-check**: `q8_format.h`'s `q8_checkpoint_bytes()` predicted 278,608 bytes
-from the header arithmetic alone, and the quantizer produced exactly that. Two implementations
-written separately agreeing to the byte is meaningful evidence that both read the format the
-same way.
+**Text quality confirms the fix**: with GS=4, `runq_host` produces "Once upon a time, there
+was a little girl named Lily. She had a jolly apple that she loved to play outside. One day,
+she went to the park with her mom. She saw a big tree and said..." — coherent, and closely
+tracking the fp32 baseline's "...She saw a big box" (diverging only at that word). See
+`specs/004-int8-matmul-accel/golden-reference-q8.txt` (T010) for the full transcript.
 
-GS=64 confirms every storage and lane-framing figure in the spec and DESIGN.md, which were
-corrected from an earlier GS=32 assumption. 1.0714 rather than the theoretical 1.0625 because
-of the 256-byte header and the three RMSNorm tensors that stay fp32.
+**Independent cross-check, still valid**: `q8_format.h`'s `q8_checkpoint_bytes()` predicted
+521,728 bytes at GS=4 from the header arithmetic alone, and the quantizer produced exactly
+that — the format-layout agreement between the two independently-written implementations
+holds regardless of GS; only the *chosen* GS value was wrong.
+
+**IMPORTANT — this is not 0.264/26.6% and it is not GS=64. Every storage ratio and
+lane-framing figure elsewhere in this spec, DESIGN.md, and data-model.md that assumes GS=64
+needs revisiting**, in particular:
+- SC-003's size-ratio target should be checked against 0.494, not 0.264.
+- The accelerator's per-group rescale amortizes over 4 MACs, not 64 — the weight-fetch
+  prefetch-scales-then-stream-weights design (R1) still holds structurally, but the ratio of
+  scale-block size to weight-block size is now `4/(4+4)=50%` of the stream instead of ~1.5%,
+  which changes the "scales are tiny, prefetch them" cost/benefit calculus materially.
+- Bytes-per-parameter is 2.0, not 1.0625 — capacity-per-region figures (R5) need recomputing.
+- `GS` is still correctly modeled as a runtime/file parameter rather than a constant (R3), but
+  R3's specific claim of "no backoff expected, GS should be 64" is superseded by this section —
+  see the correction note added to R3 below.
+
+This was reported to the team lead as a significant finding requiring downstream attention
+(RTL group-size assumptions, spec size-ratio figures) beyond this task's own scope.
+
+---
+
+## R16. **Group size is capped at 4 by this model's dimensions** (found 2026-08-20)
+
+**This is the most consequential finding so far and it changes the feature's economics.**
+
+`runq.c`'s quantized matmul is `for (j = 0; j <= n - GS; j += GS)`, which silently requires
+`GS` to divide `n`, the *inner* dimension. This model uses two inner dimensions:
+
+| Matmuls | Inner dimension |
+|---|---|
+| wq, wk, wv, wo, w1, w3, classifier | dim = 64 |
+| **w2 (FFN down-projection)** | **hidden_dim = 172** |
+
+`gcd(64, 172) = 4`, so **GS=4 is the largest valid group size**. At GS=64 the w2 matmul covers
+only 128 of 172 elements — **26% of the FFN down-projection silently skipped**. That produced
+degenerate output ("there there there ... upon upon upon"), which is how this was found.
+
+**Upstream would not have caught it either**: `export.py` backs off only while
+`dim % group_size != 0` and never checks `hidden_dim`, and its assertion tests
+`w.numel() % group_size`, which passes (11008 = 172 x 64 is divisible by 64) even though the
+inner dimension is not.
+
+### What GS=4 costs
+
+| | GS=64 (assumed throughout the spec) | GS=4 (actually valid) |
+|---|---|---|
+| bytes/weight | 1.0625 | **2.0000** |
+| ratio vs fp32 | 0.266 | **0.494** |
+| MAC lanes | 4 | **2** |
+| capacity gain | 3.8x | **2x** |
+| checkpoint size | 278,608 B | 521,728 B |
+
+**SC-003 (ratio <= 1/3) and SC-004 (capacity >= 3x) both FAIL at GS=4.** Worse, int8 at GS=4 is
+storage-equivalent AND lane-equivalent to fp16 while being less accurate — the entire argument
+for choosing int8 over fp16 (research R12, DESIGN.md 3.4) collapses for this model.
+
+### Zero-padding restores it, and is mathematically free
+
+Padding `hidden_dim` costs nothing in correctness: w1/w3 produce zeros in the padded region,
+`silu(0) * 0 = 0`, and w2's dot product over the padded columns contributes exactly zero.
+
+| hidden_dim | max GS | bytes/wt | ratio | lanes | FFN weights | q8 size |
+|---|---|---|---|---|---|---|
+| 172 (none) | 4 | 2.0000 | 0.494 | 2.0 | +0% | 521,728 |
+| **176** | 16 | 1.2500 | 0.312 | 3.2 | +2.3% | ~328,960 |
+| **192** | **64** | **1.0625** | **0.266** | **3.8** | +11.6% | ~295,936 |
+| 256 | 64 | 1.0625 | 0.266 | 3.8 | +48.8% | ~361,216 |
+
+Padding to 192 restores the full design. Padding to 176 is far cheaper in weights and still
+clears SC-003, at 3.2 effective lanes.
+
+**Cost of padding**: the converter must pad, the firmware must size its buffers to the padded
+hidden_dim, and the accelerator descriptor carries n=192 rather than 172. All bounded, but it
+is real work in three places and it makes the on-board model differ structurally from the
+published one.
+
+### Status
+
+**This is a decision for the user, not a defect to fix silently.** It is exactly what the T014
+gate exists to surface — just not the failure mode anyone predicted. Options are: accept GS=4
+and lose the capacity argument; pad to 176 or 192; support a ragged final group in both the
+software and the accelerator; or choose a model whose hidden_dim divides cleanly.
 
 ---
 
