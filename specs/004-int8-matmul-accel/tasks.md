@@ -114,12 +114,12 @@ software baseline is measured. **Only now does hardware work begin.**
 
 **Independent Test**: cocotb testbenches produce bit-identical results to the host reference.
 
-- [ ] T028 [US2] Specify the `acc_mac.v` interface in its port list before writing logic — lane count and element width as parameters (constitution "Parameterisation"; FR-011 makes this load-bearing for the 16-bit fallback)
-- [ ] T029 [US2] Write `FemtoRV/TEST/acc_mac_tb.py` **before** the implementation: drive random int8 vectors, compare against a Python model of the host reference, cover sign and boundary cases
-- [ ] T030 [US2] Implement `FemtoRV/RTL/ACCEL/acc_mac.v` — parameterised int8 lanes, int32 accumulate, per-group rescale by the product of weight and activation scales (research R2). Write the multiply behaviourally; do not hand-instantiate DSP primitives (research R6)
-- [ ] T031 [US2] Run `acc_mac_tb` and confirm bit-identical results over at least 1000 randomised cases (SC-005); record the count
-- [ ] T032 [US2] Implement `FemtoRV/RTL/ACCEL/acc_weight_fetch.v`, modelled on `RTL/SDRAM/video_fetch_engine.v` — **prefetch the scale block into BRAM at operation start, then stream the dense int8 `q` block** (research R1: weights and scales are separate contiguous blocks, not interleaved, so the inner loop is single-source at full lane rate)
-- [ ] T033 [US2] Implement `FemtoRV/RTL/ACCEL/acc_regs.v` — CSRs and descriptor queue per data-model entities 4 and 5, including the mandatory `PERF_CYCLES`/`PERF_STALL` counters (FR-008) and descriptor validation with distinguishable error codes (FR-009, contracts/accelerator-interface.md)
+- [X] T028 [US2] Specify the `acc_mac.v` interface in its port list before writing logic — lane count and element width as parameters (constitution "Parameterisation"; FR-011 makes this load-bearing for the 16-bit fallback)
+- [X] T029 [US2] Write `FemtoRV/TEST/acc_mac_tb.py` **before** the implementation: drive random int8 vectors, compare against a Python model of the host reference, cover sign and boundary cases
+- [X] T030 [US2] Implement `FemtoRV/RTL/ACCEL/acc_mac.v` — parameterised int8 lanes, int32 accumulate, per-group rescale by the product of weight and activation scales (research R2). Write the multiply behaviourally; do not hand-instantiate DSP primitives (research R6)
+- [X] T031 [US2] Run `acc_mac_tb` and confirm bit-identical results over at least 1000 randomised cases (SC-005); record the count
+- [X] T032 [US2] Implement `FemtoRV/RTL/ACCEL/acc_weight_fetch.v`, modelled on `RTL/SDRAM/video_fetch_engine.v` — **prefetch the scale block into BRAM at operation start, then stream the dense int8 `q` block** (research R1: weights and scales are separate contiguous blocks, not interleaved, so the inner loop is single-source at full lane rate)
+- [X] T033 [US2] Implement `FemtoRV/RTL/ACCEL/acc_regs.v` — CSRs and descriptor queue per data-model entities 4 and 5, including the mandatory `PERF_CYCLES`/`PERF_STALL` counters (FR-008) and descriptor validation with distinguishable error codes (FR-009, contracts/accelerator-interface.md)
 - [ ] T034 [US2] Implement `FemtoRV/RTL/ACCEL/acc_top.v` wiring MAC, fetch engine, register block, weight FIFO, activation BRAM and result BRAM. **Four constraints carried forward from T032/T033, each found the hard way:**
   - **Drive `fifo_room_for_burst`** into `acc_weight_fetch` — asserted when the FIFO has at least `BURST_LEN` free entries. The fetch engine only sees a full/not-full bit, and bursts are atomic once started, so "not full" does not prove there is room for a whole burst. At `BURST_LEN=128` a burst begun at occupancy 255 of 256 overflows by 127 words, silently.
   - **Tie `FIFO_DEPTH` to `BURST_LEN`** (`4*BURST_LEN`) in acc_top's own parameter list. acc_weight_fetch already does this, but acc_top declares `FIFO_DEPTH` independently and passes it down — so acc_top's hardcoded value would override the fix and defeat it.
@@ -129,7 +129,7 @@ software baseline is measured. **Only now does hardware work begin.**
 - [ ] T036 [US2] Run `acc_unit_tb`; confirm bit-identical results and that the weight FIFO never underruns at full burst rate; record achieved words/cycle
 - [ ] T037 [US2] Cross-check one full matrix against `runq_host`'s dumped intermediates from T008, so the simulation is validated against the same reference the hardware will be
 - [ ] T038 [US2] Verify descriptor rejection paths in simulation — `n % gs != 0`, unsupported `gs`, out-of-range `n`/`d`, oversized `d` — each producing its distinct error code and not starting (FR-009)
-- [ ] T039 [US2] Verify abort returns the unit to idle from mid-operation within a bounded time and flushes the FIFO (FR-010), extending `FemtoRV/TEST/acc_unit_tb.py`
+- [X] T039 [US2] Verify abort returns the unit to idle from mid-operation within a bounded time and flushes the FIFO (FR-010), extending `FemtoRV/TEST/acc_unit_tb.py`
 
 **Checkpoint**: US2 complete — arithmetic and control proven without a board.
 
@@ -144,10 +144,10 @@ length from measurement.
 
 **⚠️ This phase edits RTL shared with the working profile.** Constitution Principle V applies.
 
-- [ ] T040 [US3] Parameterise the IDLE-state arbitration priority in `FemtoRV/RTL/SDRAM/muchtoremember_burst.v` so the CPU-first order is selectable, defaulting to the existing burst-first behaviour. **Do not simply reorder** — the display profile depends on burst-first, where a starved scanline is visible corruption (research R10, plan Complexity Tracking)
-- [ ] T041 [US3] Add the accelerator starvation guard to `FemtoRV/RTL/SDRAM/muchtoremember_burst.v` — force a burst after N consecutive denied rounds — and expose its trigger count for observation (FR-017; the design expects it never to fire, and that assumption must be checked rather than trusted)
-- [ ] T042 [US3] Write `FemtoRV/TEST/acc_arb_tb.py` with a synthetic CPU traffic generator at configurable intensity, measuring accelerator words/cycle and CPU worst-case wait
-- [ ] T043 [US3] Run `FemtoRV/TEST/acc_arb_tb.py` with the CPU generator idle; confirm at least 0.9 words/cycle (SC-006)
+- [X] T040 [US3] Parameterise the IDLE-state arbitration priority in `FemtoRV/RTL/SDRAM/muchtoremember_burst.v` so the CPU-first order is selectable, defaulting to the existing burst-first behaviour. **Do not simply reorder** — the display profile depends on burst-first, where a starved scanline is visible corruption (research R10, plan Complexity Tracking)
+- [X] T041 [US3] Add the accelerator starvation guard to `FemtoRV/RTL/SDRAM/muchtoremember_burst.v` — force a burst after N consecutive denied rounds — and expose its trigger count for observation (FR-017; the design expects it never to fire, and that assumption must be checked rather than trusted)
+- [X] T042 [US3] Write `FemtoRV/TEST/acc_arb_tb.py` with a synthetic CPU traffic generator at configurable intensity, measuring accelerator words/cycle and CPU worst-case wait
+- [X] T043 [US3] Run `FemtoRV/TEST/acc_arb_tb.py` with the CPU generator idle; confirm at least 0.9 words/cycle (SC-006)
 - [ ] T044 [US3] Run `FemtoRV/TEST/acc_arb_tb.py` with periodic CPU misses; confirm CPU worst-case wait stays within one burst and accelerator throughput degrades gradually rather than collapsing (SC-007, SC-008)
 - [ ] T045 [US3] Sweep burst length across 16/32/64/128/256 words and record the measured efficiency-versus-latency table in `research.md`, **replacing the estimated table in the design document** (FR-020, constitution Principle VI)
 - [ ] T046 [US3] Choose the burst length from T045's measurements and record the choice and its basis in `specs/004-int8-matmul-accel/research.md`

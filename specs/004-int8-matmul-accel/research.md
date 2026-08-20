@@ -603,48 +603,63 @@ needed, so the "padding is transparent" claim in R16 holds.
 
 ---
 
-## R19. Burst efficiency MEASURED — the estimate was wrong, and 64 words fails SC-006
+## R19. Burst efficiency MEASURED — estimate was wrong, BURST_LEN 64 -> 128
 
-**Preliminary** (T041, 2026-08-20). A longer run is in progress before this becomes the official
-table; sample sizes here were only ~25-375 bursts per point.
+**FINAL** (T041, 2026-08-20). 3000 bursts per point idle, 1000 loaded — two to three orders of
+magnitude more samples than the first pass. Testbench 6/6 PASS.
 
-DESIGN.md 6.3 estimated burst efficiency from a ~6-cycle per-burst overhead. Measured on the
-real controller, CPU idle (the like-for-like case):
+### The SC-006 gate: efficiency with no competing traffic
 
-| Burst | Measured | Estimated | SC-006 (>= 90%) |
+| Burst | Measured | Estimated (wrong) | SC-006 (>= 90%) |
 |---|---|---|---|
 | 16 | 62.7% | 72.7% | FAIL |
-| 32 | 76.3% | 84.2% | FAIL |
-| **64** | **85.7%** | 91.4% | **FAIL** |
-| 128 | 91.4% | 95.5% | PASS |
-| 256 | 94.7% | 97.7% | PASS |
+| 32 | 76.4% | 84.2% | FAIL |
+| 64 | **85.7%** | 91.4% | **FAIL** |
+| **128** | **91.3%** | 95.5% | **PASS** |
+| 256 | 94.8% | 97.7% | PASS |
 
-**The estimate was optimistic by 8-13 points, and it changes a design decision.** DESIGN.md
-chose 64 words on the strength of an estimated 91.4%. The real figure is 85.7%, which does not
-meet SC-006's 90% floor. **128 words is the new candidate default.**
+### Under realistic CPU load (one request per ~100 cycles)
 
-**Why the estimate was wrong** — the mechanism matters more than the numbers. Back-calculated
-per-burst overhead is ~9.5 cycles at 16 words rising to ~14 at 256, versus the ~6 assumed. The
-missing cost is real SDRAM protocol overhead the estimate omitted: back-to-back streaming pays
-tRP recovery between every burst on top of ACTIVATE/CAS setup, and long bursts additionally eat
-a row crossing every 256 words. The ~6-cycle figure was measuring bare CAS setup, not
-burst-to-burst turnaround. **An estimate derived from one phase of a protocol will
-underestimate a pipeline that pays all of them.**
+| Burst | Loaded eff | CPU worst wait | CPU mean wait |
+|---|---|---|---|
+| 16 | 59.4% | 34 cyc | 16.9 |
+| 32 | 72.9% | 34 cyc | 31.8 |
+| 64 | 82.4% | 57 cyc | 55.4 |
+| **128** | **87.5%** | **48 cyc** | 46.2 |
+| 256 | 92.7% | 179 cyc | 176.1 |
 
-Under realistic CPU load (a request every ~100 cycles) efficiency drops further:
-59.5/72.9/82.4/87.5/92.7%. Short bursts lose proportionally more, because they reach the
-arbitration boundary more often per unit time and give the CPU more chances to intercept.
+### Decision: BURST_LEN = 128
 
-**Starvation guard**: fired zero times under any realistic CPU load. Making it fire at all
-required an artificial driver holding the request line asserted every cycle — at which point it
-did its job, holding accelerator throughput at 37.1% rather than 0%. That the guard is
-essentially unreachable in realistic traffic is itself the useful result: it confirms the
-workload analysis in DESIGN.md 6.1 rather than merely asserting it.
+DESIGN.md chose 64 on an estimated 91.4%. It delivers 85.7% and **fails SC-006**. 128 clears the
+gate at 91.3% and — unexpectedly — also has a *lower* CPU worst-case wait than 64 (48 vs 57
+cycles), so it is better on both axes rather than a trade. 256 buys 3.5 more points for 3.7x the
+CPU latency, poor value when scalar work dominates after integration.
 
-**Atomicity confirmed by reading the FSM**, not assumed: once `s_idle` enters `s_burst_act` the
-only return path is through the drain and precharge states, with CPU requests held in
-`wmask_sticky`/`rd_sticky` throughout. The "three-line reorder" simplification is therefore
-sound.
+### Why the estimate was wrong — the part that generalises
+
+Back-calculated per-burst overhead is ~9.5 cycles at 16 words rising to ~14 at 256, versus the
+~6 assumed. The missing cost is SDRAM protocol overhead the estimate omitted: tRP recovery
+between back-to-back bursts on top of ACTIVATE/CAS setup, plus a row crossing every 256 words.
+The 6-cycle figure came from a burst test measuring **bare CAS setup** — one phase of the
+protocol, not the full burst-to-burst turnaround.
+
+**An estimate taken from one phase of a pipelined protocol will understate a design that pays
+all of them.** The error was systematic rather than noisy: 8-13 points at every burst length,
+converging as the fixed cost amortises.
+
+### Starvation guard: unreachable under realistic load
+
+Fired zero times at every CPU rate tested, including one request per 20 cycles. Forcing it
+required an artificial driver holding the request line asserted every cycle, at which point it
+did its job — accelerator throughput held at 37.1% rather than 0%. Its unreachability in
+realistic traffic empirically confirms the workload analysis in DESIGN.md 6.1 rather than
+leaving it an assertion.
+
+### Burst atomicity: confirmed by reading the FSM, not assumed
+
+Once `s_idle` enters `s_burst_act`, the only return path is through the drain and precharge
+states, with CPU requests held in `wmask_sticky`/`rd_sticky` throughout. Row-crossing adds
+states but stays inside the burst. The three-line-reorder simplification is therefore sound.
 
 ---
 
