@@ -465,6 +465,51 @@ and MAC lanes, at no measured quality risk.
 
 ---
 
+## R19. Burst efficiency MEASURED — the estimate was wrong, and 64 words fails SC-006
+
+**Preliminary** (T041, 2026-08-20). A longer run is in progress before this becomes the official
+table; sample sizes here were only ~25-375 bursts per point.
+
+DESIGN.md 6.3 estimated burst efficiency from a ~6-cycle per-burst overhead. Measured on the
+real controller, CPU idle (the like-for-like case):
+
+| Burst | Measured | Estimated | SC-006 (>= 90%) |
+|---|---|---|---|
+| 16 | 62.7% | 72.7% | FAIL |
+| 32 | 76.3% | 84.2% | FAIL |
+| **64** | **85.7%** | 91.4% | **FAIL** |
+| 128 | 91.4% | 95.5% | PASS |
+| 256 | 94.7% | 97.7% | PASS |
+
+**The estimate was optimistic by 8-13 points, and it changes a design decision.** DESIGN.md
+chose 64 words on the strength of an estimated 91.4%. The real figure is 85.7%, which does not
+meet SC-006's 90% floor. **128 words is the new candidate default.**
+
+**Why the estimate was wrong** — the mechanism matters more than the numbers. Back-calculated
+per-burst overhead is ~9.5 cycles at 16 words rising to ~14 at 256, versus the ~6 assumed. The
+missing cost is real SDRAM protocol overhead the estimate omitted: back-to-back streaming pays
+tRP recovery between every burst on top of ACTIVATE/CAS setup, and long bursts additionally eat
+a row crossing every 256 words. The ~6-cycle figure was measuring bare CAS setup, not
+burst-to-burst turnaround. **An estimate derived from one phase of a protocol will
+underestimate a pipeline that pays all of them.**
+
+Under realistic CPU load (a request every ~100 cycles) efficiency drops further:
+59.5/72.9/82.4/87.5/92.7%. Short bursts lose proportionally more, because they reach the
+arbitration boundary more often per unit time and give the CPU more chances to intercept.
+
+**Starvation guard**: fired zero times under any realistic CPU load. Making it fire at all
+required an artificial driver holding the request line asserted every cycle — at which point it
+did its job, holding accelerator throughput at 37.1% rather than 0%. That the guard is
+essentially unreachable in realistic traffic is itself the useful result: it confirms the
+workload analysis in DESIGN.md 6.1 rather than merely asserting it.
+
+**Atomicity confirmed by reading the FSM**, not assumed: once `s_idle` enters `s_burst_act` the
+only return path is through the drain and precharge states, with CPU requests held in
+`wmask_sticky`/`rd_sticky` throughout. The "three-line reorder" simplification is therefore
+sound.
+
+---
+
 ## R11. Verification strategy
 
 **MEASURED baseline** (feature 003): 1.38 tok/s; matmul 61.3%, attention 27.4%; SDRAM burst
