@@ -18,6 +18,15 @@ else ifeq ($(MODULE),gpu_fb_tb)
 else ifeq ($(MODULE),video_fetch_tb)
   VERILOG_SOURCES = video_fetch_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v ../RTL/SDRAM/sdram_arbiter.v ../RTL/SDRAM/video_fetch_engine.v ../RTL/SDRAM/video_line_fifo.v
   TOPLEVEL := video_fetch_wrapper
+else ifeq ($(MODULE),acc_mac_tb)
+  VERILOG_SOURCES = ../RTL/ACCEL/acc_mac.v
+  TOPLEVEL := acc_mac
+else ifeq ($(MODULE),acc_unit_tb)
+  VERILOG_SOURCES = acc_unit_wrapper.v ../RTL/ACCEL/acc_top.v ../RTL/ACCEL/acc_mac.v ../RTL/ACCEL/acc_weight_fetch.v ../RTL/ACCEL/acc_regs.v ../RTL/SDRAM/muchtoremember_burst.v
+  TOPLEVEL := acc_unit_wrapper
+else ifeq ($(MODULE),acc_arb_tb)
+  VERILOG_SOURCES = acc_arb_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v
+  TOPLEVEL := acc_arb_wrapper
 else ifeq ($(MODULE),sdram_burst_tb)
   VERILOG_SOURCES = sdram_burst_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v
   TOPLEVEL := sdram_burst_wrapper

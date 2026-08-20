@@ -14,6 +14,14 @@ localparam IO_FGA_CNTL_bit              = 10; // RW write: send command  read: g
 localparam IO_FGA_DAT_bit               = 11; // W  write: write pixel data
 localparam IO_GPU_bit                   = 10; // RW GPU registers (reuses FGA bit, mutually exclusive)
 localparam IO_SYNTH_bit                 = 11; // W  FM synth registers (reuses FGA_DAT bit)
+// MatMul accelerator (feature 004). The 20-bit one-hot IO space is FULL, so these reuse the
+// FGA/GPU and FGA_DAT/SYNTH slots and are MUTUALLY EXCLUSIVE with them — exactly as IO_GPU_bit
+// already shares IO_FGA_CNTL_bit. Valid only in profiles without GPU/FGA/SYNTH (research R7).
+// Two bits are needed because one 32-bit write cannot carry both a register selector and a
+// 32-bit base address: IDX selects the register, DAT reads/writes its value.
+localparam IO_ACC_IDX_bit                = 10; // W  select accelerator register index
+localparam IO_ACC_DAT_bit                = 11; // RW read/write the selected accelerator register
+
 localparam IO_SEGMENT_bit               = 12; // W write: 8 bits to display on 7-segment display
 localparam IO_TIMER_bit                 = 13; // RW read: 32-bit timer value, write: reset and start 32-bit timer
 localparam IO_INT_CONTROLLER_bit        = 14; // RW read: 32-bit interupts, write: reset interupts

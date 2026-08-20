@@ -6,12 +6,33 @@
 //
 // Single-word port: identical timing to original muchtoremember.
 // Burst read port: back-to-back pipelined READs, ~1 word/cycle.
-// Priority: refresh > burst (when requested) > single-word.
+//
+// IDLE-state priority is a parameter (CPU_PRIORITY, see below). Bursts are
+// atomic once launched (the FSM stays in the s_burst_* states until the
+// burst completes and only then revisits s_idle), so the priority choice
+// only ever affects who gets to *start* at the next idle-state boundary.
+//
+// CPU_PRIORITY == 0 (default): refresh > burst > single-word. This is the
+//   original ordering, required by the colorlight_i5 display profile where
+//   a starved scanline fetch is visible corruption (ACCEL/DESIGN.md sec 9a,
+//   research.md R10). Do not change this default.
+// CPU_PRIORITY == 1: refresh > single-word > burst, i.e. the CPU is served
+//   first at every idle-state boundary, with a burst getting in only when
+//   the CPU has nothing pending -- UNLESS the anti-starvation guard has
+//   fired (STARVE_LIMIT consecutive idle rounds where the burst port was
+//   denied), in which case the burst is forced through once regardless of
+//   pending CPU requests. Intended for the int8 matmul accelerator profile
+//   (ACCEL/DESIGN.md sec 6.2), where a stalled CPU costs a few cycles but a
+//   starved accelerator costs SDRAM roofline.
 //
 // Uses one-hot state encoding identical to the original to preserve
 // the exact busy signal timing that the cache depends on.
 
-module muchtoremember_burst (
+module muchtoremember_burst #(
+  parameter CPU_PRIORITY       = 0,   // 0 = burst-first (legacy/display default), 1 = CPU-first
+  parameter STARVE_LIMIT       = 16,  // consecutive denied idle rounds before the guard forces a burst
+  parameter STARVE_CNT_WIDTH   = 8    // width of the saturating "guard fired" event counter
+) (
 
   // Interface to SDRAM chip
   output             sd_clk,
@@ -44,6 +65,12 @@ module muchtoremember_burst (
   output reg    burst_valid,    // Data valid pulse
   output reg    burst_done,     // Burst complete pulse
   output reg    burst_busy,     // High during burst
+
+  // Anti-starvation guard (CPU_PRIORITY==1 only; always 0 when CPU_PRIORITY==0)
+  // Saturating count of how many times the guard forced a burst through
+  // ahead of a pending CPU request. Expected to be ~0 in normal operation
+  // (FR-017) -- exposed so that assumption is measured, not assumed.
+  output reg [STARVE_CNT_WIDTH-1:0] starve_guard_fired,
 
   // Exposed data input for sharing
   output wire [31:0] sd_data_in_out
@@ -141,6 +168,22 @@ module muchtoremember_burst (
   wire stillatwork = ~(state[s_read_4_bit] | state[s_write_1_bit]);
   wire [8:0] refresh_counterN = refresh_counter - 1;
 
+  // ======== IDLE-state arbitration (parameterised, see header comment) ========
+  reg [15:0] burst_deny_count;  // consecutive idle rounds the burst port has been denied
+
+  wire cpu_pending    = (|wmask_sticky) | rd_sticky;
+  wire accel_starved  = (CPU_PRIORITY != 0) && (burst_deny_count >= STARVE_LIMIT);
+  // Does the burst win the current idle-round arbitration?
+  //   CPU_PRIORITY==0: unconditional burst-first — identical to the original code
+  //                    (`else if (burst_busy)`), so the default behaviour is bit-exact.
+  //   CPU_PRIORITY==1: burst wins only if the CPU has nothing pending, or the
+  //                    starvation guard has fired.
+  wire burst_wins     = burst_busy && ((CPU_PRIORITY == 0) || accel_starved || !cpu_pending);
+  // The guard specifically overrode a pending CPU request (as opposed to the
+  // burst winning naturally because the CPU had nothing pending) — this is
+  // the event FR-017 wants counted.
+  wire guard_forced   = (CPU_PRIORITY != 0) && burst_busy && accel_starved && cpu_pending;
+
   always @(posedge clk)
     if(!resetn) begin
       state          <= s_init;
@@ -155,6 +198,8 @@ module muchtoremember_burst (
       sd_data_drive  <= 0;
       refresh_pending<= 1;
       refresh_counter<= 0;
+      burst_deny_count   <= 0;
+      starve_guard_fired <= 0;
     end else begin
 
       // Busy logic — IDENTICAL to original
@@ -172,6 +217,21 @@ module muchtoremember_burst (
       // Latch burst request
       if (burst_rd && !burst_busy)
         burst_busy <= 1;
+
+      // Anti-starvation bookkeeping. Only meaningful under CPU_PRIORITY==1:
+      // when CPU_PRIORITY==0, burst_wins is always true whenever burst_busy
+      // is set, so the deny count never grows and the guard never fires.
+      // Refresh rounds are excluded — they preempt both ports equally and
+      // are not the CPU "winning" the arbitration.
+      if (state[s_idle_bit] && !refresh_pending) begin
+        if (burst_busy && !burst_wins)
+          burst_deny_count <= (&burst_deny_count) ? burst_deny_count : burst_deny_count + 16'd1;
+        else
+          burst_deny_count <= 0;
+
+        if (guard_forced)
+          starve_guard_fired <= (&starve_guard_fired) ? starve_guard_fired : starve_guard_fired + 1'b1;
+      end
 
       (* parallel_case *)
       case(1'b1)
@@ -201,7 +261,11 @@ module muchtoremember_burst (
         state[s_idle_in_2_bit]: begin state <= s_idle_in_1; {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
         state[s_idle_in_1_bit]: begin state <= s_idle;      {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_NOP; end
 
-        // ======== IDLE: priority = refresh > burst > single ========
+        // ======== IDLE: priority = refresh > (burst_wins ? burst : single) ========
+        // burst_wins encodes the CPU_PRIORITY parameter and the starvation
+        // guard (see the arbitration comment block above); when
+        // CPU_PRIORITY==0, burst_wins == burst_busy, i.e. this is bit-exact
+        // with the original refresh > burst > single-word ordering.
         state[s_idle_bit]: begin
           sd_ba   <= addr[22:21];
           sd_addr <= {2'b00, addr[20:10]};
@@ -209,7 +273,7 @@ module muchtoremember_burst (
           if (refresh_pending) begin
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_AUTO_REFRESH;
             state <= s_idle_in_2;
-          end else if (burst_busy) begin
+          end else if (burst_wins) begin
             // Start burst read
             sd_ba   <= burst_addr[22:21];
             sd_addr <= {2'b00, burst_addr[20:10]};
@@ -220,7 +284,7 @@ module muchtoremember_burst (
             burst_row       <= burst_addr[20:10];
             cas_pipe        <= 0;
             state           <= s_burst_act;
-          end else if ((|wmask_sticky) | rd_sticky) begin
+          end else if (cpu_pending) begin
             {sd_cs, sd_ras, sd_cas, sd_we} <= CMD_ACTIVE;
             state <= s_activate;
           end else begin

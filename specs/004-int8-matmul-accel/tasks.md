@@ -50,10 +50,10 @@ build-flash-upload cycle.
 
 **Purpose**: scaffolding that later phases fill in. No behaviour yet.
 
-- [ ] T001 [P] Create `FemtoRV/RTL/ACCEL/` module skeletons — `acc_mac.v`, `acc_weight_fetch.v`, `acc_regs.v`, `acc_top.v` — each with a documented port list per constitution "Interfaces" (direction, width, meaning) and no logic yet
-- [ ] T002 [P] Add `acc_mac_tb`, `acc_unit_tb`, `acc_arb_tb` entries to `FemtoRV/TEST/Makefile`, following the existing `sdram_burst_tb` pattern (constitution Principle II requires registration)
-- [ ] T003 Allocate accelerator IO bits in `FemtoRV/RTL/DEVICES/HardwareConfig_bits.v`: `IO_ACC_IDX_bit = 10` and `IO_ACC_DAT_bit = 11`, with comments recording that they are mutually exclusive with `IO_FGA_CNTL_bit`/`IO_GPU_bit` and `IO_FGA_DAT_bit`/`IO_SYNTH_bit` because the 20-bit IO space is full (research R7)
-- [ ] T004 [P] Create `FemtoRV/FIRMWARE/llama2/tools/` scaffolding for the quantization script and host reference
+- [X] T001 [P] Create `FemtoRV/RTL/ACCEL/` module skeletons — `acc_mac.v`, `acc_weight_fetch.v`, `acc_regs.v`, `acc_top.v` — each with a documented port list per constitution "Interfaces" (direction, width, meaning) and no logic yet
+- [X] T002 [P] Add `acc_mac_tb`, `acc_unit_tb`, `acc_arb_tb` entries to `FemtoRV/TEST/Makefile`, following the existing `sdram_burst_tb` pattern (constitution Principle II requires registration)
+- [X] T003 Allocate accelerator IO bits in `FemtoRV/RTL/DEVICES/HardwareConfig_bits.v`: `IO_ACC_IDX_bit = 10` and `IO_ACC_DAT_bit = 11`, with comments recording that they are mutually exclusive with `IO_FGA_CNTL_bit`/`IO_GPU_bit` and `IO_FGA_DAT_bit`/`IO_SYNTH_bit` because the 20-bit IO space is full (research R7)
+- [X] T004 [P] Create `FemtoRV/FIRMWARE/llama2/tools/` scaffolding for the quantization script and host reference
 
 ---
 
@@ -63,8 +63,8 @@ build-flash-upload cycle.
 
 **⚠️ CRITICAL**: no user story work begins until this phase completes.
 
-- [ ] T005 Create `FemtoRV/FIRMWARE/llama2/q8_format.h` defining the Q8_0 checkpoint layout from research R1/R4 — magic `0x616b3432`, version 2, 256-byte header, Config, shared-classifier flag, group size, then per-tensor `q` block followed by `s` block — shared by host tools and firmware so they cannot disagree
-- [ ] T006 Record the full-profile regression baseline: run `cd FemtoRV && make colorlight_i5.synth`, and save LUT/BRAM/PLL/Fmax into `specs/004-int8-matmul-accel/research.md` under a new R14. Constitution Principle V makes this the reference every later shared-RTL change is checked against, so it must be captured **before** anything is modified
+- [X] T005 Create `FemtoRV/FIRMWARE/llama2/q8_format.h` defining the Q8_0 checkpoint layout from research R1/R4 — magic `0x616b3432`, version 2, 256-byte header, Config, shared-classifier flag, group size, then per-tensor `q` block followed by `s` block — shared by host tools and firmware so they cannot disagree
+- [X] T006 Record the full-profile regression baseline: run `cd FemtoRV && make colorlight_i5.synth`, and save LUT/BRAM/PLL/Fmax into `specs/004-int8-matmul-accel/research.md` under a new R14. Constitution Principle V makes this the reference every later shared-RTL change is checked against, so it must be captured **before** anything is modified
 
 **Checkpoint**: skeletons exist, format is defined once, regression baseline recorded.
 
@@ -81,13 +81,13 @@ against the fp32 output from feature 003.
 complete before any hardware work begins — it is both the go/no-go and the source of the
 golden reference.
 
-- [ ] T007 [P] [US1] Write `FemtoRV/FIRMWARE/llama2/tools/quantize_model.sh` producing a Q8_0 checkpoint from the fp32 model, reporting size, checksum, group size, and the size ratio versus fp32 (SC-003 is stated as a ratio)
+- [X] T007 [P] [US1] Write `FemtoRV/FIRMWARE/llama2/tools/quantize_model.sh` producing a Q8_0 checkpoint from the fp32 model, reporting size, checksum, group size, and the size ratio versus fp32 (SC-003 is stated as a ratio)
 - [ ] T008 [P] [US1] Port upstream `runq.c` to `FemtoRV/FIRMWARE/llama2/tools/runq_host.c` as the host golden reference, with a flag to dump intermediate dot-product results for a chosen layer and matrix (needed by T030 and T037)
-- [ ] T009 [US1] Run T007 and record the actual quantized size, checksum and group size in `specs/004-int8-matmul-accel/research.md`; confirm the header matches `q8_format.h`
+- [X] T009 [US1] Run T007 and record the actual quantized size, checksum and group size in `specs/004-int8-matmul-accel/research.md`; confirm the header matches `q8_format.h`
 - [ ] T010 [US1] Run `runq_host` with seed 2026 for 110 steps and save the output as the golden reference transcript in `specs/004-int8-matmul-accel/`
-- [ ] T011 [P] [US1] Build an fp32 host reference at `FemtoRV/FIRMWARE/llama2/tools/run_host.c` from feature 003's ported inference, with a flag to dump the per-position logit vector. Feature 003's host harness lived in a scratch directory and was discarded, so it must be recreated — and it is the baseline the quantized model gets measured against
+- [X] T011 [P] [US1] Build an fp32 host reference at `FemtoRV/FIRMWARE/llama2/tools/run_host.c` from feature 003's ported inference, with a flag to dump the per-position logit vector. Feature 003's host harness lived in a scratch directory and was discarded, so it must be recreated — and it is the baseline the quantized model gets measured against
 - [ ] T012 [US1] Extend `FemtoRV/FIRMWARE/llama2/tools/runq_host.c` (T008) with the same per-position logit dump, so both models can be compared position by position on identical inputs
-- [ ] T013 [US1] Write `FemtoRV/FIRMWARE/llama2/tools/kl_compare.py` computing, over at least 200 token positions with the same prompt and seed: mean and 99th-percentile KL divergence between the two models' softmax distributions, and the top-1 agreement rate. Record all three in `specs/004-int8-matmul-accel/research.md` (FR-004, FR-004c)
+- [X] T013 [US1] Write `FemtoRV/FIRMWARE/llama2/tools/kl_compare.py` computing, over at least 200 token positions with the same prompt and seed: mean and 99th-percentile KL divergence between the two models' softmax distributions, and the top-1 agreement rate. Record all three in `specs/004-int8-matmul-accel/research.md` (FR-004, FR-004c)
 - [ ] T014 [US1] **EARLY DECISION GATE (FR-004a, FR-004b)** — read T013's figures against SC-002's thresholds (mean KL < 0.01 nats, top-1 agreement > 95%) and against the generated text, and record an explicit 8-bit go/no-go with its basis in `specs/004-int8-matmul-accel/research.md`. **This runs entirely on the host and blocks all RTL work.** If no-go, switch to 16-bit before writing any integer datapath — that change alters the basis of bit-exact verification, so taking it later is far more disruptive
 - [ ] T015 [US1] Port the quantized inference into `FemtoRV/FIRMWARE/llama2/runq.c` — no mmap, no host file I/O, weights already resident, static allocation at the fixed addresses from data-model entity 2, reusing feature 003's serial output and profiler
 - [ ] T016 [US1] Implement activation quantization in `FemtoRV/FIRMWARE/llama2/quantize.c`, matching upstream `quantize()` exactly so results compare bit-for-bit (research R2 — the activation vector is quantized too, which the design document had missed)

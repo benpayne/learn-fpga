@@ -37,6 +37,19 @@ int8 array first, then the whole scale array.
 - Scales are a second, much smaller stream: `size/GS` floats. At the default GS=64, a 64x64
   matrix has 64 scales = 256 bytes, about 1.5% of the data.
 
+**Precision correction (confirmed against upstream `init_quantized_tensors`)**: the q-then-s
+split is **per tensor**, not per file. For the multi-layer arrays (wq/wk/wv/wo/w1/w2/w3) the
+layout is layer0.q, layer0.s, layer1.q, layer1.s, ... — NOT every layer's q followed by every
+layer's s. The original wording here ("all int8 values for a tensor come first, followed by all
+scale factors") was true but easy to over-generalise to the whole file, which would misparse it.
+
+This does not change the accelerator design: it operates on one matrix at a time and receives
+`w_q_base` and `w_s_base` as separate descriptor fields, so per-tensor separation is exactly
+what it wants. It does matter for the loader and the host tools.
+
+Order within the file: the three RMSNorm tensors (rms_att, rms_ffn, rms_final) come first as
+plain fp32 and are **not quantized**; `wcls` appears only when `shared_classifier == 0`.
+
 **Decision**: **prefetch the scale block into BRAM at the start of each operation**, then stream
 int8 weights as one dense burst sequence. This gives a clean single-stream inner loop at 4
 MACs/cycle, with a short setup transfer beforehand. It also avoids needing two concurrent read
@@ -190,6 +203,64 @@ Carried over from `FemtoRV/RTL/ACCEL/DESIGN.md` section 9a, verified there again
 - **The full profile must keep working.** The existing burst-over-CPU order was correct for
   video. Make the priority a parameter or gate it on the profile, and keep feature 003's
   no-regression check.
+
+## R10a. Reset polarity — no inversion needed at the boundary
+
+`femtosoc.v:234` declares `wire reset = &reset_cnt;` — the counter saturates and the signal goes
+HIGH once reset is released. Despite the name, `reset` therefore carries **active-low semantics**
+("not in reset"), which is why femtosoc passes it straight into ports named `resetn`
+(lines 447, 466, 516, 540).
+
+**Consequence**: the accelerator's `resetn` ports connect directly to `reset`. Do not add an
+inverter at the integration boundary — a skeleton review flagged one as possibly needed, and it
+would hold the accelerator in reset for the entire time the rest of the SoC is running, which
+would present as "the accelerator never responds" rather than as an obvious wiring error.
+
+---
+
+## R14. Regression baseline (T006, measured 2026-08-20)
+
+Captured **before** any shared RTL was modified, per constitution Principle V. Every later
+change to `muchtoremember_burst.v` or `femtosoc.v` is checked against this.
+
+`make colorlight_i5.synth`, full-featured profile:
+
+| Resource | Used | % |
+|---|---|---|
+| LUT4 | 13,937 / 24,288 | 57% |
+| Block RAM (DP16KD) | 40 / 56 | 71% |
+| Multipliers (MULT18X18D) | 15 / 28 | 53% |
+| PLL (EHXPLLL) | 2 / 2 | 100% |
+
+Identical to feature 003's recorded figures, confirming the branch starts from a known-good
+state. Tasks T047, T056 and T078 re-run this comparison.
+
+---
+
+## R15. Measured quantization results (T009, measured 2026-08-20)
+
+`quantize_model.sh` on the fp32 stories260K checkpoint:
+
+| | Value |
+|---|---|
+| Output size | **278,608 bytes** |
+| fp32 original | 1,056,540 bytes |
+| Ratio | **0.264** (SC-003 wants <= 1/3 — passes) |
+| Bytes per parameter | 1.0714 |
+| Group size | **64 — no backoff occurred** |
+| magic / version | `0x616b3432` / 2, verified |
+| shared_classifier | 1 |
+
+**Independent cross-check**: `q8_format.h`'s `q8_checkpoint_bytes()` predicted 278,608 bytes
+from the header arithmetic alone, and the quantizer produced exactly that. Two implementations
+written separately agreeing to the byte is meaningful evidence that both read the format the
+same way.
+
+GS=64 confirms every storage and lane-framing figure in the spec and DESIGN.md, which were
+corrected from an earlier GS=32 assumption. 1.0714 rather than the theoretical 1.0625 because
+of the 256-byte header and the three RMSNorm tensors that stay fp32.
+
+---
 
 ## R11. Verification strategy
 
