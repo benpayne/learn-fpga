@@ -378,9 +378,9 @@ wrong by 8-13 points:
 | 32 words | 76.4% FAIL | 72.9% | 34 cyc | 84.2% |
 | 64 words | 85.7% **FAIL** | 82.4% | 57 cyc | 91.4% |
 | **128 words** | **91.3% PASS** | **87.5%** | **48 cyc** | 95.5% |
-| 256 words | pending | 92.7% | 179 cyc | 97.7% |
+| 256 words | 94.8% PASS | 92.7% | 179 cyc | 97.7% |
 
-**Recommend 128 words**, revised from 64. SC-006 requires >= 90% of the theoretical rate with no
+**Recommend 128 words**, revised from 64 (final measurement, 3000 bursts/point). SC-006 requires >= 90% of the theoretical rate with no
 competing traffic; 64 words delivers 85.7% and does not meet it. 128 clears it at 91.3% and,
 usefully, also has a *lower* CPU worst-case wait than 64 (48 vs 57 cycles) — it is better on
 both axes, not a trade. 256 buys 5 more points of efficiency for 3.7x the CPU latency, which is
