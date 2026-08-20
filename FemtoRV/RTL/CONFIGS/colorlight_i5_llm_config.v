@@ -16,6 +16,14 @@
 `define NRV_IO_SDCARD      // Mapped IO, SPI SDCARD
 `define NRV_IO_TIMER
 `define NRV_IO_SDRAM       // SDRAM (main RAM, via muchtoremember controller)
+`define NRV_IO_ACCEL       // int8 matmul accelerator (feature 004). Occupies the burst-port
+                           // instantiation site video_fetch_engine would otherwise use in this
+                           // profile (DESIGN.md sec 9a, research R10) -- mutually exclusive with
+                           // NRV_IO_GPU/NRV_IO_SYNTH, which this profile does not define anyway,
+                           // since it reuses their IO_ACC_IDX_bit/IO_ACC_DAT_bit slots
+                           // (HardwareConfig_bits.v). Sets muchtoremember_burst's CPU_PRIORITY=1
+                           // for this profile only -- the display profile's default (0,
+                           // burst-first) is unchanged.
 
 /************************* Frequency ********************************************************************************/
 

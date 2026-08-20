@@ -125,7 +125,7 @@ software baseline is measured. **Only now does hardware work begin.**
   - **Tie `FIFO_DEPTH` to `BURST_LEN`** (`4*BURST_LEN`) in acc_top's own parameter list. acc_weight_fetch already does this, but acc_top declares `FIFO_DEPTH` independently and passes it down — so acc_top's hardcoded value would override the fix and defeat it.
   - **acc_top owns FIFO flush on abort.** `acc_weight_fetch` can stop issuing bursts and discard in-flight data, but it does not own the FIFO storage and cannot clear entries already accepted before the abort arrived.
   - **Use `acc_bits.vh`** for error codes and register indices rather than local literals, so `op_error_code` cannot drift from the values `acc_regs` rejects on.
-- [ ] T035 [US2] Write `FemtoRV/TEST/acc_unit_tb.py` driving `acc_top` against a simulated SDRAM, using the model's real matrix shapes (64x64, 64x172, 172x64, 64x512)
+- [X] T035 [US2] Write `FemtoRV/TEST/acc_unit_tb.py` driving `acc_top` against a simulated SDRAM, using the model's real matrix shapes (64x64, 64x172, 172x64, 64x512)
 - [ ] T036 [US2] Run `acc_unit_tb`; confirm bit-identical results and that the weight FIFO never underruns at full burst rate; record achieved words/cycle
 - [ ] T037 [US2] Cross-check one full matrix against `runq_host`'s dumped intermediates from T008, so the simulation is validated against the same reference the hardware will be
 - [ ] T038 [US2] Verify descriptor rejection paths in simulation — `n % gs != 0`, unsupported `gs`, out-of-range `n`/`d`, oversized `d` — each producing its distinct error code and not starting (FR-009)
@@ -163,11 +163,11 @@ length from measurement.
 
 **Independent Test**: standalone test on the board versus a processor-computed reference.
 
-- [ ] T048 [US4] Enable the accelerator in `FemtoRV/RTL/CONFIGS/colorlight_i5_llm_config.v` and instantiate `acc_top` in `FemtoRV/RTL/femtosoc.v` at the site `video_fetch_engine` occupies, connecting it to the SDRAM burst port and selecting the CPU-first arbitration parameter (research R10)
-- [ ] T049 [US4] Map the result BRAM at `0x100000` in `FemtoRV/RTL/femtosoc.v` so the CPU reads results with ordinary loads rather than IO transactions (research R8, data-model entity 6)
-- [ ] T050 [US4] Synthesize with `make colorlight_i5_llm.synth`; record LUT/BRAM/DSP/PLL usage and Fmax in `research.md` and confirm at least 25% logic free (SC-013) and timing met with margin (constitution "Timing")
-- [ ] T051 [US4] Write `FemtoRV/FIRMWARE/examples/acc_test.c` — a standalone test that writes a known weight matrix and quantized vector to SDRAM, runs one operation, and compares against a processor-computed reference; serial output only
-- [ ] T052 [US4] Add an `upload_acc_test` target to `FemtoRV/FIRMWARE/examples/Makefile` at load address `0x800000`, following the `upload_sdram_memtest` pattern from feature 003 (**not** the generic `upload_%` rule, which uses the RetroKernel address)
+- [X] T048 [US4] Enable the accelerator in `FemtoRV/RTL/CONFIGS/colorlight_i5_llm_config.v` and instantiate `acc_top` in `FemtoRV/RTL/femtosoc.v` at the site `video_fetch_engine` occupies, connecting it to the SDRAM burst port and selecting the CPU-first arbitration parameter (research R10)
+- [X] T049 [US4] Map the result BRAM at `0x100000` in `FemtoRV/RTL/femtosoc.v` so the CPU reads results with ordinary loads rather than IO transactions (research R8, data-model entity 6)
+- [X] T050 [US4] Synthesize with `make colorlight_i5_llm.synth`; record LUT/BRAM/DSP/PLL usage and Fmax in `research.md` and confirm at least 25% logic free (SC-013) and timing met with margin (constitution "Timing")
+- [X] T051 [US4] Write `FemtoRV/FIRMWARE/examples/acc_test.c` — a standalone test that writes a known weight matrix and quantized vector to SDRAM, runs one operation, and compares against a processor-computed reference; serial output only
+- [X] T052 [US4] Add an `upload_acc_test` target to `FemtoRV/FIRMWARE/examples/Makefile` at load address `0x800000`, following the `upload_sdram_memtest` pattern from feature 003 (**not** the generic `upload_%` rule, which uses the RetroKernel address)
 - [ ] T053 [HW] [US4] Program `femtosoc_llm.bit` and run `(cd FemtoRV/FIRMWARE/examples && make upload_acc_test)`; confirm the result matches the reference exactly — *Session B*
 - [ ] T054 [HW] [US4] Record `PERF_CYCLES` and `PERF_STALL` and compare achieved words/cycle against T036's simulated figure — *Session B*
 - [ ] T055 [HW] [US4] Verify at least two descriptor rejection paths and the abort path on real hardware via `FemtoRV/FIRMWARE/examples/acc_test.c`, recording results in `specs/004-int8-matmul-accel/research.md` — *Session B*
@@ -183,9 +183,9 @@ length from measurement.
 
 **Independent Test**: generated text byte-identical to the US1 software run.
 
-- [ ] T057 [US5] Implement `FemtoRV/FIRMWARE/llama2/acc_driver.c` and `acc_driver.h` per contracts/accelerator-interface.md — descriptor issue, status polling, counter reads, and a timeout that aborts rather than waiting forever
-- [ ] T058 [US5] Confirm the completion spin loop in `FemtoRV/FIRMWARE/llama2/acc_driver.c` fits the CPU instruction cache by inspecting `llama2.list`; if it does not, waiting generates SDRAM traffic that competes with the transfer being waited on (FR-015, contracts note)
-- [ ] T059 [US5] Replace the weight `matmul` call in `FemtoRV/FIRMWARE/llama2/runq.c` with the accelerator path, keeping the software implementation available behind a compile-time switch for A/B comparison
+- [X] T057 [US5] Implement `FemtoRV/FIRMWARE/llama2/acc_driver.c` and `acc_driver.h` per contracts/accelerator-interface.md — descriptor issue, status polling, counter reads, and a timeout that aborts rather than waiting forever
+- [X] T058 [US5] Confirm the completion spin loop in `FemtoRV/FIRMWARE/llama2/acc_driver.c` fits the CPU instruction cache by inspecting `llama2.list`; if it does not, waiting generates SDRAM traffic that competes with the transfer being waited on (FR-015, contracts note)
+- [X] T059 [US5] Replace the weight `matmul` call in `FemtoRV/FIRMWARE/llama2/runq.c` with the accelerator path, keeping the software implementation available behind a compile-time switch for A/B comparison
 - [ ] T060 [HW] [US5] Run `(cd FemtoRV/FIRMWARE/llama2 && make upload)` and confirm output is **byte-identical** to T023's software transcript for the same prompt and seed (SC-009) — *Session C*
 - [ ] T061 [HW] [US5] Record the generation rate in `specs/004-int8-matmul-accel/research.md`; expect roughly 2.5x over the US1 baseline, consistent with accelerating ~61% of the work — *Session C*
 - [ ] T062 [HW] [US5] Re-run the profiler (`MEASURE_MODE 1` in `FemtoRV/FIRMWARE/llama2/runq.c`) and confirm the matmul category has collapsed and attention is now the largest; record the breakdown in `specs/004-int8-matmul-accel/research.md` — *Session C*

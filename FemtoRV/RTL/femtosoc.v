@@ -35,6 +35,13 @@
 `include "DEVICES/cache.v"
 `endif
 
+`ifdef NRV_IO_ACCEL
+`include "ACCEL/acc_top.v"
+`include "ACCEL/acc_regs.v"
+`include "ACCEL/acc_weight_fetch.v"
+`include "ACCEL/acc_mac.v"
+`endif
+
 `ifdef NRV_IO_SYNTH
 `include "DEVICES/synth/fm_synth_soc.v"
 `include "DEVICES/synth/fm_synth_registers.v"
@@ -297,9 +304,21 @@ module femtosoc(
       .MOSI(spi_mosi)
 `endif				   
    );
-`else   
+`else
    wire mem_address_is_io  =  mem_address[22] && !mem_address[23];
+`ifdef NRV_IO_ACCEL
+   // Accelerator result BRAM (0x100000-0x17FFFF, only ~16KB actually
+   // implemented, data-model.md entity 6 / research R8) and activation
+   // BRAM (0x180000-0x1FFFFF) are carved out of the RAM catch-all region
+   // below -- without this, mem_address_is_ram would still claim them and
+   // the boot ROM's byte-masked write logic would silently corrupt itself
+   // on every activation-vector write.
+   wire mem_address_is_accel_res = mem_address[20] && !mem_address[19] && !mem_address[22] && !mem_address[23];
+   wire mem_address_is_accel_act = mem_address[20] &&  mem_address[19] && !mem_address[22] && !mem_address[23];
+   wire mem_address_is_ram = !mem_address[22] && !mem_address[23] && !mem_address[20];
+`else
    wire mem_address_is_ram = !mem_address[22] && !mem_address[23];
+`endif
 `ifdef NRV_IO_SDRAM
    wire mem_address_is_sdram = mem_address[23];  // 0x800000-0xFFFFFF
 `endif
@@ -460,9 +479,19 @@ module femtosoc(
    );
 
    // Unified SDRAM controller: single-word + burst in one module
-   // Priority: refresh > burst > single-word
+   // Priority: refresh > burst > single-word (default, CPU_PRIORITY=0) --
+   // preserved for the display profile, where a starved scanline fetch is
+   // visible corruption (research R10/R10a). Under NRV_IO_ACCEL,
+   // CPU_PRIORITY=1 instead (refresh > CPU > burst, with an anti-
+   // starvation guard): a stalled CPU costs a few cycles, a starved
+   // accelerator costs SDRAM roofline (DESIGN.md sec 6.2). This profile's
+   // default of 0 is unchanged -- only the LLM/accel profile overrides it.
    // Busy signal timing identical to original muchtoremember
+`ifdef NRV_IO_ACCEL
+   muchtoremember_burst #(.CPU_PRIORITY(1)) sdram_ctrl (
+`else
    muchtoremember_burst sdram_ctrl (
+`endif
       .clk(clk), .resetn(reset),
       .sd_clk(sdram_clk),
       .sd_d(sd_d),
@@ -491,6 +520,57 @@ module femtosoc(
       .sd_data_in_out()
    );
 
+`ifdef NRV_IO_ACCEL
+   // int8 matmul accelerator -- occupies the exact instantiation site
+   // video_fetch_engine used (DESIGN.md sec 9a: "there is no GPU to
+   // replace -- it is already gone from this profile"; research R10).
+   // Drives the SAME burst port wires the video path would have used.
+   wire [31:0] accel_res_rdata;
+   wire [31:0] accel_io_rdata;
+
+   acc_top #(
+      .BURST_LEN(128) // measured: 64 sustains only 85.7% with the CPU
+                       // idle (SC-006 floor is 90%); 128 gives 91.3% AND a
+                       // lower CPU worst-case wait (48 vs 57 cyc) -- R19.
+                       // FIFO_DEPTH follows automatically (4*BURST_LEN).
+   ) accel_inst (
+      .clk(clk), .resetn(reset), // reset is active-low despite its name
+                                  // (R10a) -- no inverter, same as every
+                                  // other .resetn(reset) below.
+
+      // FemtoRV IO bus -- IO_ACC_IDX_bit/IO_ACC_DAT_bit (HardwareConfig_bits.v)
+      .io_wdata(io_wdata),
+      .io_rdata(accel_io_rdata),
+      .io_wstrb(io_wstrb),
+      .io_rstrb(io_rstrb),
+      .io_sel_idx(io_word_address[IO_ACC_IDX_bit]),
+      .io_sel_dat(io_word_address[IO_ACC_DAT_bit]),
+
+      // Result BRAM -- memory-mapped at 0x100000 (T045, research R8),
+      // ordinary CPU loads, not IO reads.
+      .res_sel(mem_address_is_accel_res),
+      .res_rstrb(mem_rstrb),
+      .res_addr(mem_address[13:2]),
+      .res_rdata(accel_res_rdata),
+
+      // Activation BRAM -- memory-mapped at 0x180000, ordinary CPU stores
+      // (byte-maskable, unlike the IO bus's whole-word register writes --
+      // needed since xq is packed int8).
+      .act_sel(mem_address_is_accel_act),
+      .act_wmask(mem_wmask),
+      .act_addr(mem_address[13:2]),
+      .act_wdata(mem_wdata),
+
+      // SDRAM burst port -- same wires video_fetch_engine used below.
+      .burst_rd(vid_burst_rd),
+      .burst_addr(vid_burst_addr),
+      .burst_len(vid_burst_len),
+      .burst_dout(vid_burst_dout),
+      .burst_valid(vid_burst_valid),
+      .burst_done(vid_burst_done),
+      .burst_busy(vid_burst_busy)
+   );
+`else
    // Video fetch engine — only active when display_mode == 2 (framebuffer)
    wire [1:0] gpu_display_mode;
    wire [9:0] gpu_v_count;
@@ -545,20 +625,31 @@ module femtosoc(
       .hsync(gated_hsync)
    );
 `endif
+`endif
 
 `ifdef NRV_MAPPED_SPI_FLASH
    assign mem_rdata = mem_address_is_io  ? io_rdata  :
+`ifdef NRV_IO_ACCEL
+		      mem_address_is_accel_res ? accel_res_rdata :
+`endif
 		      mem_address_is_ram ? ram_rdata :
 		      mapped_spi_flash_rdata;
 `else
  `ifdef NRV_IO_SDRAM
    assign mem_rdata = mem_address_is_io    ? io_rdata :
                       mem_address_is_sdram ? sdram_rdata :
+`ifdef NRV_IO_ACCEL
+                      mem_address_is_accel_res ? accel_res_rdata :
+`endif
                       ram_rdata;
  `else
-   assign mem_rdata = mem_address_is_io ? io_rdata : ram_rdata;
+   assign mem_rdata = mem_address_is_io ? io_rdata :
+`ifdef NRV_IO_ACCEL
+                      mem_address_is_accel_res ? accel_res_rdata :
+`endif
+                      ram_rdata;
  `endif
-`endif   
+`endif
    
 /***************************************************************************************************
 /*
@@ -1047,6 +1138,9 @@ always @(posedge clk) begin
 `endif
 `ifdef NRV_IO_SYNTH
 	    | synth_rdata
+`endif
+`ifdef NRV_IO_ACCEL
+	    | accel_io_rdata
 `endif
 	    ;
 end

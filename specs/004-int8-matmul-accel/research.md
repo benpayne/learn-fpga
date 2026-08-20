@@ -700,3 +700,158 @@ the SC-014 regression compares one against the other. That comparison is only tr
 each profile's artifacts survive the other's run.
 
 ---
+
+## R21. The accelerator could not be synthesized at all — yosys `share` does not terminate (found 2026-08-20)
+
+The first full synthesis of the accelerator-enabled profile was **OOM-killed**: `yosys` reached
+21 GB RSS before the kernel killed it (`Out of memory: Killed process 2872877 (yosys)
+total-vm:22198188kB, anon-rss:21035732kB`). No resource or timing numbers came out of it.
+
+Two things were wrong, and the second is the one worth remembering.
+
+### The reporting failure
+
+The run was reported as "completed (exit code 0)". That was the exit status of the `tee`/`tail`
+pipeline, not of `make`, which was `Killed`. In a shell pipeline `$?` is the **last** command's
+status, so `make ... | tee log` reports success no matter how `make` died. Any synthesis
+invocation whose result is trusted must either avoid the pipe (`make > log 2>&1; echo $?`) or
+set `pipefail`. This feature has now been bitten three times by shared or shadowed state
+reporting success — the `$<`-only link line, the shared `sim_build/`, and this.
+
+### The real defect
+
+Reproduced standalone in **seconds**, without a full SoC build:
+
+```
+yosys -p "read_verilog -I. acc_top.v acc_mac.v acc_regs.v acc_weight_fetch.v;
+          synth_ecp5 -top acc_top"      -> std::bad_alloc under an 8 GB cap
+```
+
+Bisected by module:
+
+| Module | `synth_ecp5` standalone |
+|---|---|
+| `acc_regs.v` | OK |
+| `acc_weight_fetch.v` | OK |
+| `acc_mac.v` | **aborts — `std::bad_alloc`** |
+
+The abort is always in the same place: **`5.17. Executing SHARE pass (SAT-based resource
+sharing)`**. `share` uses a SAT solver to prove two operators are never simultaneously live so
+they can be merged. `acc_mac.v` presents it with `$mux` x779, `$eq` x92, `$logic_and` x96 and
+`$mul` x6 — the signature of its three large *combinational* fp32 functions (`i2f32`,
+`fp_mul32`, `fp_add32`, plus a 32-iteration `clz32`). The SAT instance is intractable, not
+merely slow.
+
+Narrowing the two 32x32 multiplies in `acc_weight_fetch.v` to their real 16-bit operand widths
+was tried first and **did not help** — the multipliers were not the cause.
+
+### What was actually wrong with the process
+
+`acc_mac.v` passed 7/7 cocotb tests and 1000/1000 bit-identical vectors. It is *functionally*
+correct and always was. **Simulation says nothing about synthesizability**, and until this run
+nothing in the feature had ever put the accelerator through yosys. Constitution Principle I
+("simulate before hardware") was satisfied while the design could not be built at all. A cheap
+per-module `synth_ecp5` smoke check belongs alongside the cocotb run, and would have caught
+this at T031 instead of T050.
+
+### Resolution
+
+`share` is an optimisation, not a correctness requirement. `BOARDS/colorlight_i5_llm.mk` now
+runs `synth_ecp5`'s coarse stage explicitly with `share` omitted, **scoped to this profile only**
+so the display profile's flow — and therefore its R14 regression baseline — is untouched.
+
+Measured with `share` omitted (out-of-context, per module):
+
+| | LUT4 | CCU2C | TRELLIS_FF | MULT18X18D | DP16KD |
+|---|---|---|---|---|---|
+| `acc_mac` alone | 1,749 | 292 | 281 | 12 | 0 |
+| `acc_top` (whole accelerator) | 2,784 | — | 1,279 | 17 | 33 |
+
+Projected against feature 003's measured minimal-profile baseline (LUT 8,391 / BRAM 16 /
+MULT 8):
+
+| Resource | Baseline | + accelerator | Of device |
+|---|---|---|---|
+| LUT4 | 8,391 | ~11,175 | ~46% — comfortable, SC-013 wants >=25% free |
+| DP16KD | 16 | ~49 | **~88%** |
+| MULT18X18D | 8 | ~25 | **~89%** |
+
+It fits, but BRAM and DSP are both near the ceiling, and neither needs to be:
+
+- **33 BRAMs** come from four memories totalling 409,600 bits. The result and activation BRAMs
+  are `NUM_SLOTS=8 x 512` words each, sized for `MAX_N`/`MAX_D` of 4096. This model's `n` and
+  `d` never exceed 512. Dropping `ACT_AWIDTH`/`RESULT_AWIDTH` from 12 to 11 halves both.
+- **17 DSPs** where the datapath needs **4** — four int8 lanes. The other 13 are consumed by the
+  fp32 functions' mantissa multiplies.
+
+Both point the same way: the fp32 rescale is built as single-cycle combinational logic, but it
+runs **once per group of GS=64 elements**, not once per cycle. There is a ~64-cycle budget for
+work currently being done in one. Sequencing it would cut DSPs, cut LUTs, remove the `share`
+pathology at its source, and relieve the timing risk this much combinational depth carries at
+25 MHz. Recorded as the first candidate if resources or timing bite.
+
+---
+
+## R22. T050 measured — it fits and it closes timing, but the margin is thin (2026-08-20)
+
+First successful synthesis of the accelerator-enabled profile, after R20's artifact rename and
+R21's `share` removal. `make colorlight_i5_llm.synth` exit status **0** (checked directly, not
+through a pipe — see R21), nextpnr "Program finished normally", `femtosoc_llm.bit` produced.
+
+| Resource | 003 baseline | With accelerator | Device | SC-013 |
+|---|---|---|---|---|
+| LUT4 | 8,391 (34%) | **13,183 (54%)** | 24,288 | 46% free — **PASS** (needs >=25%) |
+| DP16KD | 16 (28%) | **49 (87%)** | 56 | 7 blocks left |
+| MULT18X18D | 8 (28%) | **25 (89%)** | 28 | 3 left |
+| EHXPLLL | 1 (50%) | 1 (50%) | 2 | unchanged |
+| TRELLIS_FF | — | 2,686 (11%) | 24,288 | — |
+
+The out-of-context projections in R21 (~49 BRAM, ~25 DSP) matched the placed design exactly.
+
+### Timing is the real finding
+
+```
+Max frequency for clock '$glbnet$clk': 26.21 MHz (PASS at 25.00 MHz)
+```
+
+It passes, but with **4.8% margin**, and the critical path is unambiguous:
+
+```
+Source accel_inst.u_mac.s3_rescaled_f_q   ->   Sink accel_inst.u_mac.row_result_q
+Setup 35.5 ns
+```
+
+That is `acc_mac.v`'s fp32 rescale — the same combinational logic that made `share` diverge in
+R21 and that consumes 13 of the 17 accelerator DSPs. Three independent symptoms, one cause.
+
+**This margin should not be accepted as-is**, on this project's own precedent. Feature 003's
+minimal profile reached 40.76 MHz; the accelerator costs 36% of that. More directly: the
+256-entry SDRAM cache was **rejected** for reaching only 28.4 MHz against a 25 MHz target, and
+UART flakiness was later traced to exactly that kind of thin margin rather than to a logic
+fault. 26.21 MHz is tighter than the configuration this project already judged too tight.
+
+### What to do about it
+
+`acc_mac.v` performs the fp32 rescale as single-cycle combinational logic, but a rescale happens
+**once per group of GS=64 elements**. There is a ~64-cycle budget being spent in one. Sequencing
+or pipelining it over even a handful of cycles would:
+
+- move the critical path off the fp32 normalise/round chain, recovering timing margin;
+- free most of the 13 DSPs the mantissa multiplies consume, easing 89% DSP occupancy;
+- remove the `share` pathology at its source, letting the profile use the stock `synth_ecp5`
+  flow instead of R21's staged workaround.
+
+Separately, the result and activation BRAMs are sized `NUM_SLOTS=8 x 512` words from `MAX_N`/
+`MAX_D` of 4096, while this model's `n` and `d` never exceed 512. Dropping `ACT_AWIDTH`/
+`RESULT_AWIDTH` from 12 to 11 halves both and would return roughly 16 of the 49 BRAMs.
+
+### This bitstream must not be flashed
+
+`femtosoc_llm.bit` from this run contains the scale-pipelining defect found at T036: the weight
+and activation scale registers advance one cycle early, so every group followed by another group
+is rescaled with the **next** group's scale. Confirmed arithmetically — hardware produced
+`0x423f57a1` = 47.8356, matching `50166 * w_s[1] * xs[0]`, where the correct value using
+`w_s[0]` is 26.4823. The build proves synthesizability and gives real resource and timing
+figures; it does **not** produce correct results, and Session B must wait for the fix.
+
+---
