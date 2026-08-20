@@ -65,8 +65,52 @@ Every rejection MUST be distinguishable — these have different fixes:
 | `n` or `d` too large | `ERR_RANGE` | exceeds configured maxima |
 | `d*4` exceeds slot | `ERR_SLOT` | result would overflow its buffer |
 | START while BUSY and queue full | `ERR_FULL` | back-pressure, not a fault |
+| `mode` not implemented | `ERR_MODE` | unrecognised or not-yet-built mode |
 
 A rejected descriptor MUST NOT start and MUST NOT modify the result buffer.
+
+`ERR_MODE` was added during T034. `acc_top.v` decoded only `ACC_MODE_MATMUL` and let every
+other mode value fall through, so an attention-mode descriptor issued before US6 exists would
+have run as a matmul and returned confident, wrong numbers. An unimplemented mode must be
+rejected loudly rather than silently reinterpreted.
+
+---
+
+## Register indices
+
+The numeric indices live in **`FemtoRV/RTL/ACCEL/acc_bits.vh`**, which is the single definition
+the RTL compiles against. The firmware header MUST mirror it exactly:
+
+| Index | Name | Access |
+|---|---|---|
+| 0 | `ACC_REG_W_Q_BASE` | W — SDRAM address of the int8 weight block |
+| 1 | `ACC_REG_W_S_BASE` | W — SDRAM address of the fp32 scale block |
+| 2 | `ACC_REG_X_SLOT` | W — BRAM slot holding the quantized activation |
+| 3 | `ACC_REG_OUT_SLOT` | W — result BRAM slot |
+| 4 | `ACC_REG_N` | W — inner dimension |
+| 5 | `ACC_REG_D` | W — outer dimension |
+| 6 | `ACC_REG_GS` | W — group size (a file parameter, not a constant) |
+| 7 | `ACC_REG_MODE` | W — `0` matmul, `1` att-score, `2` att-sum |
+| 8 | `ACC_REG_CTRL` | W — bit 0 START, bit 1 ABORT |
+| 9 | `ACC_REG_STATUS` | R — see the bit layout below |
+| 10 | `ACC_REG_PERF_CYC` | R — cycles active |
+| 11 | `ACC_REG_PERF_STALL` | R — of which, waiting on memory |
+
+`ACC_REG_STATUS` bit layout, as `acc_regs.v` actually builds it:
+
+| Bits | Field |
+|---|---|
+| 0 | `BUSY` |
+| 1 | `DONE` |
+| 2 | `ERR` |
+| 3 | reserved |
+| 7:4 | error code (`ACC_ERR_*`), valid when `ERR` is set |
+| 15:8 | descriptor queue depth |
+| 31:16 | reserved |
+
+Access is index-then-data through the two IO addresses `IO_ACC_IDX` and `IO_ACC_DAT`
+(`HardwareConfig_bits.v` bits 10 and 11), the same packed-register shape the GPU uses, because
+the 20-bit IO space had no room for twelve individually decoded addresses (research R7).
 
 ---
 
