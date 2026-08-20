@@ -399,10 +399,25 @@ published one.
 
 ### Status
 
-**This is a decision for the user, not a defect to fix silently.** It is exactly what the T014
-gate exists to surface — just not the failure mode anyone predicted. Options are: accept GS=4
-and lose the capacity argument; pad to 176 or 192; support a ragged final group in both the
-software and the accelerator; or choose a model whose hidden_dim divides cleanly.
+**DECIDED 2026-08-20: pad `hidden_dim` from 172 to 192, restoring GS=64.**
+
+Rationale: R17 measured quantization quality at 0.000216 nats mean KL with 100% top-1
+agreement — a 46x margin against SC-002. Quality was never the constraint, so the GS cap was
+purely a storage-and-lanes penalty with no compensating benefit. Padding removes it for +11.6%
+FFN weights and restores the full four-lane datapath the accelerator architecture was sized
+around.
+
+Expected after padding: 1.0625 bytes/weight, ratio 0.266 (SC-003 passes), ~296 KB checkpoint,
+3.76 weights per 32-bit word.
+
+**What padding touches** — three places, all bounded:
+1. the converter, which zero-pads w1/w3 rows and w2 columns and writes hidden_dim=192;
+2. the firmware, whose RunState buffers size to the padded hidden_dim;
+3. the accelerator descriptor, which carries n=192 for the w2 operation rather than 172.
+
+Padding is exact, not approximate: w1/w3 emit zeros in the padded region, `silu(0) * 0 = 0`,
+and w2's dot product over the padded columns contributes exactly zero. The padded model is
+mathematically identical to the original.
 
 ---
 
