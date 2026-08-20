@@ -343,10 +343,25 @@ This was reported to the team lead as a significant finding requiring downstream
 only 128 of 172 elements — **26% of the FFN down-projection silently skipped**. That produced
 degenerate output ("there there there ... upon upon upon"), which is how this was found.
 
+**Two failure paths, not one.** The matmul truncation above is the obvious one. The activation
+quantization has the same defect: `quantize()` computes `int num_groups = n / GS` by integer
+division, so for the w2 call (`quantize(&s->hq, s->hb, hidden_dim)` with n=172, GS=64) it
+produces only 2 groups covering 128 elements and leaves the remaining 44 `q` entries
+**uninitialised** — worse than dropped, since they carry stale data into the dot product.
+
 **Upstream would not have caught it either**: `export.py` backs off only while
 `dim % group_size != 0` and never checks `hidden_dim`, and its assertion tests
 `w.numel() % group_size`, which passes (11008 = 172 x 64 is divisible by 64) even though the
 inner dimension is not.
+
+**Neither the writer nor the reader is defective.** This is worth stating because the
+investigation initially mis-framed it. Dequantizing each stored tensor against its fp32
+original passes at GS=64 — that checks the writer, and the writer is correct. The reader's
+header parsing, `shared_classifier` aliasing and dequantized embedding table are all verbatim
+upstream and were independently verified. The invalid quantity is the **group size**, which is
+a runtime parameter of the format, and its validity depends on the model's inner dimensions
+rather than on anything either side stores. The decisive evidence is that the *same* reader
+binary produces garbage against a GS=64 file and coherent text against a GS=4 file.
 
 ### What GS=4 costs
 
