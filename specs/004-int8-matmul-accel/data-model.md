@@ -61,6 +61,18 @@ How a weight matrix appears to the accelerator once loaded.
 | `xq` | int8[n] | n bytes |
 | `xs` | float32[n/GS] | 4n/GS bytes |
 
+**Slot layout in hardware** (established by T034; firmware writing an activation slot MUST
+follow it, and nothing specified it before):
+
+| Words within a slot | Contents |
+|---|---|
+| 0 .. 479 | packed int8 `xq`, four per 32-bit word |
+| 480 .. 511 | fp32 `xs`, one scale per group |
+
+Slots are 512 words (2 KB); there are 8 of them. The split is a parameter (`ACT_XS_WORDS`) but
+firmware and hardware must agree on it, so treat it as an interface, not an implementation
+detail.
+
 **Rules**
 - Produced by the CPU before each operation, matching `runq.c`'s `quantize()` exactly so results
   compare bit-for-bit.

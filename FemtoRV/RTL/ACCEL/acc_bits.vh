@@ -48,6 +48,12 @@
 `define ACC_ERR_RANGE      4'd3   // n or d exceeds configured maxima
 `define ACC_ERR_SLOT       4'd4   // result would overflow its buffer slot
 `define ACC_ERR_FULL       4'd5   // descriptor queue full
+// Added after T034 found that a descriptor with mode != MODE_MATMUL would
+// silently run the matmul datapath. Only MODE_MATMUL is implemented until
+// T064 adds the attention modes; until then an unimplemented mode MUST be
+// rejected rather than quietly producing a plausible wrong result. That is
+// the same failure shape as the runq.c truncation in research R16.
+`define ACC_ERR_MODE       4'd6   // mode not implemented / unrecognised
 
 // ---- Operating modes ----
 `define ACC_MODE_MATMUL    2'd0
