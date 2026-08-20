@@ -231,6 +231,47 @@ would present as "the accelerator never responds" rather than as an obvious wiri
 
 ---
 
+## R11. Verification strategy
+
+**MEASURED baseline** (feature 003): 1.38 tok/s; matmul 61.3%, attention 27.4%; SDRAM burst
+~98 MB/s simulated, 5.1 MB/s via CPU measured.
+
+The chain of references that makes each stage conclusive:
+
+1. Host `runq.c` on the quantized model — the golden reference.
+2. CPU `runq.c` on the board — proves the port and quantization, gives the software baseline.
+3. Simulated accelerator vs host reference — bit-exact, integer, unambiguous.
+4. Hardware accelerator standalone vs CPU-computed reference — bit-exact.
+5. Integrated generation vs step 2's output — **byte-identical text**.
+
+Step 5 is the strong one: because every operand is integer, the accelerated path must produce
+*exactly* the same tokens as the software path. Any divergence is a bug, not a rounding
+difference. This is the property the fp16 fallback would weaken (R12).
+
+## R12. If the fp16 fallback is taken
+
+Per the spec's FR-004a, resolved by the user. What changes:
+
+- Bit-exactness stops being free. Hardware and reference must agree on rounding mode and
+  accumulation order, which must be specified deliberately.
+- A host reference implementation must be written; none exists upstream (FR-011a).
+- Capacity gain roughly halves (~3.0M parameters rather than ~5.6M).
+- Lanes drop from 4 to 2, so the accelerated portion takes 6.5 ms rather than 3.6 ms —
+  **an end-to-end difference of about 3%**, because the scalar remainder dominates.
+
+**The throughput cost of the fallback is negligible; the capacity and verification costs are
+not.** That ordering should drive the decision at the end of User Story 1.
+
+## R13. Verification split
+
+**Host-verifiable**: model quantization, host reference, `runq.c` port compilation, all
+arithmetic in simulation, all arbitration behaviour in simulation, resource and timing reports.
+
+**Requires the operator**: programming the board, the CPU-only quantized run, the standalone
+hardware test, all generation runs, all performance-counter readings and rate measurements.
+
+Batch into three sessions as feature 003 did: (1) CPU-only quantized model — the go/no-go on
+quantization; (2) standalone accelerator test; (3) integrated generation and profiling.
 ## R14. Regression baseline (T006, measured 2026-08-20)
 
 Captured **before** any shared RTL was modified, per constitution Principle V. Every later
@@ -607,44 +648,3 @@ sound.
 
 ---
 
-## R11. Verification strategy
-
-**MEASURED baseline** (feature 003): 1.38 tok/s; matmul 61.3%, attention 27.4%; SDRAM burst
-~98 MB/s simulated, 5.1 MB/s via CPU measured.
-
-The chain of references that makes each stage conclusive:
-
-1. Host `runq.c` on the quantized model — the golden reference.
-2. CPU `runq.c` on the board — proves the port and quantization, gives the software baseline.
-3. Simulated accelerator vs host reference — bit-exact, integer, unambiguous.
-4. Hardware accelerator standalone vs CPU-computed reference — bit-exact.
-5. Integrated generation vs step 2's output — **byte-identical text**.
-
-Step 5 is the strong one: because every operand is integer, the accelerated path must produce
-*exactly* the same tokens as the software path. Any divergence is a bug, not a rounding
-difference. This is the property the fp16 fallback would weaken (R12).
-
-## R12. If the fp16 fallback is taken
-
-Per the spec's FR-004a, resolved by the user. What changes:
-
-- Bit-exactness stops being free. Hardware and reference must agree on rounding mode and
-  accumulation order, which must be specified deliberately.
-- A host reference implementation must be written; none exists upstream (FR-011a).
-- Capacity gain roughly halves (~3.0M parameters rather than ~5.6M).
-- Lanes drop from 4 to 2, so the accelerated portion takes 6.5 ms rather than 3.6 ms —
-  **an end-to-end difference of about 3%**, because the scalar remainder dominates.
-
-**The throughput cost of the fallback is negligible; the capacity and verification costs are
-not.** That ordering should drive the decision at the end of User Story 1.
-
-## R13. Verification split
-
-**Host-verifiable**: model quantization, host reference, `runq.c` port compilation, all
-arithmetic in simulation, all arbitration behaviour in simulation, resource and timing reports.
-
-**Requires the operator**: programming the board, the CPU-only quantized run, the standalone
-hardware test, all generation runs, all performance-counter readings and rate measurements.
-
-Batch into three sessions as feature 003 did: (1) CPU-only quantized model — the go/no-go on
-quantization; (2) standalone accelerator test; (3) integrated generation and profiling.
