@@ -372,13 +372,23 @@ int main(void) {
         printf("\r\nPer-word result across %d completed iterations:\r\n", (int)ok_count);
         for (int i = 0; i < TEST_D; i++) {
             uint16_t f = g_word_fail_count[i];
+            /* NOTE: this project's printf() (LIBFEMTOC/printf.c) supports ONLY
+             * %s %x %d %u %c -- no width or flag characters. `%-2d` is not a
+             * conversion it recognises: seeing '-' after '%', it falls through
+             * to `else putchar(*fmt)` and prints the literal characters '-2d'
+             * while consuming ZERO va_args for that slot -- which then shifts
+             * every REAL %d after it in the same call to read the wrong
+             * argument. This is exactly the "word i=-2d" / wrong-count-shown
+             * bug found on the T053 hardware run (research R35): fixed here
+             * by using plain %d with no width, matching every other printf
+             * call already in this file. */
             if (f == 0) {
-                printf("  word i=%-2d: always correct\r\n", i);
+                printf("  word i=%d: always correct\r\n", i);
             } else if (f == ok_count) {
-                printf("  word i=%-2d: ALWAYS WRONG (%d/%d) -- consistent, logic-bug signature\r\n",
+                printf("  word i=%d: ALWAYS WRONG (%d/%d) -- consistent, logic-bug signature\r\n",
                        i, (int)f, (int)ok_count);
             } else {
-                printf("  word i=%-2d: intermittent (%d/%d wrong) -- timing signature\r\n",
+                printf("  word i=%d: intermittent (%d/%d wrong) -- timing signature\r\n",
                        i, (int)f, (int)ok_count);
             }
         }

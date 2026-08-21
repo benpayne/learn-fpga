@@ -2076,3 +2076,56 @@ resources instead of demanding them all in one cycle"), not necessarily fewer DS
 This should be checked directly against the post-synthesis resource table, not assumed.
 
 ---
+
+## R36. `LIBFEMTOC/printf.c` silently mis-parses any format it does not know (2026-08-20)
+
+The two reporting defects in R35's transcript turned out to be **one root cause**, and it is
+worth recording because the failure mode is much nastier than a cosmetic misprint.
+
+`LIBFEMTOC/printf.c` recognises exactly five conversions — `%s %x %d %u %c` — with **no width,
+no flags, no precision, no `%f`, no length modifiers**. Anything else falls through to:
+
+```c
+else putchar(*fmt);        /* prints the character, consumes NO va_arg */
+```
+
+So `%-2d` prints the literal text `-2d` **and reads no argument**. Every subsequent `%d` in that
+same call then reads the wrong variadic slot. In R35's transcript that produced two symptoms
+from one bug: the literal `word i=-2d`, and a count field showing the word index because each
+real conversion picked up its predecessor's argument.
+
+**The dangerous property is the silent argument shift, not the visible garbage.** A misprinted
+`-2d` is obvious. A number that is real, plausible, and belongs to a different variable is not —
+and this is a project where printed numbers become recorded measurements.
+
+### Sweep
+
+Every on-board firmware `.c`/`.h` was checked for width, flag, precision, `%f` and length
+modifiers. **No other on-board firmware used an unsupported specifier**, so no measurement
+recorded in this feature is affected. The matches outside `acc_test.c` are all in
+`FIRMWARE/llama2/tools/`, which is host code compiled against glibc and therefore fine.
+
+Two files already carry comments warning about this (`model_load.h`, `profile.c`), which is how
+the limitation was known but never centrally recorded.
+
+### One open question, outside this feature's scope
+
+`FIRMWARE/examples/dhrystone/dhry_1.c` and `FIRMWARE/DHRYSTONE/dhry_1.c` both contain:
+
+```c
+printf ("%6.1f \n", Microseconds);
+printf ("%6.1f \n", Dhrystones_Per_Second);
+```
+
+If those link `libfemtoc`'s printf — and the llama2 link line places `-lfemtoc` ahead of
+`libc.a` — then `%6.1f` cannot print a float and would emit literal text instead. **CLAUDE.md
+and the project memory record "4.38 DMIPS (0.175 DMIPS/MHz)" from this benchmark.** That figure
+may have been derived some other way, or Dhrystone may resolve a different `printf`; this has not
+been checked and is not asserted either way.
+
+Flagged rather than chased: it predates this feature and is not on its critical path. But a
+recorded benchmark figure whose print path may not be able to represent it is exactly the kind
+of number this project's own Principle VI exists to protect, and it should be confirmed before
+being quoted again.
+
+---
