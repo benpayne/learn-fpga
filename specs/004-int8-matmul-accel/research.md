@@ -2308,14 +2308,79 @@ field, or a direct SDRAM/memory dump of the board's actual `g_wq`/`g_ws`/`g_xq`/
 byte-for-byte comparison against `acc_r27_gs16_data.py` — neither is available without board
 access.
 
+### Pre-pipelining cross-check: identical result
+
+Team-lead's request also asked for this to be checked against BOTH the pipelined RTL (61d6255)
+and the pre-pipelining commit, in case pipelining had touched anything. It did not: `acc_mac.v`
+was swapped back to `1157047` (the last commit before R34/R36's pipelining, the 4-stage/5-cycle
+version) and `test_r27_gs16_replay` re-run. **Bit-for-bit identical to the pipelined result on all
+16 words** — same `RTL`, same `strict_ref`, same `acc_test_fused_ref` values, same 16/16 match.
+Consistent with R39's real-hardware observation that the disagreement survived pipelining
+unchanged; this is the simulation-side confirmation that pipelining is not a variable here at all.
+`acc_mac.v` was restored to the pipelined version immediately after (`git diff` clean, full
+13-test suite re-run to confirm).
+
 ### Bottom line
 
 The RTL is proven correct at this shape, in simulation, against the reference this project has
-always trusted. The FMA-fusion finding is real, independently confirmed, and is a genuine reason
-two "correct" implementations of the same nominal expression can legitimately disagree by a few
-ULP — but it is reported as A cause, not conclusively THE cause of every digit in R35/R39's
-specific transcript, because this reproduction's numbers do not fully match that transcript
-outside of word 2. The open item is data provenance (does this reproduction's regenerated input
-exactly equal what ran on the board that day), not RTL correctness.
+always trusted, and this holds for both the pre- and post-pipelining implementations. The
+FMA-fusion finding is real, independently confirmed, and is a genuine reason two "correct"
+implementations of the same nominal expression can legitimately disagree by a few ULP — but it is
+reported as A cause, not conclusively THE cause of every digit in R35/R39's specific transcript,
+because this reproduction's numbers do not fully match that transcript outside of word 2. The open
+item is data provenance (does this reproduction's regenerated input exactly equal what ran on the
+board that day), not RTL correctness.
+
+---
+
+## R41. `-ffp-contract=off` on the reference — and a confound it exposed (2026-08-20)
+
+R40 found that `acc_test.c`'s reference compiles its per-group rescale to a **fused** `fmadd.s`
+under GCC's default `-ffp-contract=fast`, skipping the intermediate rounding the hardware
+performs. I rebuilt `acc_test.o` with `-ffp-contract=off` and confirmed in the disassembly that
+the reference is now `fcvt.s.w; fmul.s; fmul.s; fadd.s` — separate roundings, matching
+`acc_mac`'s stages 2/3/4 exactly — then ran it on the board.
+
+**The disagreement did not go away.** Still 1-5 ULP, now on 15 of 16 words rather than 14.
+
+### The confound: the hardware's outputs changed too
+
+| word | `hw` before (R35/R39) | `hw` with `-ffp-contract=off` |
+|---|---|---|
+| 2 | 0xC0BACAA1 | 0xC0BACAA1 (same) |
+| 7 | 0xC0708A16 | **0xC0708A18** |
+| 8 | 0x405EEC38 | **0x405EEC3A** |
+| 14 | 0xC0A12E55 | **0xC0A12E56** |
+
+The bitstream was identical between these two runs and the seed is fixed, so the accelerator's
+*inputs* must have changed. They did: `acc_test.c` generates its test vector and quantizes it
+**in the same translation unit**, so `-ffp-contract=off` altered the floating-point arithmetic
+that produces `g_xq`/`g_xs`/`g_wq`/`g_ws` as well as the reference that checks them.
+
+**This is the more important finding of the two.** It means:
+
+1. The FMA fix is not confirmed or refuted by this run — it changed two variables at once, which
+   is precisely what constitution Principle III forbids ("each step MUST change exactly one
+   variable relative to the step before"). My experiment, my error.
+2. **The board's actual input data is compiler-flag dependent**, so R40's reproduced
+   `acc_r27_gs16_data.py` — regenerated on a host with different flags — is very unlikely to be
+   the data the board used. That explains mac-unit's honest observation that its repro matched
+   the transcript's `hw` at word 2 but not elsewhere: it was replaying *similar* input, not the
+   *same* input.
+
+### What is nonetheless settled
+
+**The RTL is correct at gs=16.** mac-unit's `test_r27_gs16_replay` gets 16/16 rows bit-exact
+against the strict reference this suite trusts at every other shape. That was the question the
+hardware run raised, and it is answered independently of everything above.
+
+### What the comparison needs to become
+
+A bit-exactness comparison whose inputs are themselves computed in floating point, in the same
+translation unit as the checker, cannot be trusted across builds. The test vector must be
+**generated deterministically in integer arithmetic**, or **dumped from the board** so simulation
+replays the identical bytes. Until one of those, no run of this test can be compared against any
+other run built differently — and four transcripts already exist that were compared exactly that
+way.
 
 ---

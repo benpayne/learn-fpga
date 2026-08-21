@@ -101,7 +101,16 @@ acc_driver.o: ../llama2/acc_driver.c ../llama2/acc_driver.h
 quantize.o: ../llama2/quantize.c ../llama2/quantize.h
 	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -I../llama2 -c ../llama2/quantize.c -o quantize.o
 
+# -ffp-contract=off is REQUIRED here, not a preference. The CPU reference in
+# acc_test.c exists to be compared bit-for-bit against the accelerator, which
+# rounds after every multiply and every add. GCC's default -ffp-contract=fast
+# fuses `contrib = ival_f * w_s * x_s; val += contrib;` into a single fmadd.s
+# once it inlines across the statement boundary, skipping the intermediate
+# rounding -- so the reference computes something the hardware deliberately
+# does not, and the comparison reports a difference that is nobody's bug
+# (research R40). rv32imafc has hardware FMA, so this fires on real silicon.
 acc_test.o: acc_test.c ../llama2/acc_driver.h ../llama2/quantize.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -ffp-contract=off -I../llama2 -c acc_test.c -o acc_test.o
 
 acc_test.elf: sdramstart.o acc_test.o acc_driver.o quantize.o $(RV_BINARIES)
 	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD_SDRAM) sdramstart.o acc_test.o acc_driver.o quantize.o -o acc_test.elf $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
