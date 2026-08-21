@@ -81,9 +81,13 @@
  * groups (TEST_N/TEST_GS = 4) and a multi-row output (TEST_D = 16) rather
  * than the degenerate single-group/single-row case. All three values are
  * comfortably inside the accelerator's configured limits (acc_driver.h:
- * ACC_MAX_N/ACC_MAX_D = 4096, ACC_ACT_MAX_N = 1920, ACC_RESULT_MAX_D =
- * 512, ACC_GS_MIN/MAX = 4/1024) and match this project's actual group
- * size (gs=64 in model.q8.bin) is NOT required here -- gs=16 exercises a
+ * ACC_MAX_N/ACC_MAX_D = 4096, ACC_ACT_MAX_N = 896 (was 1920 before the
+ * R31/R32 BRAM-sizing pass -- NUM_SLOTS 8->4 halved the activation slot
+ * count but ACT_AWIDTH 12->10 also narrowed the activation BRAM itself,
+ * so ACT_XQ_WORDS dropped by more than 2x; see acc_driver.h's "two BRAMs
+ * no longer share a slot size" note), ACC_RESULT_MAX_D = 512 (unchanged),
+ * ACC_GS_MIN/MAX = 4/1024) and match this project's actual group size
+ * (gs=64 in model.q8.bin) is NOT required here -- gs=16 exercises a
  * different, still-valid value on purpose, so this test does not
  * accidentally only prove the one gs the model happens to use. */
 #define TEST_N   64

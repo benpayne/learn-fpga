@@ -115,42 +115,59 @@
 #define ACC_GS_MAX  1024
 
 /* ===================================================================
- * BRAM geometry -- derived from acc_top.v's DEFAULT parameters (LANES=4,
- * MAX_N=4096, MAX_D=4096, ACT_AWIDTH=12, RESULT_AWIDTH=12, NUM_SLOTS=8,
- * ACT_XS_WORDS=32); femtosoc.v's `acc_top #(.BURST_LEN(128))` instantiation
- * overrides ONLY BURST_LEN, which does not affect any of the geometry
- * below, so the defaults are the truth for THIS build. If acc_top.v's
- * parameter list or femtosoc.v's instantiation ever changes any of these,
- * this file goes stale silently -- there is no compile-time cross-check
- * across the Verilog/C boundary for BRAM geometry the way acc_bits.vh
- * gives one for register encodings.
+ * BRAM geometry -- derived from acc_top.v's DEFAULT parameters. Updated
+ * for the R31/R32 BRAM-sizing pass (2026-08-20, congestion/timing-margin
+ * fix): NUM_SLOTS 8->4, ACT_AWIDTH 12->10, RESULT_AWIDTH 12->11, MAX_N/
+ * MAX_D/ACT_XS_WORDS/LANES unchanged. femtosoc.v's
+ * `acc_top #(.BURST_LEN(128))` instantiation overrides ONLY BURST_LEN,
+ * which does not affect any of the geometry below, so the defaults are
+ * the truth for THIS build. If acc_top.v's parameter list or femtosoc.v's
+ * instantiation ever changes any of these, this file goes stale silently
+ * -- there is no compile-time cross-check across the Verilog/C boundary
+ * for BRAM geometry the way acc_bits.vh gives one for register encodings.
+ *
+ * *** THE TWO BRAMS NO LONGER SHARE A SLOT SIZE -- READ BEFORE EDITING ***
+ * Before R31/R32, ACT_AWIDTH == RESULT_AWIDTH (both 12), so ACT_SLOT_WORDS
+ * and RESULT_SLOT_WORDS happened to be equal (512 each) and it would have
+ * been easy to miss a bug that quietly used one where the other belonged.
+ * They no longer coincide: RESULT_SLOT_WORDS stays 512 (RESULT_AWIDTH
+ * narrowed 12->11 at the SAME time NUM_SLOTS narrowed 8->4, so 2048/4 =
+ * 512 = the old 4096/8), but ACT_SLOT_WORDS drops to 256 (1024/4, NOT
+ * scaled the same way ACT_AWIDTH only narrowed to 10). ACC_RESULT_SLOT_WORDS
+ * and ACC_ACT_SLOT_WORDS below are two INDEPENDENT constants for exactly
+ * this reason -- never reintroduce a single shared SLOT_WORDS define, and
+ * never assume acc_read_result()'s and acc_load_activation()'s slot
+ * strides are interchangeable.
  * =================================================================== */
 #define ACC_RESULT_BASE        0x100000u  /* femtosoc.v mem_address_is_accel_res */
 #define ACC_ACT_BASE           0x180000u  /* femtosoc.v mem_address_is_accel_act */
 
-#define ACC_NUM_SLOTS           8         /* acc_top.v NUM_SLOTS */
-#define ACC_RESULT_SLOT_WORDS  512        /* (1<<RESULT_AWIDTH)/NUM_SLOTS = 4096/8; 2KB/slot */
-#define ACC_ACT_SLOT_WORDS     512        /* (1<<ACT_AWIDTH)/NUM_SLOTS = 4096/8 */
+#define ACC_NUM_SLOTS           4         /* acc_top.v NUM_SLOTS (was 8 -- R31/R32) */
+#define ACC_RESULT_SLOT_WORDS  512        /* (1<<RESULT_AWIDTH)/NUM_SLOTS = 2048/4; 2KB/slot,
+                                            * UNCHANGED from before R31/R32 (both halved together) */
+#define ACC_ACT_SLOT_WORDS     256        /* (1<<ACT_AWIDTH)/NUM_SLOTS = 1024/4; was 512 -- see
+                                            * the "two BRAMs" note above, this one did NOT stay put */
 #define ACC_ACT_XS_WORDS        32        /* acc_top.v ACT_XS_WORDS: trailing words of each
-                                            * act slot reserved for fp32 xs scales */
-#define ACC_ACT_XQ_WORDS       (ACC_ACT_SLOT_WORDS - ACC_ACT_XS_WORDS) /* 480: leading words
-                                            * holding packed int8 xq, 4 elements/word */
+                                            * act slot reserved for fp32 xs scales (unchanged) */
+#define ACC_ACT_XQ_WORDS       (ACC_ACT_SLOT_WORDS - ACC_ACT_XS_WORDS) /* 224 (was 480): leading
+                                            * words holding packed int8 xq, 4 elements/word */
 #define ACC_LANES                4        /* acc_top.v LANES: int8 elements packed per 32-bit
                                             * xq/weight-q word, matching the target's native
-                                            * little-endian byte order */
+                                            * little-endian byte order (unchanged) */
 
-#define ACC_MAX_N            4096         /* acc_top.v MAX_N */
-#define ACC_MAX_D            4096         /* acc_top.v MAX_D */
+#define ACC_MAX_N            4096         /* acc_top.v MAX_N (unchanged) */
+#define ACC_MAX_D            4096         /* acc_top.v MAX_D (unchanged) */
 
 /* Largest n this driver can stage into one activation slot (both the
  * packed-xq and the xs-scale-count limits, acc_top.v accept_slot_bad):
- *   n/LANES  <= ACT_XQ_WORDS  =>  n <= ACT_XQ_WORDS*LANES = 1920
+ *   n/LANES  <= ACT_XQ_WORDS  =>  n <= ACT_XQ_WORDS*LANES = 896 (was 1920)
  *   n/gs     <= ACT_XS_WORDS  =>  n <= ACT_XS_WORDS*gs (gs-dependent)
- * Comfortably above this project's actual n (<=192). */
-#define ACC_ACT_MAX_N          (ACC_ACT_XQ_WORDS * ACC_LANES)  /* 1920 */
+ * Still comfortably above this project's actual n (<=192). */
+#define ACC_ACT_MAX_N          (ACC_ACT_XQ_WORDS * ACC_LANES)  /* 896 */
 
 /* Largest d one result slot can hold (acc_top.v accept_slot_bad:
- * desc_d > RESULT_SLOT_WORDS). */
+ * desc_d > RESULT_SLOT_WORDS). Unchanged: still exactly covers the
+ * classifier's d=512. */
 #define ACC_RESULT_MAX_D        ACC_RESULT_SLOT_WORDS  /* 512 */
 
 /* ===================================================================
