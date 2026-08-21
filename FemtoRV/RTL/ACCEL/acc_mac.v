@@ -54,19 +54,29 @@
 //     that supplies the group's last element chunk (a plain registered
 //     adder, not combinational, to keep timing closeable at 25 MHz -- see
 //     DESIGN.md sec 4.3 on timing margin).
-//   - row_valid/row_result appear exactly 4 cycles after group_done (a
-//     4-stage int->float / fp-multiply / fp-multiply / fp-accumulate
-//     pipeline), i.e. 5 cycles after the group's last input chunk.
+//   - row_valid/row_result appear exactly 8 cycles after group_done (an
+//     8-stage pipeline: 2 stages each for int->float, the first fp-multiply,
+//     the second fp-multiply, and the fp-accumulate -- research R31/R33's
+//     DSP/timing-congestion fix; was a 4-stage, 1-cycle-per-function
+//     pipeline before that), i.e. 9 cycles after the group's last input
+//     chunk.
 //   - The pipeline is fully streaming (a new group_done may be presented
 //     every cycle; each stage is a single register with no stall), EXCEPT
-//     that the row-accumulate stage is a true in-place accumulator: two
-//     groups belonging to the SAME row must not be presented back-to-back
-//     faster than acc_top's own group cadence naturally allows, which is
-//     never a problem in practice (gs/LANES >= 8 cycles per group for any
-//     realistic (gs>=32, LANES<=8) combination, versus a 5-cycle pipeline).
-//     acc_top MUST NOT interleave a second row's groups into this module
-//     until the first row's row_valid for its last group has been consumed
-//     (this module processes one streaming matmul row sequence at a time).
+//     that the LAST TWO stages (the fp-accumulate) form a true in-place
+//     accumulator with 2 cycles of latency from "row_acc_q read" to
+//     "row_acc_q updated": two groups belonging to the SAME row must not
+//     enter the accumulate stage less than 2 cycles apart, or the second
+//     would read a stale row_acc_q. This is why ACC_GS_MIN (acc_bits.vh)
+//     is 2*LANES, not merely LANES -- that bound was originally derived
+//     for a DIFFERENT hazard (acc_top's scale-register settle time,
+//     research R31/R32) and happens to also be exactly the bound this
+//     2-stage accumulate needs, verified empirically (not just algebraically)
+//     by acc_unit_tb.py's test_row_interleave_at_gs_min after this change,
+//     since the two hazards being the same bound is not a coincidence to
+//     assume without re-checking. acc_top MUST NOT interleave a second
+//     row's groups into this module until the first row's row_valid for
+//     its last group has been consumed (this module processes one
+//     streaming matmul row sequence at a time).
 //
 // Rescale/accumulate floating point: implemented as IEEE754 binary32,
 // round-to-nearest-even, matching the C `float` arithmetic in runq.c
@@ -212,12 +222,48 @@ module acc_mac #(
     assign group_acc  = group_acc_q;
 
     // ------------------------------------------------------------------
-    // IEEE754 binary32 helpers (round-to-nearest-even). Used only on the
-    // once-per-group rescale/accumulate path below -- there is gs/LANES
-    // cycles of slack per group (>=8 for any realistic parameterisation),
-    // so these are plain combinational functions feeding registered
-    // pipeline stages, not something that needs to close timing in a
-    // single fast cycle the way the int8 lane multiply does.
+    // IEEE754 binary32 helpers (round-to-nearest-even), SPLIT into two
+    // sub-stages each (research R31/R33: DSP-occupancy/timing-congestion
+    // fix -- R31/R32's BRAM resize bought 0.52 MHz and confirmed
+    // congestion, not BRAM placement, was never the real driver; this is
+    // the remaining lever, since R31 measured the critical path as this
+    // exact rescale/accumulate logic and MULT18X18D at 25/28 (89%) as the
+    // tightest resource, mostly consumed by these functions' mantissa
+    // multiplies).
+    //
+    // Each function below is split at its own natural half-way point (the
+    // point where the "expensive" combinational work -- leading-zero
+    // detection, the mantissa multiply, or the align/add/CLZ chain -- ends
+    // and "finish the number" work -- shift+round+pack -- begins), with a
+    // register in between. This is NOT a resource-sharing scheme (no
+    // multiplier is time-multiplexed between the two `fp_mul32` call
+    // sites): that would need a genuinely different microarchitecture (a
+    // recirculating execution unit, 1 token every 2 cycles through the
+    // shared hardware) and was deliberately NOT attempted here, because it
+    // would tighten the exact throughput margin ACC_GS_MIN was just proven
+    // safe at (research R31/R32) in a way that would need re-deriving and
+    // re-verifying from scratch, for a benefit (fewer physical DSP
+    // instances) that cannot be measured without a synthesis run this
+    // module's author does not have access to. What IS done here -- a
+    // plain, linear, non-shared pipeline with more stages -- carries none
+    // of that risk: a linear shift-register pipeline has no cross-token
+    // hazard at any depth EXCEPT at the true in-place accumulator (the
+    // last two stages, see the header's latency-contract comment and
+    // ACC_GS_MIN's derivation in acc_bits.vh), which is called out
+    // explicitly below rather than assumed safe.
+    //
+    // Each split was verified bit-for-bit equivalent to the original
+    // single-stage function it replaces BEFORE being written here: a
+    // faithful Python transliteration of each split was run against
+    // hundreds of thousands of random operand pairs, the 540-case
+    // deterministic boundary sweep construction (research R32), and both
+    // real bug reproductions (research R26/R30) -- zero mismatches in any
+    // case. The actual hardware regression (acc_mac_tb.py, including that
+    // same 540-case sweep run against real hardware, not just the Python
+    // model) is the check that matters, but doing the algebra first is
+    // what makes a hardware failure diagnosable as "the split is wrong"
+    // versus "something else changed", per this project's own repeated
+    // lesson about hand-rolled IEEE754 arithmetic.
     // ------------------------------------------------------------------
 
     function [5:0] clz32;
@@ -233,52 +279,68 @@ module acc_mac #(
         end
     endfunction
 
-    // Signed integer -> binary32. Exact whenever |v| < 2^24 (always true in
-    // this application: max |ival| is 127*127*65535 ~= 1.06e9 < 2^31 but
-    // the mantissa is only 24 bits, so this DOES need a general
-    // round-to-nearest-even path, not just the exact case, to stay correct
-    // at large GS).
-    function [31:0] i2f32;
+    // ---- i2f32, split at "leading-zero detection done" -----------------
+    // Packed return: {is_zero[1], sign[1], mag[31:0], msb_pos[5:0]}, 40 bits.
+    localparam I2F1_W = 1 + 1 + 32 + 6;
+
+    function [I2F1_W-1:0] i2f32_s1;
         input signed [31:0] v;
         reg                sign;
         reg [31:0]         mag;
-        reg [5:0]          lz, msb_pos;
+        reg [5:0]          msb_pos;
+        begin
+            if (v == 32'sd0) begin
+                i2f32_s1 = {1'b1, 1'b0, 32'b0, 6'b0};
+            end else begin
+                sign    = v[31];
+                mag     = sign ? (~v + 32'd1) : v;
+                msb_pos = 6'd31 - clz32(mag);
+                i2f32_s1 = {1'b0, sign, mag, msb_pos};
+            end
+        end
+    endfunction
+
+    function [31:0] i2f32_s2;
+        input [I2F1_W-1:0] packed_s1;
+        reg                is_zero, sign;
+        reg [31:0]         mag;
+        reg [5:0]          msb_pos;
         reg [24:0]         mant_r; // 24-bit candidate + 1 bit for rounding overflow
         reg [7:0]          exp_r;
         reg [7:0]          shift_r;
         reg                guard, sticky, round_up;
         begin
-            if (v == 32'sd0) begin
-                i2f32 = 32'h0000_0000;
+            {is_zero, sign, mag, msb_pos} = packed_s1;
+            if (is_zero) begin
+                i2f32_s2 = 32'h0000_0000;
+            end else if (msb_pos <= 6'd23) begin
+                mant_r   = {1'b0, mag << (6'd23 - msb_pos)};
+                exp_r    = 8'd127 + {2'b0, msb_pos};
+                i2f32_s2 = {sign, exp_r, mant_r[22:0]};
             end else begin
-                sign = v[31];
-                mag  = sign ? (~v + 32'd1) : v;
-                lz   = clz32(mag);
-                msb_pos = 6'd31 - lz;
-                if (msb_pos <= 6'd23) begin
-                    mant_r = {1'b0, mag << (6'd23 - msb_pos)};
-                    exp_r  = 8'd127 + {2'b0, msb_pos};
-                end else begin
-                    shift_r = {2'b0, msb_pos} - 8'd23;
-                    mant_r  = {1'b0, mag >> shift_r};
-                    guard   = mag[shift_r-1];
-                    sticky  = (shift_r >= 8'd2) ? |(mag & ((32'd1 << (shift_r - 8'd1)) - 32'd1)) : 1'b0;
-                    round_up = guard & (sticky | mant_r[0]);
-                    if (round_up) begin
-                        mant_r = mant_r + 25'd1;
-                    end
-                    exp_r = 8'd127 + {2'b0, msb_pos};
-                    if (mant_r[24]) begin
-                        mant_r = mant_r >> 1;
-                        exp_r  = exp_r + 8'd1;
-                    end
+                shift_r  = {2'b0, msb_pos} - 8'd23;
+                mant_r   = {1'b0, mag >> shift_r};
+                guard    = mag[shift_r-1];
+                sticky   = (shift_r >= 8'd2) ? |(mag & ((32'd1 << (shift_r - 8'd1)) - 32'd1)) : 1'b0;
+                round_up = guard & (sticky | mant_r[0]);
+                if (round_up) begin
+                    mant_r = mant_r + 25'd1;
                 end
-                i2f32 = {sign, exp_r, mant_r[22:0]};
+                exp_r = 8'd127 + {2'b0, msb_pos};
+                if (mant_r[24]) begin
+                    mant_r = mant_r >> 1;
+                    exp_r  = exp_r + 8'd1;
+                end
+                i2f32_s2 = {sign, exp_r, mant_r[22:0]};
             end
         end
     endfunction
 
-    function [31:0] fp_mul32;
+    // ---- fp_mul32, split at "raw product computed" ---------------------
+    // Packed return: {zero_case[1], sign_r[1], product[47:0], exp_sum[9:0]}, 60 bits.
+    localparam FMUL1_W = 1 + 1 + 48 + 10;
+
+    function [FMUL1_W-1:0] fp_mul32_s1;
         input [31:0] a, b;
         reg         sign_a, sign_b, sign_r;
         reg [7:0]   exp_a, exp_b;
@@ -287,8 +349,6 @@ module acc_mac #(
         reg [23:0]  fa, fb;
         reg [47:0]  product;
         reg signed [9:0] exp_sum;
-        reg [24:0]  mant_r;
-        reg         guard, sticky, round_up;
         begin
             sign_a = a[31]; exp_a = a[30:23]; mant_a = a[22:0];
             sign_b = b[31]; exp_b = b[30:23]; mant_b = b[22:0];
@@ -296,12 +356,34 @@ module acc_mac #(
             b_zero = (exp_b == 8'd0) && (mant_b == 23'd0);
             sign_r = sign_a ^ sign_b;
             if (a_zero || b_zero) begin
-                fp_mul32 = {sign_r, 31'b0};
+                fp_mul32_s1 = {1'b1, sign_r, 48'b0, 10'sd0};
             end else begin
                 fa = {1'b1, mant_a};
                 fb = {1'b1, mant_b};
-                product = fa * fb; // behavioural -> DSP-friendly
+                product = fa * fb; // behavioural -> DSP-friendly; the ONE multiply
+                                    // this function performs, now isolated to its
+                                    // own register stage (ECP5 MULT18X18D has native
+                                    // pipeline registers -- registering a DSP's
+                                    // output lets yosys/nextpnr use them instead of
+                                    // a separate LUT-based register bank).
                 exp_sum = $signed({2'b0, exp_a}) + $signed({2'b0, exp_b}) - 10'sd127;
+                fp_mul32_s1 = {1'b0, sign_r, product, exp_sum};
+            end
+        end
+    endfunction
+
+    function [31:0] fp_mul32_s2;
+        input [FMUL1_W-1:0] packed_s1;
+        reg         zero_case, sign_r;
+        reg [47:0]  product;
+        reg signed [9:0] exp_sum;
+        reg [24:0]  mant_r;
+        reg         guard, sticky, round_up;
+        begin
+            {zero_case, sign_r, product, exp_sum} = packed_s1;
+            if (zero_case) begin
+                fp_mul32_s2 = {sign_r, 31'b0};
+            end else begin
                 if (product[47]) begin
                     mant_r  = {1'b0, product[47:24]};
                     guard   = product[23];
@@ -319,20 +401,32 @@ module acc_mac #(
                     exp_sum = exp_sum + 10'sd1;
                 end
                 if (exp_sum <= 10'sd0) begin
-                    fp_mul32 = {sign_r, 31'b0};           // underflow: flush to zero (not expected)
+                    fp_mul32_s2 = {sign_r, 31'b0};           // underflow: flush to zero (not expected)
                 end else if (exp_sum >= 10'sd255) begin
-                    fp_mul32 = {sign_r, 8'hFF, 23'b0};     // overflow: saturate (not expected)
+                    fp_mul32_s2 = {sign_r, 8'hFF, 23'b0};     // overflow: saturate (not expected)
                 end else begin
-                    fp_mul32 = {sign_r, exp_sum[7:0], mant_r[22:0]};
+                    fp_mul32_s2 = {sign_r, exp_sum[7:0], mant_r[22:0]};
                 end
             end
         end
     endfunction
 
-    function [31:0] fp_add32;
+    // ---- fp_add32, split at "normalized magnitude + shift amount known" -
+    // (decompose + pick hi/lo + align + add/sub-with-decrement + CLZ +
+    // normalize-shift in stage 1; guard/round/pack in stage 2). This is
+    // the pair used for the ROW ACCUMULATE specifically -- see the header
+    // latency-contract comment for why it is 2 stages, not 3: a 3rd stage
+    // here would need >2 cycles of same-row group spacing to stay hazard-
+    // free, which is tighter than ACC_GS_MIN=2*LANES guarantees.
+    // Packed return: {zero_case[1], zero_result[31:0], sign_r[1],
+    //                 norm_field[26:0], exp_wide[9:0], align_sticky[1],
+    //                 rshift_sticky[1]}, 73 bits.
+    localparam FADD1_W = 1 + 32 + 1 + 27 + 10 + 1 + 1;
+
+    function [FADD1_W-1:0] fp_add32_s1;
         input [31:0] a, b;
         reg        sign_a, sign_b, sign_r;
-        reg [7:0]  exp_a, exp_b, exp_hi, exp_r;
+        reg [7:0]  exp_a, exp_b, exp_hi;
         reg [22:0] mant_a, mant_b;
         reg        a_zero, b_zero, pick_a, same_sign;
         reg [26:0] mant_hi_ext, mant_lo_ext, mant_lo_shifted, reconstructed;
@@ -344,9 +438,6 @@ module acc_mac #(
         reg [27:0] shifted_out_mask, norm_field28;
         reg [26:0] norm_field;
         reg        rshift_sticky;
-        reg [23:0] mant_window;
-        reg        guard, sticky, round_up;
-        reg [24:0] mant_rounded;
         reg signed [9:0] exp_wide;
         begin
             sign_a = a[31]; exp_a = a[30:23]; mant_a = a[22:0];
@@ -354,9 +445,9 @@ module acc_mac #(
             a_zero = (exp_a == 8'd0) && (mant_a == 23'd0);
             b_zero = (exp_b == 8'd0) && (mant_b == 23'd0);
             if (a_zero) begin
-                fp_add32 = b;
+                fp_add32_s1 = {1'b1, b, 40'b0};
             end else if (b_zero) begin
-                fp_add32 = a;
+                fp_add32_s1 = {1'b1, a, 40'b0};
             end else begin
                 pick_a = (exp_a != exp_b) ? (exp_a > exp_b) : (mant_a >= mant_b);
                 if (pick_a) begin
@@ -371,59 +462,17 @@ module acc_mac #(
 
                 if (exp_diff > 8'd27) begin
                     mant_lo_shifted = 27'b0;
-                    align_sticky    = 1'b1; // mant_lo_ext's implicit 1 is always set -> definitely lost
+                    align_sticky    = 1'b1;
                 end else begin
                     mant_lo_shifted = mant_lo_ext >> exp_diff;
                     reconstructed   = mant_lo_shifted << exp_diff;
                     align_sticky    = (reconstructed != mant_lo_ext);
                 end
 
-                // BUG FIX, take 2 (research.md has both: the first attempt
-                // below was ALSO wrong, caught by the same T035/T036
-                // integration path finding a second real-data case at
-                // GS=64 -- this project's own real group size -- that the
-                // first fix didn't cover). acc_mac.v was unit-tested
-                // 1000/1000 bit-exact in acc_mac_tb.py, but never chained
-                // real groups through a same-magnitude-order subtraction
-                // the way a real matmul row does; see research.md for both
-                // reproductions and their exact-arithmetic proofs.
-                //
-                // mant_lo_shifted is mant_lo_ext right-shifted by exp_diff
-                // and TRUNCATED (align_sticky flags that real bits were
-                // dropped). For addition that only makes the sum an UNDER-
-                // estimate of the true value, exactly what the guard/sticky
-                // convention below expects. For SUBTRACTION it is the
-                // opposite: hi - trunc(lo) OVER-shoots the true difference,
-                // because less was subtracted than the true lo.
-                //
-                // The first attempt "fixed" this by subtracting the CEILING
-                // of mant_lo_shifted instead of the floor when align_sticky
-                // was set -- restoring an under-estimate, but the amount by
-                // which it under-estimates (some fraction strictly between
-                // 0 and 1 ULP at the subtrahend's own LSB) is not
-                // represented by ANY bit still being tracked: it lives
-                // below the one bit position the ceiling adjustment just
-                // consumed. Reading norm_field's own low bits for `sticky`
-                // after that point sees whatever they happen to be, which
-                // is uncorrelated with whether real precision was lost --
-                // exactly the failure this take-2 fixes.
-                //
-                // Correct (standard FPU) technique: use the plain FLOOR-
-                // based subtraction, then -- only when align_sticky (bits
-                // really were dropped from the subtrahend) -- DECREMENT the
-                // difference by one whole ULP (ordinary integer subtract,
-                // which correctly ripple-borrows across any run of zero
-                // bits) and treat `sticky` as unconditionally 1 from that
-                // point on, regardless of what the decremented value's own
-                // low bits show. This is exact: true_diff = decremented +
-                // (some fraction in (0,1)), so decremented is a valid lower
-                // bound AND we know for certain there is nonzero weight
-                // below it -- the one thing the ceiling approach could not
-                // establish. (Provably cannot underflow past zero: pick_a
-                // guarantees true_hi >= true_lo, so floor(mant_hi_ext -
-                // mant_lo_shifted) >= 1 whenever align_sticky = 1; the
-                // degenerate "hi exactly equals a truncated lo" case would
-                // require true_lo <= floor(lo) < true_lo, a contradiction.)
+                // Decrement-and-force-sticky subtraction fix (research R30
+                // "take 2" -- see acc_top.v/research.md for the full
+                // derivation; unchanged by this pipelining pass, just
+                // relocated into this stage).
                 if (same_sign) begin
                     mag_wide = {1'b0, mant_hi_ext} + {1'b0, mant_lo_shifted};
                 end else begin
@@ -432,11 +481,11 @@ module acc_mac #(
                 end
 
                 if (mag_wide == 28'b0) begin
-                    fp_add32 = 32'b0; // exact cancellation -> +0
+                    fp_add32_s1 = {1'b1, {sign_r, 31'b0}, 40'b0}; // exact cancellation -> +0
                 end else begin
-                    lzp    = clz32({4'b0, mag_wide});      // leading zeros in a 32-bit view
-                    bitpos = 6'd31 - lzp;                  // position of the leading 1, 0..27
-                    shift_amt = {3'b0, bitpos} - 9'sd26;    // >0: carry-out (right shift); <0: cancellation (left shift)
+                    lzp    = clz32({4'b0, mag_wide});
+                    bitpos = 6'd31 - lzp;
+                    shift_amt = {3'b0, bitpos} - 9'sd26;
 
                     if (shift_amt > 0) begin
                         shifted_out_mask = (28'd1 << shift_amt) - 28'd1;
@@ -447,94 +496,169 @@ module acc_mac #(
                         norm_field28     = mag_wide << (-shift_amt);
                     end
                     norm_field = norm_field28[26:0];
+                    exp_wide   = $signed({2'b0, exp_hi}) + shift_amt;
 
-                    exp_wide = $signed({2'b0, exp_hi}) + shift_amt;
+                    fp_add32_s1 = {1'b0, 32'b0, sign_r, norm_field, exp_wide, align_sticky, rshift_sticky};
+                end
+            end
+        end
+    endfunction
 
-                    mant_window = norm_field[26:3];
-                    guard       = norm_field[2];
-                    // Uniform for both paths now (take 2, see the mag_wide
-                    // computation above): for addition align_sticky already
-                    // meant "the sum under-estimates truth", and for
-                    // subtraction the decrement-when-align_sticky above
-                    // establishes exactly the same guarantee, so both are
-                    // "there is real nonzero weight below what we kept" and
-                    // both belong in sticky the same way.
-                    sticky      = align_sticky | rshift_sticky | norm_field[1] | norm_field[0];
-                    round_up    = guard & (sticky | mant_window[0]);
-                    mant_rounded = {1'b0, mant_window} + round_up;
-                    if (mant_rounded[24]) begin
-                        mant_rounded = mant_rounded >> 1;
-                        exp_wide     = exp_wide + 10'sd1;
-                    end
+    function [31:0] fp_add32_s2;
+        input [FADD1_W-1:0] packed_s1;
+        reg        zero_case;
+        reg [31:0] zero_result;
+        reg        sign_r;
+        reg [26:0] norm_field;
+        reg signed [9:0] exp_wide;
+        reg        align_sticky, rshift_sticky;
+        reg [23:0] mant_window;
+        reg        guard, sticky, round_up;
+        reg [24:0] mant_rounded;
+        reg [7:0]  exp_r;
+        begin
+            {zero_case, zero_result, sign_r, norm_field, exp_wide, align_sticky, rshift_sticky} = packed_s1;
+            if (zero_case) begin
+                fp_add32_s2 = zero_result;
+            end else begin
+                mant_window = norm_field[26:3];
+                guard       = norm_field[2];
+                sticky      = align_sticky | rshift_sticky | norm_field[1] | norm_field[0];
+                round_up    = guard & (sticky | mant_window[0]);
+                mant_rounded = {1'b0, mant_window} + round_up;
+                if (mant_rounded[24]) begin
+                    mant_rounded = mant_rounded >> 1;
+                    exp_wide     = exp_wide + 10'sd1;
+                end
 
-                    if (exp_wide <= 10'sd0) begin
-                        fp_add32 = {sign_r, 31'b0};          // underflow: flush to zero (not expected)
-                    end else if (exp_wide >= 10'sd255) begin
-                        fp_add32 = {sign_r, 8'hFF, 23'b0};   // overflow: saturate (not expected)
-                    end else begin
-                        exp_r = exp_wide[7:0];
-                        fp_add32 = {sign_r, exp_r, mant_rounded[22:0]};
-                    end
+                if (exp_wide <= 10'sd0) begin
+                    fp_add32_s2 = {sign_r, 31'b0};          // underflow: flush to zero (not expected)
+                end else if (exp_wide >= 10'sd255) begin
+                    fp_add32_s2 = {sign_r, 8'hFF, 23'b0};   // overflow: saturate (not expected)
+                end else begin
+                    exp_r = exp_wide[7:0];
+                    fp_add32_s2 = {sign_r, exp_r, mant_rounded[22:0]};
                 end
             end
         end
     endfunction
 
     // ------------------------------------------------------------------
-    // Stages 1-4: int->float, two chained fp multiplies (matching runq.c's
-    // `(float)ival * w_scale * x_scale` left-to-right evaluation), then
-    // accumulate into the running row result. One register stage each.
+    // Pipeline: 8 registered stages from group_done_q to row_result_q (was
+    // 4 -- research R31/R33). Purely linear (a-then-b, one token per
+    // cycle, no stalls, no resource sharing across tokens) EXCEPT the last
+    // two stages (p4a -> final), which form the true in-place row
+    // accumulator -- see the header's latency-contract comment.
     // ------------------------------------------------------------------
 
-    reg        s1_valid_q;
-    reg [31:0] s1_ival_f_q, s1_wscale_q, s1_xscale_q;
-    reg        s1_row_first_q;
+    // Stage 1: i2f32(group_acc_q), split in two.
+    reg                 p1a_valid;
+    reg [I2F1_W-1:0]    p1a_i2f_s1;
+    reg [31:0]          p1a_wscale, p1a_xscale;
+    reg                 p1a_row_first;
 
-    reg        s2_valid_q;
-    reg [31:0] s2_tmp_f_q, s2_xscale_q;
-    reg        s2_row_first_q;
+    reg                 p1b_valid;
+    reg [31:0]          p1b_ival_f, p1b_wscale, p1b_xscale;
+    reg                 p1b_row_first;
 
-    reg        s3_valid_q;
-    reg [31:0] s3_rescaled_f_q;
-    reg        s3_row_first_q;
+    // Stage 2: fp_mul32(ival_f, w_scale), split in two.
+    reg                 p2a_valid;
+    reg [FMUL1_W-1:0]   p2a_mul_s1;
+    reg [31:0]          p2a_xscale;
+    reg                 p2a_row_first;
 
-    reg [31:0] row_acc_q;
-    reg        row_valid_q;
-    reg [31:0] row_result_q;
+    reg                 p2b_valid;
+    reg [31:0]          p2b_tmp_f, p2b_xscale;
+    reg                 p2b_row_first;
+
+    // Stage 3: fp_mul32(tmp_f, x_scale), split in two.
+    reg                 p3a_valid;
+    reg [FMUL1_W-1:0]   p3a_mul_s1;
+    reg                 p3a_row_first;
+
+    reg                 p3b_valid;
+    reg [31:0]          p3b_rescaled_f;
+    reg                 p3b_row_first;
+
+    // Stage 4: fp_add32(row_first ? 0 : row_acc_q, rescaled_f), split in
+    // two -- the true in-place accumulator (see header comment).
+    reg                 p4a_valid;
+    reg [FADD1_W-1:0]   p4a_add_s1;
+
+    reg [31:0]          row_acc_q;
+    reg                 row_valid_q;
+    reg [31:0]          row_result_q;
+
+    // Computed once, fed to both row_acc_q and row_result_q below (they
+    // are always the same value) -- avoids instantiating the rounding/pack
+    // logic of fp_add32_s2 twice in hardware.
+    wire [31:0] p4b_result = fp_add32_s2(p4a_add_s1);
 
     always @(posedge clk) begin
         if (!resetn) begin
-            s1_valid_q <= 1'b0; s1_ival_f_q <= 32'b0; s1_wscale_q <= 32'b0; s1_xscale_q <= 32'b0; s1_row_first_q <= 1'b0;
-            s2_valid_q <= 1'b0; s2_tmp_f_q  <= 32'b0; s2_xscale_q <= 32'b0; s2_row_first_q <= 1'b0;
-            s3_valid_q <= 1'b0; s3_rescaled_f_q <= 32'b0; s3_row_first_q <= 1'b0;
+            p1a_valid <= 1'b0; p1a_i2f_s1 <= {I2F1_W{1'b0}}; p1a_wscale <= 32'b0; p1a_xscale <= 32'b0; p1a_row_first <= 1'b0;
+            p1b_valid <= 1'b0; p1b_ival_f <= 32'b0; p1b_wscale <= 32'b0; p1b_xscale <= 32'b0; p1b_row_first <= 1'b0;
+            p2a_valid <= 1'b0; p2a_mul_s1 <= {FMUL1_W{1'b0}}; p2a_xscale <= 32'b0; p2a_row_first <= 1'b0;
+            p2b_valid <= 1'b0; p2b_tmp_f <= 32'b0; p2b_xscale <= 32'b0; p2b_row_first <= 1'b0;
+            p3a_valid <= 1'b0; p3a_mul_s1 <= {FMUL1_W{1'b0}}; p3a_row_first <= 1'b0;
+            p3b_valid <= 1'b0; p3b_rescaled_f <= 32'b0; p3b_row_first <= 1'b0;
+            p4a_valid <= 1'b0; p4a_add_s1 <= {FADD1_W{1'b0}};
             row_acc_q    <= 32'b0;
             row_valid_q  <= 1'b0;
             row_result_q <= 32'b0;
         end else begin
-            // Stage 1: latch group completion + convert ival to float.
-            s1_valid_q     <= group_done_q;
-            s1_ival_f_q    <= i2f32(group_acc_q);
-            s1_wscale_q    <= w_scale;
-            s1_xscale_q    <= x_scale;
-            s1_row_first_q <= group_row_first_q;
+            // Stage 1a: latch group completion; begin i2f32(group_acc_q).
+            p1a_valid     <= group_done_q;
+            p1a_i2f_s1    <= i2f32_s1(group_acc_q);
+            p1a_wscale    <= w_scale;
+            p1a_xscale    <= x_scale;
+            p1a_row_first <= group_row_first_q;
 
-            // Stage 2: (float)ival * w_scale
-            s2_valid_q     <= s1_valid_q;
-            s2_tmp_f_q     <= fp_mul32(s1_ival_f_q, s1_wscale_q);
-            s2_xscale_q    <= s1_xscale_q;
-            s2_row_first_q <= s1_row_first_q;
+            // Stage 1b: finish i2f32 -> ival_f.
+            p1b_valid     <= p1a_valid;
+            p1b_ival_f    <= i2f32_s2(p1a_i2f_s1);
+            p1b_wscale    <= p1a_wscale;
+            p1b_xscale    <= p1a_xscale;
+            p1b_row_first <= p1a_row_first;
 
-            // Stage 3: (...) * x_scale
-            s3_valid_q     <= s2_valid_q;
-            s3_rescaled_f_q <= fp_mul32(s2_tmp_f_q, s2_xscale_q);
-            s3_row_first_q  <= s2_row_first_q;
+            // Stage 2a: begin (float)ival * w_scale.
+            p2a_valid     <= p1b_valid;
+            p2a_mul_s1    <= fp_mul32_s1(p1b_ival_f, p1b_wscale);
+            p2a_xscale    <= p1b_xscale;
+            p2a_row_first <= p1b_row_first;
 
-            // Stage 4: accumulate into the row result (fresh start if this
-            // group opened a new row, else add to the running value).
-            row_valid_q <= s3_valid_q;
-            if (s3_valid_q) begin
-                row_acc_q    <= s3_row_first_q ? s3_rescaled_f_q : fp_add32(row_acc_q, s3_rescaled_f_q);
-                row_result_q <= s3_row_first_q ? s3_rescaled_f_q : fp_add32(row_acc_q, s3_rescaled_f_q);
+            // Stage 2b: finish (float)ival * w_scale -> tmp_f.
+            p2b_valid     <= p2a_valid;
+            p2b_tmp_f     <= fp_mul32_s2(p2a_mul_s1);
+            p2b_xscale    <= p2a_xscale;
+            p2b_row_first <= p2a_row_first;
+
+            // Stage 3a: begin tmp_f * x_scale.
+            p3a_valid     <= p2b_valid;
+            p3a_mul_s1    <= fp_mul32_s1(p2b_tmp_f, p2b_xscale);
+            p3a_row_first <= p2b_row_first;
+
+            // Stage 3b: finish tmp_f * x_scale -> rescaled_f.
+            p3b_valid      <= p3a_valid;
+            p3b_rescaled_f <= fp_mul32_s2(p3a_mul_s1);
+            p3b_row_first  <= p3a_row_first;
+
+            // Stage 4a: begin the row accumulate. "a" operand is 0 (via
+            // fp_add32_s1's own a_zero shortcut) when this group opens a
+            // new row, else the CURRENT row_acc_q -- same semantics as the
+            // pre-pipelining bypass mux, expressed through the split
+            // function's existing zero-handling instead of a separate mux.
+            p4a_valid  <= p3b_valid;
+            p4a_add_s1 <= fp_add32_s1(p3b_row_first ? 32'b0 : row_acc_q, p3b_rescaled_f);
+
+            // Stage 4b (final): finish the accumulate. This is the ONLY
+            // place row_acc_q is written -- 2 cycles after it was read in
+            // 4a, which is why ACC_GS_MIN must guarantee >=2 cycles between
+            // any two same-row groups reaching stage 4a (header comment).
+            row_valid_q <= p4a_valid;
+            if (p4a_valid) begin
+                row_acc_q    <= p4b_result;
+                row_result_q <= p4b_result;
             end
         end
     end

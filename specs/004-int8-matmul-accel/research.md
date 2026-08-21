@@ -1964,3 +1964,115 @@ clustering are all correct — but both must be fixed before this transcript is 
 by anyone else.
 
 ---
+
+## R36. `acc_mac.v`'s fp32 rescale pipelined 4->8 stages (R34's decision, implemented)
+
+R34 decided to pipeline the rescale rather than keep chasing routing congestion, since
+`MULT18X18D` at 25/28 (89%) was implicated a fourth time and the throughput budget (16 cycles/
+group at GS=64, LANES=4) had 12 cycles of headroom to spend. This entry is the implementation,
+independent of R35's open gs=16 hardware/reference discrepancy — nothing here touches the
+accumulation order or the reference model, only how many cycles the existing arithmetic takes.
+
+### What changed
+
+Each of the three fp32 helper functions (`i2f32`, `fp_mul32` x2 call sites, `fp_add32`) was split
+at its natural midpoint — the point where "expensive" combinational work (leading-zero detect,
+the mantissa multiply, or align/add/CLZ) ends and "finish the number" work (shift/round/pack)
+begins — with a register in between:
+
+- `i2f32_s1`/`i2f32_s2`
+- `fp_mul32_s1`/`fp_mul32_s2` (instantiated twice, once per multiply site — NOT time-shared
+  hardware; see "Rejected: literal DSP sharing" below)
+- `fp_add32_s1`/`fp_add32_s2` (used once, for the row accumulate)
+
+group_done_q to row_result now takes **8 registered stages / 9 cycles total**, up from 4/5. The
+pipeline is fully streaming except the last two stages (the accumulate), which are a true
+in-place accumulator: two groups of the *same row* must not enter stage 4a less than 2 cycles
+apart, or the second reads a stale `row_acc_q`. This is why `fp_add32` was split into exactly
+2 stages and not 3 — a 3-stage accumulate would need >=3 cycles of same-row spacing, which
+`ACC_GS_MIN = 2*LANES` (R30) does not guarantee. At 2 stages the two hazard bounds (R30's
+scale-register settle time, and this accumulate's read-after-write) turn out to be the same
+number, which the header comment flags explicitly as not-a-coincidence-to-assume — it is checked
+by `test_row_interleave_at_gs_min`, not just asserted algebraically.
+
+### Rejected: literal DSP sharing across the two `fp_mul32` sites
+
+A genuinely resource-shared multiplier (one physical DSP time-multiplexed between the two
+`fp_mul32` call sites via muxed inputs) was considered and not attempted. It would tighten the
+multiply stage's minimum throughput to 1 token/2 cycles — again exactly at the `ACC_GS_MIN`
+boundary, needing its own from-scratch hazard re-derivation — for a DSP-count benefit that
+cannot be measured without a synthesis run outside this task's scope. Given the project's three
+prior bugs in this exact block, that risk/benefit did not clear the bar; a purely linear,
+non-shared pipeline (more registers, same DSP instance count, `share` disabled per R21 regardless)
+was judged the safer lever, consistent with what R34 asked for.
+
+### Verification before touching Verilog
+
+Each function split was transliterated to Python and checked bit-for-bit against the original,
+single-stage function it replaces, before being written into `acc_mac.v`: `i2f32` over 200,000
+random `int32` values, `fp_mul32` over 350,000 random and realistic operand pairs, `fp_add32`
+over 500,000 random pairs plus both real R26/R30 bug reproductions plus the full R32 540-case
+deterministic sweep. Zero mismatches in any of these — this is what made the actual hardware
+failure below diagnosable as "the Verilog transcription is wrong" rather than "the split design
+is wrong."
+
+### A width bug found by the hardware regression, not by the Python check
+
+`fp_add32_s1`'s packed return type is 73 bits (`zero_case[1] + zero_result[32] + sign_r[1] +
+norm_field[27] + exp_wide[10] + align_sticky[1] + rshift_sticky[1]`). Its three early-out
+branches (`a_zero`, `b_zero`, exact-cancellation) packed `{1'b1, <32-bit value>, 41'b0}` — 74
+bits into a 73-bit target, one bit too many. Verilog silently truncates from the MSB side on a
+too-wide RHS, which dropped the `zero_case` flag itself and shifted every downstream field by one
+bit. `fp_add32_s2` then failed to recognize the zero-shortcut and fell through to the general
+path on garbage fields, producing exactly `row_result = 0` — and since every row's first group
+feeds `fp_add32_s1(32'b0, rescaled_f)` (the `a_zero` branch, via `row_first ? 32'b0 : row_acc_q`),
+this fired on literally every test's first group, which is why the initial run was 8/10 failing
+with `row_result` uniformly `0x00000000`.
+
+This was NOT in the Python-verified split (the Python model has no bit-width concept to get
+wrong in this way) and NOT something the pre-existing test suite's *design* was blind to — it was
+caught immediately by that suite once run. Found via a throwaway cycle-by-cycle signal dump
+(`p1a_valid` through `row_result_q`) added temporarily as a debug testbench, which showed
+`p4a_valid=1` with a correctly-computed `p3b_rescaled_f` but `row_result_q` staying zero one
+cycle later — isolating it to the accumulate stage's packing rather than an earlier stage. Fixed
+by correcting `41'b0` to `40'b0` in all three branches (`FADD1_W - 1 - 32 = 40`). The debug
+testbench and its temporary Makefile entry were both removed after use; they are not part of the
+committed test suite.
+
+### Test results — all three suites, unchanged test logic
+
+| Suite | Before | After |
+|---|---|---|
+| `acc_mac_tb.py` | 10/10 | **10/10** |
+| `acc_unit_tb.py` | 12/12 | **12/12** |
+| `acc_reject_tb.py` | 14/14 | **14/14** |
+
+The only testbench-side edit was `acc_mac_tb.py`'s `GROUP_TO_ROW_LATENCY` constant, 4 -> 8 (a
+latency parameter the tests were always written to read generically, not a change to any test's
+logic or assertions). `test_row_interleave_at_gs_min` — the test directly exercising the 2-cycle
+accumulate hazard bound at its boundary — passed with zero margin to spare, as expected.
+
+### `acc_top.v` needed no change
+
+R34/R35's task framing anticipated `acc_top.v` would need to "accommodate the added latency on
+`row_result`." It does not: `acc_top`'s FSM reacts to `mac_row_valid` purely as an event
+(`if (mac_row_valid) begin result_mem[...] <= mac_row_result; ... end`, `acc_top.v:715`), with no
+counter or timeout anywhere keyed to a fixed number of cycles between `group_start` and
+`row_valid`. This was confirmed two ways: structurally (`grep` for any latency-derived constant
+in `acc_top.v` — none), and empirically (`acc_unit_tb.py`'s full 12-test suite, run against the
+real `acc_top.v` + new 8-stage `acc_mac.v`, unmodified). `acc_mac.v` is the only file changed by
+this task besides the one testbench constant above.
+
+### Not yet done
+
+Synthesis was deliberately not run for this task (R34/R35 owns board measurement). The open
+question this entry does not answer: whether the pipelining actually reduces `MULT18X18D`
+occupancy from 25/28, or only redistributes the same multiply logic across more registers with
+the DSP count unchanged. Both `fp_mul32_s1` calls still perform one behavioural multiply each
+(unshared, per the "Rejected" section above), so DSP *count* may not drop at all from this change
+alone — the intended effect is giving the placer/router more freedom around each DSP's boundary
+by registering its output (R34: "registered stages let the tool retime and share multiplier
+resources instead of demanding them all in one cycle"), not necessarily fewer DSP instances.
+This should be checked directly against the post-synthesis resource table, not assumed.
+
+---

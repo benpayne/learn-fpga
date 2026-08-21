@@ -45,7 +45,9 @@ LANES = 4          # must match acc_mac's LANES default
 ELEM_WIDTH = 8
 ACC_WIDTH = 32
 
-GROUP_TO_ROW_LATENCY = 4   # cycles from group_done to row_valid (acc_mac.v Stage 1-4)
+GROUP_TO_ROW_LATENCY = 8   # cycles from group_done to row_valid (acc_mac.v Stage 1-4,
+                            # each now split into an a/b register pair -- research
+                            # R31/R33's DSP-occupancy pipelining fix; was 4)
 
 
 # ---------------------------------------------------------------------------
