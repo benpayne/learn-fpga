@@ -49,6 +49,13 @@ Simulation iterates in seconds; hardware iterates in minutes and can only be obs
 whatever output the design already supports. Every defect caught in simulation is caught with
 full internal visibility and no board time.
 
+Passing simulation is necessary but not sufficient. A module MUST also be confirmed to
+**synthesize** — a standalone synthesis run against that module's own top, without full board
+place-and-route — before its implementation is considered complete. Simulation proves a module's
+logic is correct; it says nothing about whether the tool can produce gates from that logic, and
+a module that cannot be synthesized has not satisfied "simulate before hardware". It has
+satisfied a check that hardware was never going to reach.
+
 Exception: changes that cannot be simulated at all — pin constraints, physical wiring — are
 exempt, but MUST be isolated into their own change so that a hardware failure has exactly one
 candidate cause.
@@ -80,6 +87,17 @@ Each step MUST change exactly one variable relative to the step before. When ste
 steps 1-3 passed, the fault is in integration, and that is a far smaller search space than
 "somewhere in the design".
 
+Random sampling MUST NOT be relied upon as the sole verification method for logic whose known
+failure modes concentrate on rare boundary conditions. Where such a boundary is identifiable —
+by inspecting the algorithm's own branch conditions — verification MUST include a
+**deterministic, enumerated sweep** of that boundary space in addition to any random vectors,
+however many.
+
+A large sample count is not evidence of coverage for a defect class it is structurally unlikely
+to reach. Both of this project's floating-point rounding defects survived a thousand random
+vectors each; a subsequent two million *targeted* random trials reached the failing region zero
+times, and 540 enumerated cases covered it completely.
+
 ### IV. A Golden Reference Precedes Hardware
 
 Any computation implemented in hardware MUST have a host-side reference implementation, and
@@ -104,15 +122,28 @@ When a change touches RTL shared by more than one configuration, **every** affec
 configuration MUST be rebuilt and verified before the change is considered complete. The
 regression is mandatory, not a formality.
 
+Before adding a second consumer of any shared, mutable resource — an output filename, a build
+directory, a generated config file — the existing single-consumer assumption MUST be found and
+removed first. Such collisions fail **silently**: the wrong bitstream flashed under a name that
+does not identify it, a testbench exercising another module's design, firmware built for the
+other profile. Nothing errors, and the result looks like a hardware fault rather than a build
+accident.
+
 Rationale: a working bitstream is a valuable, hard-won artifact. Editing it in place to try
 something new destroys the only known-good reference at exactly the moment it is most needed
-for comparison.
+for comparison — and so does quietly overwriting it from a second consumer that believed it
+owned the name.
 
 ### VI. Measurements Replace Estimates
 
 Performance and resource claims in documentation MUST state whether each number is measured,
 simulated, or estimated. Estimates MUST be marked as such and MUST be replaced with measurements
 once available.
+
+Where a tool reports the same quantity at several stages, the claim MUST identify **which stage**
+it comes from, and MUST use the final one. A place-and-route tool that prints an estimated
+frequency after placement and the real one after routing offers two numbers under one name; only
+the second describes the design.
 
 A documented estimate that has silently become the record of truth is worse than no number at
 all, because it will be trusted.
@@ -207,4 +238,4 @@ task slower, that cost has already been weighed against the debugging it prevent
 - `CLAUDE.md` carries runtime development guidance and MUST remain consistent with these
   principles.
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-20 | **Last Amended**: 2026-08-20
+**Version**: 1.1.0 | **Ratified**: 2026-08-20 | **Last Amended**: 2026-08-21
