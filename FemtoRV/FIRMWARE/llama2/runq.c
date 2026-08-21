@@ -427,6 +427,40 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
         }
     }
 
+    /* RoPE angle table, computed ONCE per forward pass.
+     *
+     * The per-element loop below derives its rotation from
+     *   head_dim = i % head_size;  freq = 1/powf(10000, head_dim/head_size)
+     * so `freq` -- and therefore (cos(pos*freq), sin(pos*freq)) -- depends
+     * only on (i % head_size), which takes head_size/2 distinct values. `pos`
+     * is fixed for the whole forward pass, so across dim/2 iterations and
+     * n_layers layers the SAME head_size/2 pairs were being recomputed. For
+     * this model that is 4 distinct pairs computed 160 times per token: a 40x
+     * redundancy, measured at 4.5% of per-token runtime (research R43).
+     *
+     * The calls below are the identical calls with the identical arguments,
+     * merely made once -- powf/cosf/sinf are pure, so this is bit-exact, not
+     * an approximation. Storage is head_size/2 pairs; ROPE_MAX_PAIRS bounds
+     * the stack use and the code falls back to the original per-element form
+     * if a model ever exceeds it, rather than silently indexing out of range.
+     */
+    #define ROPE_MAX_PAIRS 128
+    float rope_fcr[ROPE_MAX_PAIRS];
+    float rope_fci[ROPE_MAX_PAIRS];
+    int rope_pairs = head_size / 2;
+    int rope_cached = (rope_pairs <= ROPE_MAX_PAIRS);
+    if (rope_cached) {
+        prof_begin(PROF_ROPE);
+        for (int k = 0; k < rope_pairs; k++) {
+            int head_dim = 2 * k;
+            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+            float val = pos * freq;
+            rope_fcr[k] = cosf(val);
+            rope_fci[k] = sinf(val);
+        }
+        prof_end(PROF_ROPE);
+    }
+
     for (int l = 0; l < cfg->n_layers; l++) {
 
         prof_begin(PROF_RMSNORM);
@@ -457,10 +491,16 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
         prof_begin(PROF_ROPE);
         for (int i = 0; i < dim; i += 2) {
             int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
+            float fcr, fci;
+            if (rope_cached) {
+                fcr = rope_fcr[head_dim >> 1];
+                fci = rope_fci[head_dim >> 1];
+            } else {
+                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                float val = pos * freq;
+                fcr = cosf(val);
+                fci = sinf(val);
+            }
             int rotn = i < kv_dim ? 2 : 1; /* 2 = rotate q & k, 1 = q only */
             for (int v = 0; v < rotn; v++) {
                 float *vec = v == 0 ? s->q : s->k;

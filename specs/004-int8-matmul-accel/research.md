@@ -2627,3 +2627,63 @@ check what it actually compiles to.* A one-word change recovered 80% of a cost t
 been written up as an argument for new silicon.
 
 ---
+
+## R45. RoPE hoisted out of the inner loops — 14.6x, measured on hardware (2026-08-21)
+
+R43 recorded RoPE at 4.5% of per-token runtime, up 20x from fp32's 0.2%, because Q8_0 carries no
+precomputed `freq_cis` tables and `runq.c` calls `powf`/`cosf`/`sinf` per element.
+
+Reading the loop showed a table was not needed to fix it:
+
+```c
+int head_dim = i % head_size;
+float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+float val = pos * freq;                 /* pos fixed for the whole forward pass */
+```
+
+`freq` depends **only on `i % head_size`**, which takes `head_size/2` distinct values, and `pos`
+is constant across all layers of a forward pass. For this model that is **4 distinct
+(cos, sin) pairs — computed 160 times per token.** A 40x redundancy, in the upstream code, not
+introduced here.
+
+Hoisted to once per forward pass. **Bit-exact by construction**: identical calls with identical
+arguments, made once. `powf`/`cosf`/`sinf` are pure, so reuse cannot change a result — a stronger
+guarantee than R44's `roundf` change, which needed a 2.26M-value sweep to establish.
+
+Bounded stack storage with an explicit fallback to the original per-element path if a model ever
+exceeds `ROPE_MAX_PAIRS`, rather than indexing out of range. This model uses 4 of 128.
+
+### Measured, and the cumulative picture
+
+| | baseline | +`roundf` (R44) | +RoPE hoist |
+|---|---|---|---|
+| **Rate** | 1.14 tok/s | 1.21 | **1.26 tok/s** |
+| `quant` | 8.5% | 2.4% | 2.5% |
+| `rope` | 4.2% | 4.5% | **0.3%** |
+| `matmul` | 49.4% | 52.6% | 55.4% |
+| `attention` | 26.6% | 28.5% | 29.4% |
+| **Accelerable** | 76.0% | 81.1% | **84.8%** |
+| **Scalar remainder** | 24.0% | 18.9% | **15.2%** |
+
+RoPE: 100,848,918 -> 6,930,657 cycles, **14.6x**. Cumulative rate gain across both changes:
+**+10.5%**.
+
+**Generated text is byte-identical across all three board runs** — 233 overlapping characters,
+zero differences. Neither change altered a single token, which is the only acceptance criterion
+that matters for a "cost only" optimisation.
+
+### What this does to the accelerator's case
+
+Q8_0's scalar remainder was 24.0%, against fp32's 11.3%. It is now **15.2%** — most of the gap
+closed by two local changes that touched no format, no RTL and no spec.
+
+Both costs were **artefacts of faithful transcription**, not of the int8 format. R43 concluded
+that Q8_0 structurally carried a heavier scalar tax; that conclusion was too pessimistic, and
+these two measurements replace it. Following upstream's source literally is the right default —
+it is how three real bugs were avoided — but its cost should be measured rather than assumed
+acceptable.
+
+The remaining 15.2% is `other` 7.5%, `sample` 4.4%, `quant` 2.5%, `rmsnorm` 0.4%. No single item
+now justifies hardware, which is the correct place to stop.
+
+---
