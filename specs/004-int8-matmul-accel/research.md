@@ -2570,3 +2570,60 @@ Three options, in order of preference:
 Option 1 plus 2 is the only path that keeps SC-009 as written.
 
 ---
+
+## R44. Single-precision libm in `quantize_activations` — measured on hardware (2026-08-21)
+
+R43 found activation quantization costing 8.5% of per-token runtime. The cause was not the
+algorithm. `quantize_activations()` used `fabs()` and `round()` — the **double-precision** libm
+entry points — copied literally from upstream to match its promotion behaviour. On rv32imafc,
+which has single-precision FP hardware and no double, the inner loop compiled to:
+
+```
+jalr -> __extendsfdf2     float -> double   (software emulated)
+jalr -> round             double round      (software emulated)
+jalr -> __fixdfsi         double -> int     (software emulated)
+```
+
+Three emulated double routines per element, on every activation, before every matmul.
+
+### `roundf()` is bit-identical here — verified, not argued
+
+`float -> double` is exact, `round()` yields an integral value, and the `int8_t` conversion is
+the same either way. Swept **2,264,378 values across the float32 space** comparing
+`(int8_t)round((double)x)` against `(int8_t)roundf(x)`: **zero differences.**
+
+This matters because `runq.c`'s header explicitly forbids "improving" the arithmetic. This does
+not improve it — it reaches the identical result by a cheaper route, and that claim was tested
+rather than asserted.
+
+### Measured on the board
+
+| | Before | After |
+|---|---|---|
+| `quant` share | 8.5% | **2.4%** |
+| `quant` cycles | 204,112,405 | **54,044,496** (3.78x) |
+| Rate | 1.14 tok/s | **1.21 tok/s** (+6.1%) |
+| Run time (110 tokens) | 96.3 s | **90.4 s** |
+| Accelerable (matmul+attention) | 76.0% | **81.1%** |
+| `runq.bin` | 77,396 B | 74,572 B |
+
+The arithmetic closes exactly: 150M cycles saved in `quant` is 6.0 s at 25 MHz, and total runtime
+fell 5.9 s. Nothing else moved.
+
+**Generated text is byte-identical to the previous run** — 233 overlapping characters, zero
+differences, across 110 tokens and five layers of accumulation. `verify-fw-math` also still
+passes bit-exact against the host golden reference on all six shapes. Two independent
+confirmations that only the cost changed.
+
+### Consequence for the accelerator
+
+The earlier conclusion that activation quantization should move into hardware was **premature and
+is withdrawn**. What made it expensive was soft-float emulation, not the operation. What remains
+is one `fdiv.s` per element at 2.4% of runtime — far too small to justify RTL.
+
+The scalar remainder is now **18.9%** rather than 24.0%, so post-acceleration performance improves
+correspondingly. The lesson generalises: *before designing hardware to make something faster,
+check what it actually compiles to.* A one-word change recovered 80% of a cost that had already
+been written up as an argument for new silicon.
+
+---

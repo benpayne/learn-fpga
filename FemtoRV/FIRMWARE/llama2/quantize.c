@@ -2,7 +2,10 @@
  * quantize.c -- implements quantize.h. Verbatim port of upstream
  * llama2.c's runq.c quantize() (also reproduced unchanged in
  * tools/runq_host.c, the golden reference this must match bit-for-bit).
- * See quantize.h for why fabs()/round() (double) are used instead of the
+ * See quantize.h for why fabsf()/roundf() (single) are used -- they are
+ * PROVEN bit-identical to upstream's double-precision fabs()/round() here,
+ * and avoid three software-emulated double routines per element on a CPU
+ * that has no double-precision hardware. The line below originally said
  * float-suffixed forms.
  */
 
@@ -18,7 +21,7 @@ void quantize_activations(int8_t *q, float *s, const float *x, int n, int gs) {
         /* find the max absolute value in the current group */
         float wmax = 0.0f;
         for (int i = 0; i < gs; i++) {
-            float val = fabs(x[group * gs + i]);
+            float val = fabsf(x[group * gs + i]);
             if (val > wmax) {
                 wmax = val;
             }
@@ -31,7 +34,7 @@ void quantize_activations(int8_t *q, float *s, const float *x, int n, int gs) {
         /* calculate and write the quantized values */
         for (int i = 0; i < gs; i++) {
             float quant_value = x[group * gs + i] / scale; /* scale */
-            int8_t quantized = (int8_t) round(quant_value); /* round and clamp */
+            int8_t quantized = (int8_t) roundf(quant_value); /* round and clamp */
             q[group * gs + i] = quantized;
         }
     }

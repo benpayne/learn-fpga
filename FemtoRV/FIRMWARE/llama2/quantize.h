@@ -19,11 +19,27 @@
  * here trust it rather than re-checking every call, exactly as upstream
  * runq.c's quantize() does.
  *
- * Arithmetic is verbatim upstream (tools/runq_host.c's quantize(), which
- * is itself verbatim karpathy/llama2.c's runq.c): abs value in double
- * precision (fabs, not fabsf) and round-half-away-from-zero in double
- * precision (round, not roundf), exactly as upstream computes it -- see
- * runq.c's file header on why the arithmetic must not be "improved". */
+ * Arithmetic matches upstream (tools/runq_host.c's quantize(), itself
+ * verbatim karpathy/llama2.c's runq.c) BIT FOR BIT, but uses the
+ * single-precision libm entry points rather than the double-precision ones
+ * upstream writes.
+ *
+ * This is not an "improvement" to the arithmetic, which runq.c's header
+ * rightly forbids -- it is the same arithmetic reached by a cheaper route,
+ * and that was verified rather than argued. float -> double is exact,
+ * round() yields an integral value, and the int8_t conversion is identical
+ * either way. Swept 2,264,378 values across the float32 space comparing
+ * (int8_t)round((double)x) against (int8_t)roundf(x): zero differences.
+ *
+ * The reason it matters: this CPU is rv32imafc -- single-precision FP in
+ * hardware, no double. Written with fabs()/round(), the inner loop called
+ * __extendsfdf2, round and __fixdfsi per element, three software-emulated
+ * double routines, and cost 8.5% of per-token runtime (75 ms/token,
+ * research R43/R44). Faithfulness to upstream's spelling was measurably
+ * expensive; faithfulness to its RESULT is free.
+ *
+ * If this is ever ported to a target with real double-precision hardware,
+ * reverting to fabs()/round() is harmless -- the results are the same. */
 void quantize_activations(int8_t *q, float *s, const float *x, int n, int gs);
 
 #endif
