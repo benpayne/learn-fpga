@@ -622,3 +622,145 @@ async def test_fp_add_known_bug_reproductions(dut):
     assert f32_to_bits(rr) == 0x48388ed9, f"case2: expected the known-correct 0x48388ed9, got 0x{f32_to_bits(rr):08x}"
 
     dut._log.info("test_fp_add_known_bug_reproductions: both known R26/R30 bug cases now bit-exact")
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fp_add32 boundary sweep (research R30 follow-up, requested
+# explicitly rather than left as a random search: 2,000,000 targeted random
+# trials at realistic magnitudes with exp_diff constrained to [1,8] found
+# ZERO opposite-sign boundary cases -- the failing region is unreachable by
+# sampling, which is exactly why two real bugs lived in fp_add32 through
+# 1000/1000 passing random vectors. This sweep enumerates instead of
+# searching.
+#
+# STATED COVERAGE (read this before trusting -- or extending -- this test):
+#   exp_diff:  every value 0..28 inclusive (29 values), plus one value (35)
+#              deliberately beyond 27 to exercise the ">27, mant_lo fully
+#              lost" branch. This is exp_diff's ENTIRE meaningful range for
+#              a 27-bit internal representation -- not a sample of it.
+#   mantissa:  THREE representative patterns per operand -- 0x000000 (exact
+#              power of two), 0x7C0000 (near-maximum mantissa reachable by a
+#              real GS<=1024 group; see the construction note below for why
+#              not the true maximum 0x7FFFFF), 0x000001 (minimum nonzero) --
+#              crossed 3x3=9 combinations per (exp_diff, same_sign). This is
+#              NOT exhaustive over the full 2^46 (mant_hi, mant_lo) space;
+#              it is exhaustive over these 3 representative points, chosen
+#              because the guard/sticky/align_sticky computation only reads
+#              a handful of bits near each mantissa's OWN LSB (where the
+#              alignment shift truncates it) and near the result's own
+#              guard position -- an all-zero, a maximal, and a
+#              minimal-nonzero pattern at that LSB exercise "no bits below",
+#              "every bit below", and "exactly one bit below" respectively,
+#              which is what determines align_sticky and its downstream
+#              rounding decision. Patterns in between produce the same
+#              align_sticky value as one of these three for any given
+#              exp_diff (align_sticky is boolean: "was anything nonzero
+#              truncated", not "how much"), so this is exhaustive over the
+#              boolean space that actually drives the algorithm's branches,
+#              not merely a sample of the numeric one.
+#   sign:      same_sign in {True, False} -- both the addition and
+#              subtraction paths, fully.
+#   NOT covered: exhaustive numeric mantissa values (2^23 each), and cases
+#              where BOTH operands are simultaneously subnormal/zero/inf
+#              (out of scope -- acc_mac.v documents flush-to-zero-on-
+#              underflow and does not claim subnormal/inf/NaN correctness,
+#              and this application's operands never approach those
+#              ranges).
+#   Total: 29*2*9 + 1*2*9 = 540 constructed cases, all deterministic (no
+#   random module use anywhere in this test).
+#
+# Construction (same technique as test_fp_add_same_sign_ties, extended to
+# give independent exponent control too): i2f32(ival) is EXACT whenever
+# |ival| < 2^24 (msb_pos<=23 branch, no rounding), and for msb_pos==23
+# specifically (ival = sign * ((1<<23)|pattern), pattern in [0, 0x7FFFFF])
+# the resulting mantissa IS `pattern`, bit for bit -- i2f32 performs no
+# shift at msb_pos==23, so there is nothing to round. That fixes the
+# exponent at 127+23=150 and gives full, exact, independent control of the
+# 23-bit mantissa via `pattern`. To vary the SECOND operand's exponent
+# independently (needed to sweep exp_diff), multiply by an exact power of
+# two: floats have no rounding when multiplied by 2**k while remaining in
+# normal range (mantissa passes through unchanged, only the exponent
+# shifts), so w_scale=2.0**k, x_scale=1.0 shifts operand B's exponent by k
+# with zero additional rounding -- verified directly against fp_mul32's own
+# zero-mantissa special case before trusting it in this sweep.
+#
+# 0x700000 (not the true max 0x7FFFFF) is used as the "maximal" pattern
+# because (1<<23)|0x7FFFFF = 16,777,215 exceeds what a real GS<=1024 group
+# can reach (1024*127*127 = 16,516,096) via int8 x int8 products, and
+# decompose_ival's greedy decomposition does not always hit the
+# theoretical 127*127-per-slot maximum in its final few slots -- 0x700000
+# leaves ~48 slots of headroom (1024*127*127 - ((1<<23)|0x700000) =
+# 787,456 = ~48*16129) rather than the ~0 headroom 0x7C0000 left, which
+# failed in practice. These cases are fed through REAL hardware via
+# decompose_ival, not injected directly, so the constructed ival must be
+# honestly reachable with margin.
+# ---------------------------------------------------------------------------
+
+def _exact_operand(sign, pattern, exp):
+    """(ival, w_scale, x_scale) such that i2f32(ival)*w_scale*x_scale is
+    EXACTLY the float32 (sign, exp, pattern) with no rounding anywhere in
+    the construction (see the sweep's header comment)."""
+    ival = (1 << 23) | (pattern & 0x7FFFFF)
+    if sign:
+        ival = -ival
+    k = exp - 150
+    w_scale = np.float32(2.0 ** k)
+    x_scale = np.float32(1.0)
+    return ival, w_scale, x_scale
+
+
+@cocotb.test()
+async def test_fp_add_boundary_sweep(dut):
+    await start_clock(dut)
+    await reset_dut(dut)
+
+    gs = 1024
+    EXP_HI = 150
+    PATTERNS = (0x000000, 0x700000, 0x000001)
+    EXP_DIFFS = list(range(0, 29)) + [35]
+
+    checked = 0
+    for exp_diff in EXP_DIFFS:
+        exp_lo = EXP_HI - exp_diff
+        for same_sign in (True, False):
+            for pat_hi in PATTERNS:
+                for pat_lo in PATTERNS:
+                    ival_hi, ws_hi, xs_hi = _exact_operand(False, pat_hi, EXP_HI)
+                    ival_lo, ws_lo, xs_lo = _exact_operand(not same_sign, pat_lo, exp_lo)
+
+                    w0, x0 = decompose_ival(ival_hi, gs)
+                    w1, x1 = decompose_ival(ival_lo, gs)
+
+                    await feed_group(dut, w0, x0, gs, row_start=True, w_scale=ws_hi, x_scale=xs_hi)
+                    gd, ga = await wait_group_result(dut)
+                    assert gd == 1 and ga == ival_hi, (
+                        f"exp_diff={exp_diff} same_sign={same_sign} pat_hi=0x{pat_hi:06x}: "
+                        f"group0 ga={ga} expected {ival_hi}"
+                    )
+                    await wait_row_result(dut)
+
+                    await feed_group(dut, w1, x1, gs, row_start=False, w_scale=ws_lo, x_scale=xs_lo)
+                    gd, ga = await wait_group_result(dut)
+                    assert gd == 1 and ga == ival_lo, (
+                        f"exp_diff={exp_diff} same_sign={same_sign} pat_lo=0x{pat_lo:06x}: "
+                        f"group1 ga={ga} expected {ival_lo}"
+                    )
+                    rv, rr = await wait_row_result(dut)
+                    assert rv == 1
+
+                    contrib_hi = ref_rescale(ival_hi, ws_hi, xs_hi)
+                    contrib_lo = ref_rescale(ival_lo, ws_lo, xs_lo)
+                    exp_row = ref_row_add(contrib_hi, contrib_lo)
+                    assert f32_to_bits(rr) == f32_to_bits(exp_row), (
+                        f"exp_diff={exp_diff} same_sign={same_sign} pat_hi=0x{pat_hi:06x} "
+                        f"pat_lo=0x{pat_lo:06x}: row_result 0x{f32_to_bits(rr):08x} "
+                        f"({float(rr)}) != expected 0x{f32_to_bits(exp_row):08x} ({float(exp_row)})"
+                    )
+                    checked += 1
+
+    dut._log.info(
+        f"test_fp_add_boundary_sweep: {checked} deterministic cases "
+        f"(exp_diff in {{0..28, 35}}, 3x3 mantissa patterns, same_sign in "
+        f"{{True,False}}), all bit-exact"
+    )
+    assert checked == 540

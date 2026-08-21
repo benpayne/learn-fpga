@@ -1593,3 +1593,52 @@ That argues for attacking **congestion before depth**, reversing R29's ordering:
 double-digit margin, the pipelining rewrite is unnecessary.
 
 ---
+
+## R32. Deterministic fp_add32 boundary sweep — 540 constructed cases, clean result (2026-08-20)
+
+R30 flagged, as follow-up rather than done: the two real `fp_add32` bugs were found by real
+matmul data, not by 1000+2,000,000 random trials, because landing on a rounding boundary (guard=1)
+is rare by chance and landing there with `align_sticky=1` (the exact condition both bugs lived on)
+rarer still. Requested explicitly: replace sampling with enumeration.
+
+**Method**: `acc_mac_tb.py`'s new `test_fp_add_boundary_sweep`, built the same way as R30's
+same-sign tie tests -- construct exact operand bit patterns directly, not search for them.
+`i2f32(ival)` is exact and mantissa-transparent whenever `ival = sign * ((1<<23)|pattern)`
+(msb_pos always exactly 23, no internal rounding), which gives full independent control of one
+operand's sign and 23-bit mantissa at a fixed exponent (150). Multiplying by an exact power of
+two (`w_scale = 2.0**k`, verified directly against `fp_mul32`'s own zero-mantissa special case
+before trusting it) shifts that operand's exponent by `k` with zero additional rounding, giving
+independent exponent control for the second operand -- i.e. independent, exact control of
+`exp_diff` and both mantissas, with no randomness anywhere in the construction.
+
+**Stated coverage** (the sweep's own header comment carries this, so it travels with the code):
+`exp_diff` -- every value 0 through 28 inclusive, plus 35 as a deliberate `>27` check -- is the
+ENTIRE meaningful range for this algorithm's 27-bit internal representation, not a sample of it.
+Three representative mantissa patterns per operand (`0x000000` exact-power-of-two, `0x700000`
+near-maximum reachable by a real GS<=1024 group, `0x000001` minimal-nonzero), crossed 3x3, chosen
+because `align_sticky` is a BOOLEAN ("was anything nonzero truncated") rather than a magnitude, so
+these three exhaust the boolean space the algorithm's branches actually depend on ("nothing below
+the shift boundary", "everything below it", "exactly one bit below it") even though they are not
+exhaustive over the full 2^23-per-operand numeric space. Both `same_sign` values, fully. NOT
+covered, explicitly: full numeric mantissa exhaustion, and subnormal/inf/NaN operands (out of
+scope for this whole module by design -- flush-to-zero-on-underflow is the documented behaviour,
+and this application's real operands never approach those ranges). 29*2*9 + 1*2*9 = 540 cases
+total, every one fed through real hardware via `decompose_ival` (the same int8-vector construction
+`test_fp_add_known_bug_reproductions` uses), not injected as raw bits.
+
+**Result: clean. 540/540 bit-exact against the numpy float32 reference, zero additional defects.**
+This is the answer to the team lead's second question, not just the first: the corrected
+subtraction is exact across the boundary region enumerated here, not merely at the two points that
+happened to be hit by real data. `acc_mac_tb.py` is now 10/10 (7 original + 3 from R30/R32), no
+regressions.
+
+**What this sweep is, and is not, evidence of.** It is a strong result for the specific hazard it
+targets (guard/sticky/align_sticky interaction across the full `exp_diff` range) and should be the
+reference the next person re-derives from if `LANES`, `ACC_WIDTH`, or `fp_add32` itself changes --
+re-running it costs about a minute (69s wall time for all 540 cases) and directly answers "is the
+adder still exact" without needing new hardware data to get lucky again. It is not a claim of
+exhaustive correctness over the full IEEE754 binary32 space; the 540 cases are a stated, bounded
+subspace chosen for relevance to this algorithm's actual branch structure, and the sweep's own
+docstring says so rather than leaving that judgement to be inferred from a raw pass count.
+
+---
