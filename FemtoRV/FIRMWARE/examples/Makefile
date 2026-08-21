@@ -95,6 +95,21 @@ upload_sdram_memtest: sdram_memtest.bin
 # that linked only $< and reported success while silently omitting most
 # of the program -- the recipe below names every object explicitly so
 # that mistake cannot repeat here.
+# sdput: writes a staged SDRAM buffer onto the SD card. Explicit multi-object
+# link like acc_test below, not the %.upload_sdram.elf pattern rule.
+sdput.o: sdput.c ../llama2/q8_format.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -I../llama2 -c sdput.c -o sdput.o
+
+sdput.elf: sdramstart.o sdput.o $(RV_BINARIES)
+	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD_SDRAM) sdramstart.o sdput.o -o sdput.elf $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
+
+sdput.bin: sdput.elf
+	$(RVOBJCOPY) -O binary $< $@
+	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+
+upload_sdput: sdput.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
 acc_driver.o: ../llama2/acc_driver.c ../llama2/acc_driver.h
 	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -I../llama2 -c ../llama2/acc_driver.c -o acc_driver.o
 

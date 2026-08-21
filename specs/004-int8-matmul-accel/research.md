@@ -2477,3 +2477,96 @@ Team-lead will build once fw-quant's producing half lands, capture the dump, and
 at that point `ACC_DUMP_PATH` points at the real file and this closes the loop R35 opened.
 
 ---
+
+## R43. Session A on hardware — it runs, it is slower than fp32, and SC-009 FAILS (T022-T026, 2026-08-20)
+
+The Q8_0 model ran end to end on the board, loaded from the SD card. No operator assistance was
+needed: `sdput` (new, `FIRMWARE/examples/sdput.c`) staged the file through SDRAM and wrote it to
+the FAT card using `fat_write.o`, which was already compiled into `libfemtorv32` and unused.
+
+```
+runq (int8 Q8_0) on FemtoRV (RV32IMFC / petitbateau)
+model: 298752 bytes in 5001 ms (58.3 KB/s)
+tokenizer: 6227 bytes in 116 ms (52.2 KB/s)
+dim=64 hidden=192 layers=5 heads=8 kv_heads=4 vocab=512 seq_len=512 gs=64 shared_cls=1
+RunState needs 676624 bytes (limit 983040 bytes)
+tokens: 110 in 96.3 s (1.14 tok/s)
+```
+
+Every predicted figure matched: 298,752 tensor bytes, and a RunState of 676,624 B computed from
+the header rather than hardcoded.
+
+### Q8_0 is 17% SLOWER than fp32 on this CPU
+
+| | fp32 (feature 003) | Q8_0 (this run) |
+|---|---|---|
+| Rate | **1.38 tok/s** | **1.14 tok/s** |
+| matmul | 61.3% | 49.4% |
+| attention | 27.4% | 26.6% |
+| rope | 0.2% | **4.2%** |
+| quant | — | **8.5%** |
+| Accelerable (matmul+attention) | 88.7% | **76.0%** |
+
+This is expected and is exactly what DESIGN.md 3.4 predicted: **int8 was chosen for capacity,
+not for scalar speed.** A CPU with hardware fp32 does int8 dot products *more slowly*, because
+each group needs an integer accumulate plus a rescale, and the activation vector must be
+quantized before every matmul — the 8.5% `quant` category that did not exist before.
+
+The `rope` jump from 0.2% to 4.2% is a second, subtler cost: Q8_0 carries no precomputed
+`freq_cis` tables, so `runq.c` calls `powf`/`cosf`/`sinf` per position, faithfully following
+upstream `runq.c`. That is a 20x increase in that category.
+
+**The accelerator now has a smaller target (76% versus 88.7%) and a slower baseline to beat.**
+Both figures should replace the estimates the accelerator's speedup case was built on.
+
+### SC-009 FAILS: board output is not byte-identical to the host
+
+Same model, same seed (2026), same prompt. The two diverge after **58 characters**:
+
+```
+common:  "Once upon a time, there was a little girl named Lily. She "
+board:   "had a delicious dress. She had a gray cat with a colorful..."
+host:    "loved to play with her toys and her friends. One day..."
+```
+
+Both outputs are coherent stories260K text; neither is broken. The model works. What has failed
+is bit-level reproducibility between board and host.
+
+**Two independent causes, both structural rather than bugs:**
+
+1. **FMA.** `runq.elf` contains **19 `fmadd.s` in `main`**, where `matmul_q8`/`forward_q8` are
+   inlined — the identical `-ffp-contract=fast` fusion R40 found in `acc_test.c`. The host
+   reference is not compiled the same way. Small per-group differences accumulate across 5
+   layers until they flip a sampling decision.
+2. **libm is not bit-portable, and this is the harder one.** RoPE now calls `powf`/`cosf`/`sinf`
+   at runtime, and the board's newlib implementations are *different functions* from the host's
+   glibc. `runq.elf` shows 21 `fmadd.s` inside `__ieee754_powf` alone, plus more in
+   `__kernel_sinf`/`__kernel_cosf`. No compiler flag makes two different transcendental
+   implementations agree bit-for-bit.
+
+**Why feature 003 achieved byte-identical output and this cannot.** The fp32 model carries
+precomputed `freq_cis` tables, so no transcendental ever ran at inference time. Switching to
+Q8_0 removed those tables and moved that computation to runtime — which silently traded away
+the property SC-009 asserts.
+
+### What this means for SC-009
+
+The criterion was inherited from feature 003, where it was achievable. For Q8_0 as implemented
+it is **not achievable**, and no amount of debugging will make it so while RoPE calls libm.
+
+Three options, in order of preference:
+
+1. **Restore precomputed RoPE tables**, generated at build time on the host and shipped in the
+   checkpoint or the binary. Removes the transcendental calls entirely, recovers bit-exactness,
+   and would also reclaim most of the 4.2% `rope` cost. Diverges from upstream `runq.c`'s
+   structure, which was a deliberate fidelity choice worth revisiting now that its cost is
+   measured.
+2. **Add `-ffp-contract=off` to the llama2 build** — necessary but *not sufficient*; it removes
+   cause 1 and leaves cause 2.
+3. **Replace SC-009's byte-identical criterion** with the divergence measure R17 already
+   established as meaningful (mean KL, top-1 agreement over teacher-forced positions), which
+   does not depend on bit-portable transcendentals.
+
+Option 1 plus 2 is the only path that keeps SC-009 as written.
+
+---

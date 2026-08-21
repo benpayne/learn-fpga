@@ -212,6 +212,12 @@ if __name__ == '__main__':
 
     args = [a for a in sys.argv[1:] if not a.startswith('-')]
     follow = any(a in ('--follow', '-f') for a in sys.argv[1:])
+    # --no-run: load only, do NOT send 'G <addr>'. Needed whenever the upload
+    # is DATA rather than a program -- staging a model into SDRAM, say. Without
+    # this the tool always jumped to the load address, which executes the data
+    # as instructions and hangs the CPU, requiring a reprogram that also wipes
+    # the SDRAM the upload just filled.
+    no_run = any(a in ('--no-run', '-n') for a in sys.argv[1:])
 
     if not args:
         print("Usage: xmodem_upload.py <binary_file> [port] [load_addr_hex] [--follow]")
@@ -226,6 +232,6 @@ if __name__ == '__main__':
         if a.startswith('--idle='):
             idle = int(a.split('=', 1)[1])
 
-    success = upload(port, filename, addr, execute=True, follow=follow,
+    success = upload(port, filename, addr, execute=not no_run, follow=follow,
                      idle_timeout=idle)
     sys.exit(0 if success else 1)

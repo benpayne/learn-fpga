@@ -31,11 +31,10 @@
  *     failure, and specifically: some iterations pass, some do not, with
  *     no logical reason tied to the (unchanging) data.
  * This file therefore keeps the input vector and weight tensor FIXED
- * across all iterations (generated once, quantized once, before the loop
- * -- see "same input every iteration" below) and only repeats the
- * accelerator OPERATION, so that "same input, different output on
- * different runs" is a meaningful, diagnostic observation rather than
- * noise from changing test data.
+ * across all iterations (generated once, before the loop -- see
+ * gen_test_vector() below) and only repeats the accelerator OPERATION, so
+ * that "same input, different output on different runs" is a meaningful,
+ * diagnostic observation rather than noise from changing test data.
  *
  * *** WHAT THIS TEST DOES NOT ESTABLISH ***
  * A clean run (zero mismatches across every iteration) does NOT prove the
@@ -54,21 +53,64 @@
  * back with a diagnosis, not a yes/no that needs a second session to
  * interpret.
  *
- * Links against the REAL quantize.c (so the activation vector fed to both
- * the CPU reference and the accelerator is produced by the actual
- * quantize_activations(), not a third hand-copy) and the REAL
- * acc_driver.c (T057/T058). See ../llama2/Makefile's verify-fw-math
- * target and examples/Makefile's acc_test rule for how each source is
- * pulled in.
+ * *** TEST DATA IS INTEGER-DETERMINISTIC (T053 finding, this file's second
+ * hardware-informed revision) ***
+ * The first hardware run (research R35) found a real disagreement between
+ * hardware and this file's CPU reference. Chasing it, the reference was
+ * rebuilt with `-ffp-contract=off` (GCC's default `-ffp-contract=fast` was
+ * silently fusing the reference's separate multiply-then-add into one
+ * `fmadd.s`, skipping a rounding step the hardware's pipeline actually
+ * performs -- see matmul_q8_ref()'s comment). That rebuild changed the
+ * hardware's OWN output too, on an identical bitstream -- impossible,
+ * UNLESS the compiler flag also changed the accelerator's *input*, not
+ * just the reference's arithmetic. It did: this file used to build its
+ * quantized activation vector via `quantize_activations()` fed by a
+ * float PRNG (`rand_unit()`), and both the vector-generation code and the
+ * comparison code lived in the SAME translation unit -- so `-ffp-contract`
+ * silently perturbed two things in one step (the test's own inputs, and
+ * the reference's rounding), which Principle III forbids changing
+ * together. The resulting transcripts were comparisons between DIFFERENT
+ * inputs across builds, not a bit-exactness test at all.
  *
- * *** NOT VERIFIED ON HARDWARE ***
- * Written and built (links clean, see the feature report) without board
- * access. The comparison logic and accelerator driver calls are correct
- * by construction against the RTL truth sources (acc_driver.h's header
- * comment lists them), but "does it actually distinguish a real
- * intermittent failure on the FPGA" is unverified -- that is exactly what
- * running this program on real hardware, on the R27 accelerator
- * bitstream, is for.
+ * The fix: every quantized value the accelerator and the reference
+ * actually consume -- `g_xq`/`g_wq` (int8) and `g_xs`/`g_ws` (float
+ * scales) -- is now produced by INTEGER arithmetic only (xorshift32's raw
+ * bits, truncated to int8) or by direct IEEE754 bit construction for the
+ * scales (see pow2f_exact() below: an exact power of two has an all-zero
+ * mantissa, so it is exactly representable with no rounding possible at
+ * ANY optimisation level or contraction setting). No float ADDITION or
+ * MULTIPLICATION appears anywhere in generating the test vector, so no
+ * compiler flag can perturb it -- the vector is a pure function of
+ * `g_seed`, identical on any host, any target, any build. What DOES still
+ * involve float arithmetic -- `matmul_q8_ref()`'s rescale/accumulate --
+ * is exactly the thing under test, and stays that way on purpose;
+ * `-ffp-contract=off` is applied to it via `examples/Makefile`'s
+ * `acc_test.o` rule specifically so it rounds where the hardware rounds
+ * (see that Makefile's comment for why this is required, not preferred).
+ *
+ * `quantize_activations()` (quantize.c) is still exercised once, on a
+ * throwaway buffer UNRELATED to the actual test vector -- see
+ * `smoke_test_quantize()` -- purely so this program still links and
+ * touches that function on real hardware. Its output plays NO role in
+ * defining `g_xq`/`g_xs`; do not reintroduce that coupling.
+ *
+ * Also dumps the exact test vector over serial as raw hex (see
+ * dump_test_vector()) so a disagreement is replayable against the real
+ * bytes in cocotb, not a host reconstruction that can silently diverge
+ * (as the pre-T053-fix `hw`/host-replay mismatch at every word but one
+ * turned out to be, per research R35 -- that replay used *similar*,
+ * compiler-dependent data, not *identical* data).
+ *
+ * Links against the REAL quantize.c (T016) and the REAL acc_driver.c
+ * (T057/T058). See ../llama2/Makefile's verify-fw-math target and
+ * examples/Makefile's acc_test rule for how each source is pulled in.
+ *
+ * *** NOT VERIFIED ON HARDWARE BY THIS AGENT ***
+ * This revision (integer-deterministic vectors + hex dump) has not itself
+ * been run on the board -- written and built without hardware access, per
+ * the request that produced it. The PREVIOUS revision was verified on
+ * hardware (research R35, T053) and is what surfaced the coupling bug
+ * this revision fixes.
  */
 
 #include <femtorv32.h>
@@ -107,7 +149,6 @@
  * proves safety outright. */
 #define ACC_TEST_ITERS 200
 
-static float  g_x[TEST_N];
 static int8_t g_xq[TEST_N];
 static float  g_xs[TEST_N / TEST_GS];
 
@@ -129,16 +170,141 @@ static uint16_t g_word_fail_count[TEST_D];
  * must be reproducible on the next run for debugging to be possible. Used
  * ONLY to build the fixed input once, before the iteration loop -- never
  * called again inside it, so the input truly is identical every
- * iteration (R27's whole premise depends on this). */
-static uint32_t g_seed = 0x1234abcdu;
+ * iteration (R27's whole premise depends on this). Every consumer of this
+ * (gen_test_vector() below) uses it through pure integer operations or
+ * pow2f_exact()'s bit construction -- see the file header's T053 note on
+ * why this file no longer has a float PRNG. */
+#define ACC_TEST_SEED 0x1234abcdu
+static uint32_t g_seed = ACC_TEST_SEED;
 static uint32_t next_rand(void) {
     g_seed ^= g_seed << 13;
     g_seed ^= g_seed >> 17;
     g_seed ^= g_seed << 5;
     return g_seed;
 }
-static float rand_unit(void) {   /* pseudo-random float in [-1, 1) */
-    return ((float)(int32_t)(next_rand() % 20000) / 10000.0f) - 1.0f;
+
+/* Constructs 2^e directly from its IEEE754 bit pattern -- sign 0, biased
+ * exponent (e+127), mantissa all zero -- rather than through any float
+ * ADD or MULTIPLY instruction. A power of two is exactly representable in
+ * fp32 (an all-zero mantissa needs no rounding to reach), so this value is
+ * bit-identical on any host, any target, any -ffp-contract/-O setting: the
+ * whole point, per the file header's T053 note. Valid for -126 <= e <=
+ * 127 (fp32 normal range); this file only ever calls it with a small,
+ * hardcoded range, so no bounds check. */
+static float pow2f_exact(int e) {
+    uint32_t bits = ((uint32_t)(e + 127) & 0xFFu) << 23;
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+/* Fills g_xq/g_xs/g_wq/g_ws -- the ACTUAL bytes both the accelerator and
+ * matmul_q8_ref() consume -- using ONLY integer arithmetic and
+ * pow2f_exact()'s bit construction. No float add/multiply anywhere in
+ * this function: see the file header for why that used to not be true,
+ * and why it silently invalidated four prior hardware transcripts
+ * (research R35). The resulting vector is a pure function of g_seed. */
+static void gen_test_vector(void) {
+    for (int i = 0; i < TEST_N; i++)
+        g_xq[i] = (int8_t)(next_rand() & 0xFFu);
+    for (int g = 0; g < TEST_N / TEST_GS; g++)
+        g_xs[g] = pow2f_exact(-(int)(next_rand() % 4) - 2);   /* one of 2^-2 .. 2^-5 */
+
+    for (int i = 0; i < TEST_N * TEST_D; i++)
+        g_wq[i] = (int8_t)(next_rand() & 0xFFu);
+    for (int i = 0; i < (TEST_N / TEST_GS) * TEST_D; i++)
+        g_ws[i] = pow2f_exact(-(int)(next_rand() % 4) - 2);   /* one of 2^-2 .. 2^-5 */
+}
+
+/* Prints the exact bytes gen_test_vector() produced, as raw hex, so a
+ * disagreement is replayable in cocotb against the real data (research
+ * R35: a host-side "similar" reconstruction of this vector matched the
+ * hardware transcript at only one word out of sixteen, because it was not
+ * actually the same data -- this dump exists so that never has to be
+ * guessed at again). int8 arrays print as space-separated hex bytes; the
+ * float scales print as their raw IEEE754 bit pattern (printf here has no
+ * %f regardless -- see stat_print()'s comment below -- so this is also
+ * the only way to print them exactly). */
+static void dump_hex_i8(const char *name, const int8_t *data, int count) {
+    printf("%s (%d bytes):", name, count);
+    for (int i = 0; i < count; i++) {
+        if ((i % 16) == 0) printf("\r\n  ");
+        printf("%x ", (unsigned)(uint8_t)data[i]);
+    }
+    printf("\r\n");
+}
+static void dump_hex_f32(const char *name, const float *data, int count) {
+    printf("%s (%d words, raw fp32 bits):", name, count);
+    for (int i = 0; i < count; i++) {
+        uint32_t bits;
+        memcpy(&bits, &data[i], sizeof(bits));
+        if ((i % 8) == 0) printf("\r\n  ");
+        printf("%x ", (unsigned)bits);
+    }
+    printf("\r\n");
+}
+
+/* Rolling djb2-style checksum, continued from a caller-supplied starting
+ * value so the four arrays below can be folded into ONE checksum over
+ * their concatenation, not four separate ones. Deliberately not CRC32:
+ * CRC32 carries polynomial/reflection/init-value choices that are easy to
+ * implement subtly differently on two independent sides (exactly the
+ * "looked right and wasn't" failure class this whole exercise is about);
+ * djb2's `h = h*33 + b` has no such parameters to disagree about. `&
+ * 0xFFFFFFFFu` is a no-op on a 32-bit unsigned add (it already wraps mod
+ * 2^32) but is kept so the algorithm as WRITTEN matches the algorithm as
+ * SPECIFIED, byte for byte, for whoever implements the Python side. */
+static uint32_t djb2_accum(uint32_t h, const uint8_t *data, uint32_t len) {
+    for (uint32_t i = 0; i < len; i++)
+        h = ((h << 5) + h + data[i]) & 0xFFFFFFFFu;
+    return h;
+}
+
+/* WIRE FORMAT v1 (agreed with mac-unit's cocotb replay harness -- treat
+ * this comment as the spec; bump the "v1" tag in dump_test_vector() if
+ * this ever changes):
+ *   - int8 arrays (xq, wq): raw bytes, array order.
+ *   - float arrays (xs, ws): raw IEEE754 bytes, array order, in this
+ *     target's native byte order (RV32 is little-endian, so this is
+ *     little-endian per float -- there is no explicit byte-swap here
+ *     because none is needed, not because endianness was overlooked).
+ *   - checksum: ONE djb2_accum() run, continued across all four arrays
+ *     IN THIS ORDER: xq, xs, wq, ws -- i.e. exactly the byte sequence a
+ *     memcpy of the four arrays back-to-back would produce, not four
+ *     independent per-array checksums. The Python side must fold its
+ *     bytes in the identical order to get the identical value. */
+static uint32_t compute_test_vector_checksum(void) {
+    uint32_t h = 0;
+    h = djb2_accum(h, (const uint8_t *)g_xq, sizeof(g_xq));
+    h = djb2_accum(h, (const uint8_t *)g_xs, sizeof(g_xs));
+    h = djb2_accum(h, (const uint8_t *)g_wq, sizeof(g_wq));
+    h = djb2_accum(h, (const uint8_t *)g_ws, sizeof(g_ws));
+    return h;
+}
+
+static void dump_test_vector(void) {
+    printf("\r\n=== test vector v1 (seed=0x%x, n=%d d=%d gs=%d) ===\r\n",
+           (unsigned)ACC_TEST_SEED, TEST_N, TEST_D, TEST_GS);
+    dump_hex_i8("xq", g_xq, TEST_N);
+    dump_hex_f32("xs", g_xs, TEST_N / TEST_GS);
+    dump_hex_i8("wq", g_wq, TEST_N * TEST_D);
+    dump_hex_f32("ws", g_ws, (TEST_N / TEST_GS) * TEST_D);
+    printf("checksum: %x\r\n", (unsigned)compute_test_vector_checksum());
+    printf("=== end test vector ===\r\n\r\n");
+}
+
+/* Exercises quantize_activations() (quantize.c) once, on a throwaway
+ * buffer that has NOTHING to do with g_xq/g_xs above -- purely so this
+ * program still links and runs that function on real hardware, per the
+ * file header's note that coverage of it must NOT feed the comparison's
+ * actual inputs. Its output is not compared against anything; a crash or
+ * hang here is the only failure mode this checks for. */
+static void smoke_test_quantize(void) {
+    static const float dummy[8] = { 1.0f, -2.0f, 3.0f, -4.0f, 0.5f, -0.5f, 8.0f, -8.0f };
+    int8_t q[8];
+    float s[2];
+    quantize_activations(q, s, dummy, 8, 4);
+    printf("quantize_activations() smoke test: ran without fault (not part of the comparison)\r\n");
 }
 
 /* HAND COPY of runq.c's matmul_q8() -- runq.c is not includable here
@@ -149,7 +315,16 @@ static float rand_unit(void) {   /* pseudo-random float in [-1, 1) */
  * lives in llama2/tools/verify_fw_math.c (host-side, checked against the
  * real quantize.c AND the real tools/runq_host.c). This copy exists only
  * so THIS program has a CPU-computed reference to compare the hardware
- * against, without depending on a second binary or a host connection. */
+ * against, without depending on a second binary or a host connection.
+ *
+ * MUST be built with -ffp-contract=off (examples/Makefile's acc_test.o
+ * rule) -- otherwise the compiler is free to fuse `((float)ival) * ws[g]
+ * * xs[g]` followed by `val +=` into a single fused multiply-add,
+ * skipping an intermediate rounding step the hardware's 3-stage
+ * mul/mul/add pipeline (acc_mac.v) actually performs. That silent fusion
+ * is what produced research R35's original 1-5 ULP "disagreement" --
+ * except it turned out to also be comparing against a build-dependent
+ * INPUT, not just build-dependent rounding; see the file header. */
 static void matmul_q8_ref(float *xout, const int8_t *xq, const float *xs,
                            const int8_t *wq, const float *ws, int n, int d, int gs) {
     for (int i = 0; i < d; i++) {
@@ -213,19 +388,15 @@ int main(void) {
     printf("acc_test: int8 MatMul accelerator repeated-trial test (R27)\r\n");
     printf("shape: n=%d d=%d gs=%d, iterations=%d\r\n", TEST_N, TEST_D, TEST_GS, ACC_TEST_ITERS);
 
-    /* Build the fixed input ONCE. Every iteration below reuses this exact
-     * data -- see the file header on why that is the point. */
-    for (int i = 0; i < TEST_N; i++)
-        g_x[i] = rand_unit();
-    for (int i = 0; i < TEST_N * TEST_D; i++)
-        g_wq[i] = (int8_t)(next_rand() & 0xFF);
-    for (int i = 0; i < (TEST_N / TEST_GS) * TEST_D; i++)
-        g_ws[i] = 0.01f + 0.001f * (float)(next_rand() % 50);
+    /* Build the fixed input ONCE, entirely in integer/bit-pattern
+     * arithmetic (see gen_test_vector()'s comment and the file header's
+     * T053 note on why). Every iteration below reuses this exact data. */
+    gen_test_vector();
+    dump_test_vector();
 
-    /* Real quantize_activations() (quantize.c) -- same function runq.c
-     * calls, so the vector fed to both sides below is exactly what
-     * production code would produce, not a test-only stand-in. */
-    quantize_activations(g_xq, g_xs, g_x, TEST_N, TEST_GS);
+    /* quantize_activations() coverage, deliberately NOT feeding the
+     * vector above -- see smoke_test_quantize()'s comment. */
+    smoke_test_quantize();
 
     /* The expected answer, computed once. The CPU path is not re-run
      * per iteration: it has no hardware timing to be marginal about, and
