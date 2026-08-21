@@ -2184,3 +2184,44 @@ rounding and therefore break bit-exactness against `runq.c`. **30.79 MHz is the 
 stop.**
 
 ---
+
+## R39. Control: the numeric disagreement survives pipelining unchanged (2026-08-20)
+
+Re-ran `acc_test` on the **pipelined** bitstream (30.79 MHz, 23.2% margin) — a different
+implementation at a very different timing margin from R35's run.
+
+**Byte-identical results.** Same 14 of 16 words wrong, same exact hex values, on all 200
+iterations:
+
+```
+word i=0   ref=0x3A680487   hw=0x3A680000     (both runs)
+word i=2   ref=0xC0BACA9E   hw=0xC0BACAA1     (both runs)
+word i=5   ref=0x40A48960   hw=0x40A48965     (both runs)
+```
+
+Words 1 and 9 correct in both. `PERF_CYCLES` 382-385 (was 378-380) — the ~4-cycle increase is
+the deeper pipeline's fill cost, once per operation, exactly as expected.
+
+### What this rules out
+
+The disagreement is now demonstrated to be independent of:
+
+- **timing margin** — identical at 4.5% and at 23.2%
+- **pipeline depth** — identical at 4 stages and at 8
+- **repetition** — 200 iterations each, in four separate runs across two bitstreams
+
+It is deterministic arithmetic. Not a marginal path, not a race, not something pipelining
+introduced or could fix. The hardware computes a specific, repeatable value that differs from
+`acc_test`'s C reference by 1-5 ULP.
+
+That makes the outstanding experiment — replaying `n=64 d=16 gs=16` through `acc_unit_tb.py`
+against the Python float32 reference — the decisive one, and it is now the only thing that can
+distinguish "the C reference is wrong" from "the RTL is wrong at an untested group size".
+
+### Both R37 printf defects confirmed fixed on hardware
+
+The per-word table now reads correctly — `word i=0: ALWAYS WRONG (200/200)` — with the index and
+the count each in the right field. Binary 14,432 B. The silent-argument-shift bug is gone from
+the transcript, so this run's output can be quoted as evidence.
+
+---
