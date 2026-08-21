@@ -1545,3 +1545,51 @@ Final counts after all of R30's changes: `acc_mac_tb.py` 9/9 (7 original + the t
 tests), `acc_unit_tb.py` 12/12, `acc_reject_tb.py` 14/14. No regressions anywhere.
 
 ---
+
+## R31. Corrected fp_add32 restores timing — barely. 25.61 MHz, 2.4% margin (2026-08-20)
+
+Board build on 1157047 (the textbook decrement-and-force-sticky subtraction). Post-routing:
+
+| Build | Fmax | Margin | Verdict |
+|---|---|---|---|
+| Pre-correctness-fixes (R22) | 28.15 MHz | 12.6% | PASS |
+| First `fp_add32` fix (R29) | 23.55 MHz | — | **FAIL** |
+| Corrected `fp_add32` (this) | **25.61 MHz** | **2.4%** | PASS |
+
+LUT4 13,549 (55%), DP16KD 49 (87%), MULT18X18D 25 (89%) — resources essentially unchanged.
+
+The simpler formulation recovered 2.06 MHz and crossed back over the line, confirming that the
+correct algorithm is also the cheaper one. But 2.4% is not a margin to take to hardware:
+
+- The 256-entry SDRAM cache was **rejected** by this project at 28.4 MHz — a 13.6% margin.
+  25.61 MHz is far below the figure already judged unacceptable, and this time the comparison is
+  decisive rather than the near-tie R22's corrected figure produced.
+- UART flakiness in this project was previously traced to exactly this class of margin, and
+  presented as a peripheral fault rather than as a timing problem.
+
+Critical path is unchanged in shape — `u_mac.s3_rescaled_f_q -> u_mac.row_result_q`, the
+`fp_add32` accumulate — at **13.1 ns logic, 26.0 ns routing** (39.1 ns against a 40 ns period).
+
+### Routing is two-thirds of it, which changes what to try first
+
+Every build in this series has been routing-dominated: 24.2/11.3 pre-fix, 28.0/14.5 with the bad
+fix, 26.0/13.1 now. Congestion, not logic depth, is the larger term — and 87% BRAM with 89% DSP
+occupancy is what produces it.
+
+That argues for attacking **congestion before depth**, reversing R29's ordering:
+
+1. **BRAM sizing (low risk, attacks the 26.0 ns term).** `ACT_AWIDTH`/`RESULT_AWIDTH` are 12,
+   sized for `MAX_N`/`MAX_D` of 4096; this model never exceeds 512. Reducing width and slot
+   count together — result to `AWIDTH 11`/4 slots (512 words/slot, exactly the classifier's
+   d=512), activation to `AWIDTH 10`/4 slots (256 words/slot against 136 needed) — returns about
+   10 of the 49 BRAMs. This is a parameter and contract change, not a logic rewrite, and it can
+   be measured in one synthesis run.
+2. **Pipelining the rescale (higher risk, attacks the 13.1 ns term).** Splits both halves per
+   stage and would give large margin, but it is a rewrite of a block that has just produced
+   three bugs and is only now stable. Worth doing if step 1 is insufficient — and much easier to
+   trust now that 35 tests, including bit-exact real-data checks, exist to validate against.
+
+**Do the cheap, low-risk one first and measure.** If congestion relief alone restores a
+double-digit margin, the pipelining rewrite is unnecessary.
+
+---
