@@ -38,6 +38,15 @@ else ifeq ($(MODULE),acc_unit_tb)
   # needed the same way the PS2 branch below needs -I$(LIB_DIR).
   COMPILE_ARGS += -I../RTL/ACCEL
   TOPLEVEL := acc_unit_wrapper
+else ifeq ($(MODULE),acc_dump_replay_tb)
+  # Same DUT stack as acc_unit_tb -- this module only differs in where its
+  # test VECTOR comes from (a validated serial-capture dump, not real
+  # weight-file/random synthetic data). Point ACC_DUMP_PATH at a real
+  # board capture (see acc_dump_replay_tb.py's header); defaults to the
+  # synthetic fixture in acc_dump_fixtures/ otherwise.
+  VERILOG_SOURCES = acc_unit_wrapper.v ../RTL/ACCEL/acc_top.v ../RTL/ACCEL/acc_mac.v ../RTL/ACCEL/acc_weight_fetch.v ../RTL/ACCEL/acc_regs.v ../RTL/SDRAM/muchtoremember_burst.v
+  COMPILE_ARGS += -I../RTL/ACCEL
+  TOPLEVEL := acc_unit_wrapper
 else ifeq ($(MODULE),acc_arb_tb)
   VERILOG_SOURCES = acc_arb_wrapper.v ../RTL/SDRAM/muchtoremember_burst.v
   TOPLEVEL := acc_arb_wrapper
