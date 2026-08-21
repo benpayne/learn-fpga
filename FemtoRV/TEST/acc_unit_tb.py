@@ -905,3 +905,113 @@ async def test_reject_mode_att_sum(dut):
         mode=ACC_MODE_ATT_SUM,
     )
 
+
+# ---------------------------------------------------------------------------
+# R27/R35/R36: the decisive n=64 d=16 gs=16 replay.
+#
+# T053's first hardware run reported 200/200 iterations of acc_test.c
+# disagreeing with its own CPU reference by 1-5 ULP on 14/16 words, at this
+# exact shape. R36 (team-lead) audited acc_test.c's matmul_q8_ref against
+# runq.c and found it structurally identical (same loop, same order, same
+# expression) -- and separately found and fixed a printf bug that means the
+# SPECIFIC hex digits in that transcript cannot be trusted at face value,
+# though the underlying rb!=hb mismatch comparison in C does not go through
+# printf and is not affected by that bug.
+#
+# This test asks the one remaining question directly, in simulation, against
+# the same RTL the board's bitstream was synthesized from: does acc_top (and
+# therefore acc_mac) compute the STRICT, spec-defined chained-rounding
+# arithmetic this project's constitution requires -- the same arithmetic
+# ref_matmul_row() below already validates bit-exact at every OTHER shape
+# this suite tests?
+#
+# Independently (see acc_r27_gs16_data.py's header and this session's
+# research.md entry), disassembling the real acc_test.elf found the answer
+# to a DIFFERENT question -- why the CPU reference disagrees with the RTL at
+# all: rv32imafc has hardware FMA, and GCC's default -ffp-contract=fast
+# fuses the group's second multiply directly into the accumulate as one
+# fmadd.s, which is NOT the strict two-separately-rounded-steps arithmetic
+# the accelerator (and this whole feature) is specified to match. GREF_HEX
+# below is that fused-arithmetic value, kept separate from the strict
+# reference this test computes itself, specifically so a bit-exact RTL match
+# against ref_matmul_row() -- with a DELIBERATE, explained mismatch against
+# GREF_HEX -- is not read as "the test is broken" but as the actual finding.
+# ---------------------------------------------------------------------------
+
+@cocotb.test()
+async def test_r27_gs16_replay(dut):
+    """Replays acc_test.c's exact n=64 d=16 gs=16 input (acc_r27_gs16_data.py)
+    through the real RTL in simulation, and checks it against BOTH the
+    strict reference this suite already trusts bit-exact at every other
+    shape, AND the fused-arithmetic value the CPU side actually computes on
+    real silicon -- to show explicitly which one the hardware agrees with."""
+    from acc_r27_gs16_data import XQ, XS_HEX, WQ, WS_HEX, GREF_HEX
+
+    n, d, gs = 64, 16, 16
+    assert len(XQ) == n and len(XS_HEX) == n // gs
+    assert len(WQ) == n * d and len(WS_HEX) == d * (n // gs)
+    assert len(GREF_HEX) == d
+
+    xs = [bits_to_f32(int(h, 16)) for h in XS_HEX]
+    ws = [bits_to_f32(int(h, 16)) for h in WS_HEX]
+
+    await start_clock(dut)
+    model = SDRAMModel()
+    cocotb.start_soon(sdram_responder(dut, model))
+    await reset_dut(dut)
+
+    # Synthetic SDRAM placement, same pattern as _row_interleave_case above.
+    w_q_base = 0x400000
+    w_s_base = 0x500000
+    q_bytes = struct.pack(f"<{len(WQ)}b", *WQ)
+    s_bytes = struct.pack(f"<{len(ws)}f", *ws)
+    for i in range(len(q_bytes) // 4):
+        word = struct.unpack_from("<I", q_bytes, i * 4)[0]
+        bank, row, col = addr_to_bank_row_col(w_q_base + i * 4)
+        model.memory[(bank, row, col)] = word
+    for i in range(len(s_bytes) // 4):
+        word = struct.unpack_from("<I", s_bytes, i * 4)[0]
+        bank, row, col = addr_to_bank_row_col(w_s_base + i * 4)
+        model.memory[(bank, row, col)] = word
+
+    await act_write(dut, slot=0, xq=XQ, xs=xs)
+    await issue_matmul(dut, w_q_base=w_q_base, w_s_base=w_s_base,
+                        x_slot=0, out_slot=0, n=n, d=d, gs=gs)
+    status = await wait_done(dut)
+    assert not (status & ACC_STATUS_ERR), f"ERR bit set, status=0x{status:08x}"
+    assert status & ACC_STATUS_DONE, f"DONE bit not set, status=0x{status:08x}"
+
+    mismatches_vs_strict = 0
+    matches_vs_gref = 0
+    for i in range(d):
+        got = await result_read_row(dut, slot=0, i=i)
+        got_bits = f32_to_bits(got)
+        exp = ref_matmul_row(WQ, ws, n, gs, XQ, xs, i)
+        exp_bits = f32_to_bits(exp)
+        gref_bits = int(GREF_HEX[i], 16)
+        if got_bits != exp_bits:
+            mismatches_vs_strict += 1
+            dut._log.error(
+                f"row {i}: RTL 0x{got_bits:08x} != strict reference 0x{exp_bits:08x} "
+                f"(acc_test.c's fused-arithmetic value was 0x{gref_bits:08x})"
+            )
+        if got_bits == gref_bits:
+            matches_vs_gref += 1
+        dut._log.info(
+            f"row {i}: RTL=0x{got_bits:08x} strict_ref=0x{exp_bits:08x} "
+            f"acc_test_fused_ref=0x{gref_bits:08x} "
+            f"{'STRICT-MATCH' if got_bits == exp_bits else 'strict-mismatch'}"
+        )
+
+    dut._log.info(
+        f"test_r27_gs16_replay: {d - mismatches_vs_strict}/{d} rows bit-exact "
+        f"vs the strict reference; {matches_vs_gref}/{d} rows happen to also "
+        f"equal acc_test.c's fused-arithmetic value (expected to be fewer, "
+        f"not zero: at low ULP magnitude two different roundings sometimes "
+        f"land on the same bit pattern by chance)."
+    )
+    assert mismatches_vs_strict == 0, (
+        f"{mismatches_vs_strict}/{d} rows disagree with the strict reference at "
+        f"gs=16 -- this WOULD be a real RTL defect, not the R36 printf/FMA finding."
+    )
+

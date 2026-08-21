@@ -2225,3 +2225,97 @@ the count each in the right field. Binary 14,432 B. The silent-argument-shift bu
 the transcript, so this run's output can be quoted as evidence.
 
 ---
+
+## R40. The decisive experiment: RTL is bit-exact against the strict reference at gs=16.
+The disagreement has a real, identified cause — GCC fuses the CPU reference's rescale (2026-08-20)
+
+The outstanding question from R35/R39: does `acc_top`/`acc_mac` compute the strict, spec-defined
+chained-rounding arithmetic at `n=64 d=16 gs=16` — the shape `acc_test.c` uses and no other test
+in this suite had exercised — or is there a real RTL defect specific to that group size?
+
+### The RTL is correct
+
+`acc_test.c`'s exact test data (xorshift32 seed `0x1234abcd`, verbatim `next_rand()`/
+`rand_unit()`/`quantize_activations()` sequence) was reproduced from a standalone host C program
+built from copy-pasted source (not a second hand-typed port — see
+`FemtoRV/TEST/acc_r27_gs16_data.py`'s header), and replayed through `acc_unit_tb.py`'s new
+`test_r27_gs16_replay` against the real `acc_top.v`/`acc_mac.v` (the same RTL the 30.79 MHz
+bitstream was synthesized from) via the synthetic-SDRAM-injection pattern `_row_interleave_case`
+already established.
+
+**16/16 rows bit-exact against `ref_matmul_row()`** — the same strict reference this suite already
+trusts at every other shape (real weight data, gs=64 and gs=8). At `gs=16`, in simulation, the
+accelerator computes exactly the intended arithmetic. That rules out "RTL defect at an untested
+group size" as the explanation for R35/R39's mismatch.
+
+### A found, real cause for part of the disagreement — not asserted as the whole explanation
+
+Disassembling the actual `acc_test.elf` (`riscv64-unknown-elf-gcc` 8.3.0, `-O3`) shows
+`matmul_q8_ref`'s per-group rescale compiles to:
+
+```
+fmul.s  fa5,fa5,fa2     ; fa5 = (float)ival * w_scale        -- rounded
+fmadd.s fa4,fa5,fa3,fa4 ; fa4 = fa5*x_scale + val             -- FUSED, no intermediate rounding
+```
+
+GCC's default `-ffp-contract=fast` fuses the group's second multiply directly into the
+accumulate, and `rv32imafc`'s F extension has the hardware to fuse into. This is NOT the strict,
+separately-rounded arithmetic `runq.c`/this feature's constitution specify, and it is NOT what
+`acc_mac.v` implements (confirmed unchanged by the R36/2854f6d structural audit: same order, same
+expression — order-of-operations was never the issue, *rounding* is). Reproduced independently
+two ways, cross-checked bit-exact against each other across all 16 words: a from-scratch Python
+FMA emulation (double-precision intermediate, exact for float32 x float32 products), and the same
+copy-pasted C source natively compiled with `-mfma -ffp-contract=fast` to force the identical
+fusion on x86. This means `matmul_q8_ref`, AS ACTUALLY COMPILED for this board, is not computing
+what its own source reads as computing (`contrib = a*b*c; val += contrib;`, two statements) — GCC
+contracts across the statement boundary once inlined. Neither `acc_test.c`'s source nor
+`acc_mac.v`'s RTL is wrong on its own terms; they are two different, both-legitimate roundings of
+the same real-valued expression, and only one of them (the RTL's) is the one this feature is
+specified to match.
+
+### What does NOT close the loop: the reproduced hex digits don't match R35/R39's transcript
+
+This is reported plainly rather than smoothed over. Using the reproduced data above, computed
+both ways (strict and FMA-fused) and cross-checked against the actual RTL simulation result:
+
+| word | RTL (sim, this reproduction) | strict ref (this repro) | fused ref (this repro) | R35/R39 transcript: ref | R35/R39 transcript: hw |
+|---|---|---|---|---|---|
+| 0 | 0x3a681000 | 0x3a681000 | 0x3a680dc6 | 0x3A680487 | 0x3A680000 |
+| 2 | 0xc0bacaa1 | 0xc0bacaa1 | 0xc0bacaa1 | 0xC0BACA9E | 0xC0BACAA1 |
+| 5 | 0x40a48964 | 0x40a48964 | 0x40a48963 | 0x40A48960 | 0x40A48965 |
+
+Word 2's RTL/strict value matches the transcript's `hw` field EXACTLY. That is strong,
+independent corroboration that this reproduction's input data and arithmetic model are right, and
+that the real accelerator computes what this simulation says it computes. But none of the other
+values match, including the transcript's `ref` field for word 2, which differs from BOTH this
+reproduction's strict AND fused values by more than the ~1 ULP an FMA/non-FMA rounding
+difference alone would produce. R37's printf fix does not explain this either — the
+`ref=0x%x hw=0x%x` line always used plain, supported specifiers (confirmed: only the summary
+table's `%-2d` was broken), and R39 explicitly re-ran on the fixed binary with byte-identical
+results to R35's original (pre-fix) transcript.
+
+TEST_N/TEST_D/TEST_GS and `g_seed` have never changed across `acc_test.c`'s git history
+(checked). The reproduction's copy-pasted C matches the current source verbatim, line for line,
+at every relevant function. What is NOT ruled out: the exact word-0/5 sensitivity is consistent
+with catastrophic cancellation (word 0 is the smallest-magnitude result, by far the most exposed
+to ANY difference — even one that isn't a rounding-mode difference at all, such as one int8
+weight or scale byte differing by a small amount between this reproduction's regenerated data and
+whatever is actually resident in the board's SDRAM for that run) amplifying an otherwise-small
+discrepancy disproportionately, while a less-cancelled word like 2 stays exact. This was not
+chased further within this task: closing it needs either a fresh full 16-word transcript from the
+current (post-R37) binary to see how many words beyond word 2 now match this reproduction's `hw`
+field, or a direct SDRAM/memory dump of the board's actual `g_wq`/`g_ws`/`g_xq`/`g_xs` for
+byte-for-byte comparison against `acc_r27_gs16_data.py` — neither is available without board
+access.
+
+### Bottom line
+
+The RTL is proven correct at this shape, in simulation, against the reference this project has
+always trusted. The FMA-fusion finding is real, independently confirmed, and is a genuine reason
+two "correct" implementations of the same nominal expression can legitimately disagree by a few
+ULP — but it is reported as A cause, not conclusively THE cause of every digit in R35/R39's
+specific transcript, because this reproduction's numbers do not fully match that transcript
+outside of word 2. The open item is data provenance (does this reproduction's regenerated input
+exactly equal what ran on the board that day), not RTL correctness.
+
+---
