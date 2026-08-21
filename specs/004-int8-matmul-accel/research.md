@@ -1896,3 +1896,71 @@ Keep the BRAM resize regardless: 16 block RAMs returned and 2.2 ns off routing a
 headroom matters for US6's attention modes.
 
 ---
+
+## R35. FIRST HARDWARE RUN of the accelerator (T053, 2026-08-20)
+
+`femtosoc_llm.bit` (26.13 MHz build) programmed onto the Colorlight i5; `acc_test.bin` uploaded
+over XMODEM to 0x800000 and run. **Session B executed without operator assistance** — `acc_test`
+needs no SD card, so the whole path is scriptable.
+
+### What worked
+
+- FPGA programmed clean, DONE asserted, no BSE error.
+- BIOS monitor came up: `FemtoRV Monitor v1.0 | RV32IMFC @ 25MHz | 32KB ROM + 8MB SDRAM`.
+- XMODEM upload of 14,440 B in 8.1 s (1,789 B/s), no retries.
+- **All 200 descriptors were accepted and completed.** `rejected=0`, `timeout=0`. The IO
+  register path, descriptor queue, SDRAM burst fetch, MAC pipeline, result BRAM and the driver's
+  polling loop all function on real silicon.
+- `PERF_CYCLES` 378-380 (range 2), `PERF_STALL` 116-118 (range 2) across 200 iterations.
+
+### The result: deterministic small numeric disagreement
+
+Shape `n=64 d=16 gs=16`. **200/200 iterations mismatched, identically**, 14 of 16 words wrong:
+
+```
+word i=0   ref=0x3A680487   hw=0x3A680000
+word i=2   ref=0xC0BACA9E   hw=0xC0BACAA1     (+3 ULP)
+word i=3   ref=0x41E42E97   hw=0x41E42E98     (+1)
+word i=5   ref=0x40A48960   hw=0x40A48965     (+5)
+word i=8   ref=0x405EEC3A   hw=0x405EEC38     (-2)
+word i=15  ref=0x41379905   hw=0x41379909     (+4)
+```
+
+**This is not the timing question.** The diagnostic built for R27 did exactly its job and ruled
+it out: identical input reproducing the identical wrong output on all 200 independent trials,
+with `PERF` counters flat to within 2 cycles, is a logic or reference disagreement — a marginal
+path at 4.5% margin would not reproduce the same failure 200 times. Reproduced byte-identically
+across two separate runs.
+
+The differences are **1-5 ULP**, not garbage and not sign flips. That is the signature of a
+different accumulation order or rounding point, not a broken datapath. Word 0 is the outlier
+(`hw` has zeroed low mantissa bits) and is also the smallest result — consistent with
+catastrophic cancellation, where the low bits depend entirely on summation order.
+
+### Which side is wrong is NOT yet established
+
+Two candidates, and it would be wrong to assume:
+
+1. **`acc_test.c`'s CPU reference.** It is a **hand-copied** `matmul_q8`, and fw-quant flagged
+   exactly this at the time: "hand-copied with keep-in-sync-by-inspection comments — documented
+   as the one place this harness can silently drift."
+2. **The hardware.** Against this: `acc_unit_tb.py`'s 12 integration tests are bit-exact against
+   a Python float32 model on real weight data, and `acc_mac_tb.py`'s 540-case deterministic
+   sweep found no defect. But all of those run at gs=64 or gs=8; **this run is the first at
+   gs=16**, and the first on real silicon rather than in simulation.
+
+The decisive experiment is to run this exact shape — `n=64 d=16 gs=16` — through `acc_unit_tb.py`
+against the Python reference. If hardware matches Python there, `acc_test.c`'s C reference is the
+outlier and the RTL is fine.
+
+### Two reporting defects in `acc_test.c`, unrelated to the above
+
+- The per-word table prints `word i=-2d` — an unsubstituted `%-2d`.
+- Its `(N/200)` count field prints the **word index**, not the wrong-count, so every line reads
+  as a different count when they are all 200/200.
+
+Neither affects the finding — the raw first-iteration dump, the totals, the `PERF` spread and the
+clustering are all correct — but both must be fixed before this transcript is used as evidence
+by anyone else.
+
+---
