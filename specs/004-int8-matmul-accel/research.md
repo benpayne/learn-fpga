@@ -1394,3 +1394,154 @@ bitstream.** Session A is unaffected — it runs the software path on a no-accel
 recommendation to consider; it is required work.
 
 ---
+
+## R30. ACC_GS_MIN raised 4 -> 8, derived and empirically verified; a THIRD instance of the fp_add32 bug found in the process (2026-08-20)
+
+### GS_MIN: what was actually true, versus two guesses
+
+`ACC_GS_MIN=4` was a leftover from before hidden_dim padding (research R16): the unpadded
+model's `hidden_dim=172` forced a tiny group size. Padding to 192 removed that constraint and the
+model has used `gs=64` exclusively since — `GS_MIN=4` was doing nothing but *permitting* a
+configuration `acc_top.v` cannot execute correctly (`test_row_interleave_no_gap`, added in the
+T028-31 pass, demonstrated `gs=LANES=4` produces gross, orders-of-magnitude-wrong results).
+
+Two guesses existed for the correct minimum, and both were checked empirically rather than
+trusted, per the team lead's explicit instruction ("you know the exact depth; I don't want to
+guess"):
+
+- `acc_mac.v`'s own header comment guessed **gs/LANES >= 5** (the rescale pipeline's group_done
+  -> row_valid depth).
+- The team lead's own estimate, offered with the same caveat, was **gs=32**.
+
+Neither is what the hardware actually requires. Traced cycle-by-cycle with a cocotb probe
+(`group_row_first_q`/`s1..s3_row_first_q` at every pipeline stage, `gs=LANES=4`): the row-first
+tag threads through `acc_mac`'s rescale pipeline correctly at every stage, every cycle, even at
+the tightest possible cadence. That pipeline is a strict in-order shift register — two tokens
+cannot collide in one stage regardless of injection rate — so the 5-cycle-depth theory was
+solving a hazard that does not exist.
+
+The REAL mechanism, found by tracing `mac_group_acc`/`mac_row_result` values (not just tags)
+alongside the T036 scale-timing fix: `acc_top.v`'s `w_scale_q`/`x_scale_q` only re-latch on a
+group's own last address-phase word (gated on `is_group_last_c`, using `group_count_q` one cycle
+before it advances — the T036 fix). That gating buys exactly **one** settle cycle between "this
+group's scale becomes correct" and "the next group's scale read could overwrite it". At
+`gs == LANES` (a group is exactly one address-phase cycle wide), there is no settle cycle at all
+— every cycle is simultaneously the last word of its own group and the first word of the next, so
+the T036 fix's protection never engages. At `gs == 2*LANES`, the settle cycle exists and the race
+provably cannot occur.
+
+**Bound: gs/LANES >= 2, i.e. ACC_GS_MIN = 2*LANES = 8** for the current LANES=4. Recorded in
+`acc_bits.vh`'s comment with the full derivation and an explicit note that raising LANES later
+requires re-deriving (and re-verifying) this, not just recomputing by formula.
+
+**Empirical verification** (`acc_unit_tb.py`'s `_row_interleave_case`, n=2*gs/d=4, sweeping
+seeds): gs=4 (old minimum) fails every single trial, with mismatches in the billions when
+compared as raw uint32 bit patterns — gross corruption, not rounding. gs=8 (new minimum): clean
+across 25 trials once the fp_add32 fix below was also in place. gs=64 (the model's actual value):
+clean across at least 32 trials (a 40-trial run was killed by the harness's own command timeout
+partway through, all 32 completed trials clean) for the same reason. `test_row_interleave_no_gap`
+is retired and replaced by two tests: `test_row_interleave_at_gs_min` (gs=ACC_GS_MIN, 8 trials,
+proves the new boundary is safe rather than assumed) and `test_row_interleave_below_gs_min`
+(gs=ACC_GS_MIN//2=4, confirms it is now rejected end-to-end with `ACC_ERR_GS`, `PERF_CYCLES=0`).
+fw-quant's `acc_reject_tb.py` already had `test_err_gs_below_minimum` computing its expected value
+from a mirrored `ACC_GS_MIN` Python constant — updated 4 -> 8 in that file to match, with a
+comment tying it back to this entry so the two constants cannot silently drift apart again.
+
+### A third instance of the fp_add32 bug — found by the same GS sweep, at gs=64
+
+The GS sweep's job was timing, not arithmetic, but at `gs=64` (2 groups/row in the sweep's
+n=2*gs construction) it turned up an ARITHMETIC mismatch: row result off by exactly 1 in the raw
+`uint32` bit pattern — the same signature as R26's `fp_add32` subtraction bug, and the *R26 fix
+committed to date did not prevent it*. Confirmed independently via exact `Decimal` arithmetic:
+hardware (and a faithful Python port of the committed `fp_add32`) produced `0x48388ed8`; the
+correctly-rounded IEEE754 answer is `0x48388ed9`.
+
+**Why the committed R26 fix was insufficient**: it corrects `mag_wide`'s VALUE (subtract the
+ceiling of the truncated subtrahend instead of the floor) but the amount by which that ceiling
+adjustment itself is inexact — a fraction strictly between 0 and 1 ULP at the subtrahend's own
+LSB — is not represented by any bit the algorithm still examines. It lives below the one bit
+position the ceiling adjustment just consumed. Reading `norm_field`'s own low bits for `sticky`
+after that point sees whatever they happen to be, uncorrelated with whether real precision was
+lost. The committed fix happened to produce the right rounding decision for R26's original
+reproduction case; this new case shows it does not do so in general.
+
+**Corrected fix**: use the plain floor-based subtraction (no value adjustment), then — only when
+`align_sticky` — decrement the whole difference by one ULP (ordinary integer subtraction, which
+correctly ripple-borrows across any run of zero bits) and treat `sticky` as unconditionally 1 from
+that point, regardless of the decremented value's own low bits. This is exact: `true_diff =
+decremented + (some fraction in (0,1))`, so `decremented` is a valid lower bound AND there is
+provably nonzero weight below it — the fact the ceiling approach could not establish. Verified
+against BOTH known failing cases (R26's original row-56/w2 case and this new gs=64 case) with a
+faithful Python port of the corrected Verilog: both now bit-exact. Cannot underflow past zero:
+`pick_a` guarantees `true_hi >= true_lo`, so the floor-based difference is provably >= 1 whenever
+`align_sticky` triggers the decrement (the degenerate case would require `true_lo <= floor(lo) <
+true_lo`, a contradiction).
+
+**Status: committed.** Flagged directly to the team lead before committing, since at the time of
+discovery the team lead was believed to be mid-pipelining-analysis on R29 against the OLD
+(ceiling-based) version of this exact function — turned out nothing had actually been pipelined
+yet (R29 was a measurement and proposal, not work in progress), so there was no in-flight split to
+invalidate. Landed together with the `ACC_GS_MIN` work below. `acc_mac_tb.py` and `acc_unit_tb.py`
+both re-run clean against the corrected version (see the final counts at the end of this entry).
+R29's critical-path and resource numbers describe the superseded (ceiling-based) version and will
+be re-measured against this one before any pipelining decision is made.
+
+### Three bugs in one hand-rolled fp32 datapath — what that's evidence of
+
+Across this feature's `acc_top.v`/`acc_mac.v` work: an unimplemented-mode fallthrough (`ERR_MODE`,
+found in T034/T038's descriptor-validation pass), a scale-register settle-time race (T036, this
+document's R26), and two successive rounding bugs in the same 40-line `fp_add32` function (R26's
+original, then this entry's). The first two are control-logic bugs — ordinary integration bugs
+this project's own bottom-up-verification principle exists to catch, and it did. The fp32 bugs are
+a different kind of thing: `fp_add32` was unit-tested (1000/1000 bit-exact random vectors) BEFORE
+either bug was found, and passed. Both needed real, chained, multi-group matmul data to surface —
+random sampling is structurally weak at finding rounding-boundary defects, because landing exactly
+on a rounding boundary (guard=1) is rare among uniform random operands, and landing there WITH
+`align_sticky=1` (the specific condition both bugs lived on) rarer still. Two bugs in the same
+function, both invisible to 1000 random trials, both found by accident while testing something
+else (T036's timing, then this entry's GS sweep) — that is worth treating as a property of the
+approach, not of the two specific defects, now that they are both fixed.
+
+**Recommendation: repair, don't restructure — but change how the datapath gets tested, not just
+what it computes.** Three considerations, in order of how much they mattered to this conclusion:
+
+1. **A full rewrite cannot avoid hand-rolled IEEE754 arithmetic entirely.** Bit-exactness against
+   runq.c's `float`-typed, per-group-rounded accumulation (`val += (float)ival * w_scale *
+   x_scale`, one rounding step per group, not one at the end) is the explicit design requirement
+   (constitution Principle IV; DESIGN.md sec 3.5's whole argument for int8 over fp16 rests on
+   exact reproducibility). A wider-precision accumulator that rounds to float32 only once at the
+   row's end would be MORE accurate and LESS work to build correctly, but would stop matching the
+   reference bit-for-bit — trading the one property this design exists to have for less code. The
+   constraint that makes this function hard to get right also makes it impossible to route around.
+2. **The corrected algorithm is now the textbook one, not an invented one**, per the team lead's
+   own framing of the lesson: "matching a known-correct algorithm beats inventing one." The
+   original bug was inventing an ad hoc value adjustment (subtract the ceiling); the fix is the
+   standard technique (decrement-and-force-sticky) with a clean, provable correctness argument
+   (`decremented` is a valid lower bound AND certainly has nonzero weight below it). That argument
+   did not exist for either previous version of this code. A rewrite would be re-deriving
+   something that, this time, is already derived correctly and provably.
+3. **What actually failed was verification coverage, not the algorithm's shape.** `i2f32`,
+   `fp_mul32` and the ADDITION half of `fp_add32` have shown no defect across 1000+1000+2 bit-exact
+   trials plus every integration test in this feature. Only the SUBTRACTION path, and only at the
+   `align_sticky=1` boundary, was wrong — twice, because the first fix addressed the value without
+   addressing the missing sticky information, and nothing in the test suite was constructed to
+   land there.
+
+**Action taken, not just recommended**: `acc_mac_tb.py` gained two new tests targeting exactly
+this gap: `test_fp_add_same_sign_ties` (five ival pairs engineered — via direct simulation of
+`fp_add32`'s own guard/sticky logic in Python, not random sampling — to land on a same-sign
+rounding boundary) and `test_fp_add_known_bug_reproductions` (verbatim replays of both real bug
+cases as permanent regressions, asserting the exact previously-wrong hex values are what is now
+produced). Both pass bit-exact. **Left for a future pass, not done here**: the equivalent
+engineered search for opposite-sign (subtraction) boundary cases came up empty after 2,000,000
+targeted random trials constrained to realistic magnitudes and `exp_diff` in [1,8] — confirming,
+again, how rare this boundary is to hit by sampling even when deliberately aimed at it. Closing
+that gap needs a DETERMINISTIC sweep (iterate `exp_diff` 0..27 exhaustively, and within each,
+search mantissa bit patterns directly for guard=1/align_sticky=1 rather than hoping random
+operands land there) rather than more random trials of any kind. Worth doing before extending
+`fp_add32`/`fp_mul32` to any new caller, not worth blocking this fix on.
+
+Final counts after all of R30's changes: `acc_mac_tb.py` 9/9 (7 original + the two new boundary
+tests), `acc_unit_tb.py` 12/12, `acc_reject_tb.py` 14/14. No regressions anywhere.
+
+---

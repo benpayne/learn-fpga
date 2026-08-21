@@ -378,42 +378,57 @@ module acc_mac #(
                     align_sticky    = (reconstructed != mant_lo_ext);
                 end
 
+                // BUG FIX, take 2 (research.md has both: the first attempt
+                // below was ALSO wrong, caught by the same T035/T036
+                // integration path finding a second real-data case at
+                // GS=64 -- this project's own real group size -- that the
+                // first fix didn't cover). acc_mac.v was unit-tested
+                // 1000/1000 bit-exact in acc_mac_tb.py, but never chained
+                // real groups through a same-magnitude-order subtraction
+                // the way a real matmul row does; see research.md for both
+                // reproductions and their exact-arithmetic proofs.
+                //
+                // mant_lo_shifted is mant_lo_ext right-shifted by exp_diff
+                // and TRUNCATED (align_sticky flags that real bits were
+                // dropped). For addition that only makes the sum an UNDER-
+                // estimate of the true value, exactly what the guard/sticky
+                // convention below expects. For SUBTRACTION it is the
+                // opposite: hi - trunc(lo) OVER-shoots the true difference,
+                // because less was subtracted than the true lo.
+                //
+                // The first attempt "fixed" this by subtracting the CEILING
+                // of mant_lo_shifted instead of the floor when align_sticky
+                // was set -- restoring an under-estimate, but the amount by
+                // which it under-estimates (some fraction strictly between
+                // 0 and 1 ULP at the subtrahend's own LSB) is not
+                // represented by ANY bit still being tracked: it lives
+                // below the one bit position the ceiling adjustment just
+                // consumed. Reading norm_field's own low bits for `sticky`
+                // after that point sees whatever they happen to be, which
+                // is uncorrelated with whether real precision was lost --
+                // exactly the failure this take-2 fixes.
+                //
+                // Correct (standard FPU) technique: use the plain FLOOR-
+                // based subtraction, then -- only when align_sticky (bits
+                // really were dropped from the subtrahend) -- DECREMENT the
+                // difference by one whole ULP (ordinary integer subtract,
+                // which correctly ripple-borrows across any run of zero
+                // bits) and treat `sticky` as unconditionally 1 from that
+                // point on, regardless of what the decremented value's own
+                // low bits show. This is exact: true_diff = decremented +
+                // (some fraction in (0,1)), so decremented is a valid lower
+                // bound AND we know for certain there is nonzero weight
+                // below it -- the one thing the ceiling approach could not
+                // establish. (Provably cannot underflow past zero: pick_a
+                // guarantees true_hi >= true_lo, so floor(mant_hi_ext -
+                // mant_lo_shifted) >= 1 whenever align_sticky = 1; the
+                // degenerate "hi exactly equals a truncated lo" case would
+                // require true_lo <= floor(lo) < true_lo, a contradiction.)
                 if (same_sign) begin
                     mag_wide = {1'b0, mant_hi_ext} + {1'b0, mant_lo_shifted};
                 end else begin
-                    // BUG FIX (found via T035/T036 integration testing --
-                    // acc_mac.v itself was unit-tested 1000/1000 bit-exact
-                    // in acc_mac_tb.py, but that suite never chained three
-                    // real-data groups through a same-magnitude-order
-                    // subtraction the way a real matmul row does; see
-                    // research.md for the reproduction and exact-arithmetic
-                    // proof this was really the wrong answer, not a
-                    // reference-model bug).
-                    //
-                    // mant_lo_shifted is mant_lo_ext right-shifted by
-                    // exp_diff and TRUNCATED (align_sticky flags that real
-                    // bits were dropped). For addition that only makes the
-                    // sum an UNDER-estimate of the true value, which is
-                    // exactly what the guard/sticky convention below
-                    // expects ("bits live below what we kept, so lean
-                    // toward rounding up"). For SUBTRACTION it is the
-                    // opposite: hi - trunc(lo) OVER-shoots the true
-                    // difference, because we subtracted less than the true
-                    // lo. Left uncorrected, the result can round the wrong
-                    // way at exactly the boundary this project's test
-                    // suite caught (mantissa 0xCEE680 was correct, this
-                    // path produced 0xCEE681).
-                    //
-                    // Fix: when any bits were truncated off the subtrahend
-                    // (align_sticky), subtract the CEILING of mant_lo_shifted
-                    // instead of the floor -- i.e. subtract one extra unit
-                    // in the subtrahend's own LSB. That makes the result a
-                    // valid lower bound of the true difference again, so
-                    // the same guard/sticky rounding logic used for
-                    // addition is correct here too. align_sticky is folded
-                    // into the VALUE here, not into `sticky` below, to
-                    // avoid double-counting it.
-                    mag_wide = {1'b0, mant_hi_ext} - {1'b0, mant_lo_shifted} - {27'b0, align_sticky};
+                    mag_wide = {1'b0, mant_hi_ext} - {1'b0, mant_lo_shifted};
+                    if (align_sticky) mag_wide = mag_wide - 28'd1;
                 end
 
                 if (mag_wide == 28'b0) begin
@@ -437,12 +452,14 @@ module acc_mac #(
 
                     mant_window = norm_field[26:3];
                     guard       = norm_field[2];
-                    // align_sticky is included here for the same_sign
-                    // (addition) path only -- the subtraction path already
-                    // folded it into mag_wide's value above, via the
-                    // ceiling adjustment, so including it again here would
-                    // double-count it and bias rounding the wrong way.
-                    sticky      = (same_sign & align_sticky) | rshift_sticky | norm_field[1] | norm_field[0];
+                    // Uniform for both paths now (take 2, see the mag_wide
+                    // computation above): for addition align_sticky already
+                    // meant "the sum under-estimates truth", and for
+                    // subtraction the decrement-when-align_sticky above
+                    // establishes exactly the same guarantee, so both are
+                    // "there is real nonzero weight below what we kept" and
+                    // both belong in sticky the same way.
+                    sticky      = align_sticky | rshift_sticky | norm_field[1] | norm_field[0];
                     round_up    = guard & (sticky | mant_window[0]);
                     mant_rounded = {1'b0, mant_window} + round_up;
                     if (mant_rounded[24]) begin

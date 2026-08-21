@@ -94,7 +94,10 @@ ACC_MODE_MATMUL = 0
 ACC_MODE_ATT_SCORE = 1
 ACC_MODE_ATT_SUM = 2
 
-ACC_GS_MIN = 4
+ACC_GS_MIN = 8   # acc_bits.vh raised this from 4 (research R26 addendum): gs=4
+                 # (== LANES) leaves acc_top.v's per-group scale registers no
+                 # settle cycle, a genuine correctness hazard, not just an
+                 # unused allowance. Keep in sync with the `define.
 ACC_GS_MAX = 1024
 
 # acc_regs.v defaults (module parameters -- not overridden by this

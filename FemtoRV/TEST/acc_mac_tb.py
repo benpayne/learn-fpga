@@ -472,3 +472,153 @@ async def test_bit_exact_1000_cases(dut):
 
     dut._log.info(f"test_bit_exact_1000_cases: {checked} cases, all bit-identical to the host reference")
     assert checked >= 1000
+
+
+# ---------------------------------------------------------------------------
+# fp32 rounding-boundary regression (research R26/R30). Uniform random
+# vectors (test_bit_exact_1000_cases above) never hit either of the two
+# fp_add32 subtraction bugs found while validating T035/T036/GS_MIN --
+# both needed real, chained matmul data to surface. That is a real gap in
+# random-sampling coverage: guard=1 (a rounding boundary) is rare among
+# uniformly random operands, and guard=1 WITH align_sticky=1 (the exact
+# condition both bugs lived on) rarer still. These cases are constructed,
+# not sampled, specifically to land on that boundary.
+# ---------------------------------------------------------------------------
+
+def decompose_ival(target, gs):
+    """int8 w/x vectors of length gs whose exact dot product is `target`,
+    via greedy base-127 decomposition (each slot contributes up to
+    127*127 toward the remaining magnitude). gs=1024 (ACC_GS_MAX) gives
+    ample room for any target reachable by a real GS<=1024 group (|target|
+    <= 1024*127*127, and 1024 slots at up to 127*127 each exactly covers
+    that bound)."""
+    assert abs(target) <= gs * 127 * 127, "target unreachable at this gs"
+    w = [0] * gs
+    x = [0] * gs
+    remaining = target
+    i = 0
+    while remaining != 0:
+        assert i < gs, "ran out of slots -- shouldn't happen within the asserted bound"
+        sign = 1 if remaining > 0 else -1
+        mag = abs(remaining)
+        if mag <= 127:
+            w[i], x[i] = sign * mag, 1
+            remaining = 0
+        else:
+            xi = min(127, mag // 127)
+            w[i], x[i] = sign * 127, xi
+            remaining -= sign * 127 * xi
+        i += 1
+    return w, x
+
+
+@cocotb.test()
+async def test_fp_add_same_sign_ties(dut):
+    """Five (ival0, ival1) pairs engineered (by direct simulation of
+    fp_add32's own guard/sticky logic in Python, not random sampling) so
+    that group0's and group1's rescaled contributions -- with w_scale=
+    x_scale=1.0, so the rescale is an exact no-op and fp_add32 sees exactly
+    i2f32(ival0)/i2f32(ival1) -- sum to a same-sign (same_sign=1) guard=1
+    rounding boundary. Each is checked bit-exact against numpy float32,
+    which is proven correct by construction (round-to-nearest-even is
+    unambiguous once the exact sum is known)."""
+    await start_clock(dut)
+    await reset_dut(dut)
+
+    cases = [
+        (15402624, 7547465),
+        (-10883831, -6628500),
+        (-9815911, -11252906),
+        (15634894, 6698267),
+        (-4776385, -12996104),
+    ]
+    gs = 1024
+    w_scale = np.float32(1.0)
+    x_scale = np.float32(1.0)
+
+    for trial, (ival0, ival1) in enumerate(cases):
+        w0, x0 = decompose_ival(ival0, gs)
+        w1, x1 = decompose_ival(ival1, gs)
+
+        await feed_group(dut, w0, x0, gs, row_start=True, w_scale=w_scale, x_scale=x_scale)
+        gd, ga = await wait_group_result(dut)
+        assert gd == 1 and ga == ival0, f"trial {trial} group0: ga={ga} expected {ival0}"
+        await wait_row_result(dut)  # drain group0's rescale/accumulate before feeding group1
+
+        await feed_group(dut, w1, x1, gs, row_start=False, w_scale=w_scale, x_scale=x_scale)
+        gd, ga = await wait_group_result(dut)
+        assert gd == 1 and ga == ival1, f"trial {trial} group1: ga={ga} expected {ival1}"
+        rv, rr = await wait_row_result(dut)
+        assert rv == 1
+
+        exp = ref_row_add(ref_rescale(ival0, w_scale, x_scale), ref_rescale(ival1, w_scale, x_scale))
+        assert f32_to_bits(rr) == f32_to_bits(exp), (
+            f"trial {trial}: ival0={ival0} ival1={ival1}: row_result 0x{f32_to_bits(rr):08x} "
+            f"({float(rr)}) != expected 0x{f32_to_bits(exp):08x} ({float(exp)})"
+        )
+    dut._log.info(f"test_fp_add_same_sign_ties: {len(cases)} engineered rounding-boundary cases, all bit-exact")
+
+
+@cocotb.test()
+async def test_fp_add_known_bug_reproductions(dut):
+    """Verbatim reproductions of the two real (not engineered) cases that
+    found acc_mac.v's fp_add32 subtraction bugs, kept as permanent
+    regressions rather than only living in research.md's prose. Both are
+    opposite-sign (subtraction path) cases with align_sticky=1 -- the exact
+    condition the R26 "ceiling adjustment" fix got wrong, and the R30
+    "decrement and force sticky" fix gets right.
+
+    Case 1 (research R26): w2 layer0 row56, 3 groups, real Q8_0-range
+    scales. Committed fix (ceiling adjustment) produced 0xc3ec31d6; correct
+    is 0xc3ec31d5.
+    Case 2 (research R30): found while GS-sweeping at gs=64 (this model's
+    actual group size), 2 groups. The R26 fix, already landed at the time,
+    STILL produced the wrong answer here (0x48388ed8 instead of
+    0x48388ed9) -- proof the first fix was insufficient, not just that this
+    is a second unrelated bug.
+    """
+    await start_clock(dut)
+    await reset_dut(dut)
+
+    gs = 64
+    groups = [
+        # (ival, w_scale, x_scale)
+        (1258, np.float32(0.003070202423259616), np.float32(3.3321521)),
+        (-14858, np.float32(0.0037375353276729584), np.float32(3.9575207)),
+        (-51233, np.float32(0.002448025392368436), np.float32(2.1168044)),
+    ]
+    running = None
+    for i, (ival, ws, xs) in enumerate(groups):
+        w, x = decompose_ival(ival, gs)
+        await feed_group(dut, w, x, gs, row_start=(i == 0), w_scale=ws, x_scale=xs)
+        gd, ga = await wait_group_result(dut)
+        assert gd == 1 and ga == ival, f"case1 group{i}: ga={ga} expected {ival}"
+        rv, rr = await wait_row_result(dut)
+        assert rv == 1
+        contrib = ref_rescale(ival, ws, xs)
+        running = contrib if i == 0 else ref_row_add(running, contrib)
+    assert f32_to_bits(rr) == f32_to_bits(running), (
+        f"case1 (w2 row56): row_result 0x{f32_to_bits(rr):08x} != expected 0x{f32_to_bits(running):08x}"
+    )
+    assert f32_to_bits(rr) == 0xc3ec31d5, f"case1: expected the known-correct 0xc3ec31d5, got 0x{f32_to_bits(rr):08x}"
+
+    groups2 = [
+        (-9544, np.float32(1.9184761), np.float32(0.44498333)),
+        (58632, np.float32(1.853564), np.float32(1.8139338)),
+    ]
+    running = None
+    for i, (ival, ws, xs) in enumerate(groups2):
+        w, x = decompose_ival(ival, gs)
+        await feed_group(dut, w, x, gs, row_start=(i == 0), w_scale=ws, x_scale=xs)
+        gd, ga = await wait_group_result(dut)
+        assert gd == 1 and ga == ival, f"case2 group{i}: ga={ga} expected {ival}"
+        rv, rr = await wait_row_result(dut)
+        assert rv == 1
+        contrib = ref_rescale(ival, ws, xs)
+        running = contrib if i == 0 else ref_row_add(running, contrib)
+    assert f32_to_bits(rr) == f32_to_bits(running), (
+        f"case2 (gs=64 sweep): row_result 0x{f32_to_bits(rr):08x} != expected 0x{f32_to_bits(running):08x}"
+    )
+    assert f32_to_bits(rr) == 0x48388ed9, f"case2: expected the known-correct 0x48388ed9, got 0x{f32_to_bits(rr):08x}"
+
+    dut._log.info("test_fp_add_known_bug_reproductions: both known R26/R30 bug cases now bit-exact")

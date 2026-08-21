@@ -106,6 +106,9 @@ RESULT_SLOT_WORDS = (1 << RESULT_AWIDTH) // NUM_SLOTS  # 512
 ACT_XQ_WORDS = ACT_SLOT_WORDS - ACT_XS_WORDS           # 480
 MAX_N = 4096   # acc_top.v parameter default
 MAX_D = 4096   # acc_top.v parameter default
+ACC_GS_MIN = 8   # acc_bits.vh (research R26 addendum: 2*LANES, see the define's
+                 # own comment for the derivation -- gs=LANES leaves acc_top.v's
+                 # scale registers no settle cycle between groups, a real hazard)
 
 MODEL_PATH = os.path.join(
     os.path.dirname(__file__), "..", "FIRMWARE", "llama2", "tools", "model.q8.bin"
@@ -621,39 +624,29 @@ async def test_classifier_64x512(dut):
     await run_matmul_case(dut, model, hdr, raw, tensors["q_tokens"][0], "wcls(=q_tokens) 64x512", seed=103)
 
 
-@cocotb.test()
-async def test_row_interleave_no_gap(dut):
-    """Constructs a case that stresses the contract acc_mac.v documents but
-    does not enforce in hardware: acc_top must not interleave a second
-    row's groups into acc_mac before the first row's last row_valid. With
-    gs == LANES == 4, every group is exactly ONE address-phase cycle wide,
-    so a 2-row matrix has its row boundary crossed with zero cycles of
-    slack -- the tightest case the architecture allows (gs cannot go below
-    ACC_GS_MIN=4). If acc_top's continuous, uninterrupted address-phase
-    streaming ever mixed one row's rescaled contribution into another's
-    row accumulator, this is where it would show up as a bit-exact
-    mismatch.
-
-    Uses small synthetic (non-file) weight data placed in an unused SDRAM
-    region, purely to keep this test fast and its expected values easy to
-    reason about -- correctness of REAL weight streaming is already
-    covered by the four shape tests above.
-    """
-    await start_clock(dut)
+async def _row_interleave_case(dut, gs, seed):
+    """Small synthetic (non-file) weight data placed in an unused SDRAM
+    region -- correctness of REAL weight streaming is covered by the four
+    shape tests above; this exists purely to stress row-boundary timing at
+    a chosen gs, cheaply and with expected values that are easy to reason
+    about. n=2*gs gives 2 groups/row (a real row boundary to cross);
+    d=4 gives several back-to-back boundaries per run. Returns
+    (mismatch_count, d, details) where details is [(row, got_bits,
+    expected_bits, |got-expected| as raw uint32s)] for any mismatch --
+    the raw-bit delta distinguishes a genuine row-accumulator corruption
+    (huge, unrelated bit patterns) from a residual float rounding
+    difference (exactly 1)."""
     model = SDRAMModel()
     cocotb.start_soon(sdram_responder(dut, model))
     await reset_dut(dut)
 
-    gs = 4
-    n, d = 8, 4  # 2 groups/row, 4 rows -- back-to-back row boundaries at 1-cycle gs
-
-    rng = random.Random(999)
+    n, d = 2 * gs, 4
+    rng = random.Random(seed)
     w_q = [rand_int8(rng) for _ in range(n * d)]
     w_s = [np.float32(rng.uniform(1e-3, 2.0)) for _ in range(d * (n // gs))]
     xq = [rand_int8(rng) for _ in range(n)]
     xs = [np.float32(rng.uniform(1e-3, 2.0)) for _ in range(n // gs)]
 
-    # Place weight q/s at arbitrary (but word-aligned) SDRAM addresses --
     # preload_sdram() assumes blob offset 0 == SDRAM address 0, so for a
     # non-zero base write directly into the model instead.
     w_q_base = 0x400000
@@ -673,24 +666,79 @@ async def test_row_interleave_no_gap(dut):
     await issue_matmul(dut, w_q_base=w_q_base, w_s_base=w_s_base,
                         x_slot=0, out_slot=0, n=n, d=d, gs=gs)
     status = await wait_done(dut)
-    assert not (status & ACC_STATUS_ERR), f"row-interleave case: ERR bit set, status=0x{status:08x}"
-    assert status & ACC_STATUS_DONE
+    if status & ACC_STATUS_ERR:
+        return None, d, [("ERR", status, None, None)]
 
     mismatches = 0
+    details = []
     for i in range(d):
         got = await result_read_row(dut, slot=0, i=i)
         exp = ref_matmul_row(w_q, w_s, n, gs, xq, xs, i)
-        if f32_to_bits(got) != f32_to_bits(exp):
+        gb, eb = f32_to_bits(got), f32_to_bits(exp)
+        if gb != eb:
             mismatches += 1
-            dut._log.error(
-                f"row-interleave case: row {i} mismatch: got 0x{f32_to_bits(got):08x} "
-                f"expected 0x{f32_to_bits(exp):08x}"
-            )
-    assert mismatches == 0, (
-        f"row-interleave case: {mismatches}/{d} rows mismatched -- acc_top interleaved "
-        f"rows into acc_mac's row accumulator faster than the pipeline could drain them"
-    )
-    dut._log.info(f"row-interleave case (gs=LANES=4, zero-slack row boundaries): all {d} rows correct")
+            details.append((i, gb, eb, abs(gb - eb)))
+    return mismatches, d, details
+
+
+@cocotb.test()
+async def test_row_interleave_at_gs_min(dut):
+    """Re-pointed at ACC_GS_MIN (research R26 addendum raised it from 4 to
+    8 -- gs=4 == LANES is now unrepresentable, rejected by acc_regs.v's own
+    ERR_GS check before it can reach hardware at all, per
+    acc_reject_tb.py's test_err_gs_below_minimum). This test's job changed
+    with it: instead of proving gs=LANES corrupts row boundaries (it still
+    does -- see test_row_interleave_below_gs_min below, which now exercises
+    that as a REJECTION instead), this proves the new minimum is actually
+    safe rather than merely assumed safe, per the constitution's "a
+    boundary is proven, not asserted" standard. gs=2*LANES gives exactly
+    one address-phase settle cycle between a group's own last word and the
+    next group's first -- the mechanism acc_bits.vh's ACC_GS_MIN comment
+    derives in detail. Run across several seeds, since the failure mode
+    this replaces (test_row_interleave_no_gap originally) was intermittent
+    enough at nearby ratios that a single trial is not strong evidence
+    either way.
+    """
+    await start_clock(dut)
+    for trial in range(8):
+        mismatches, d, details = await _row_interleave_case(dut, ACC_GS_MIN, seed=606060 + trial * 173)
+        assert mismatches == 0, (
+            f"trial {trial}: gs=ACC_GS_MIN={ACC_GS_MIN}: {mismatches}/{d} rows mismatched -- "
+            f"details={details}"
+        )
+    dut._log.info(f"gs=ACC_GS_MIN={ACC_GS_MIN}: 8 trials x {d} rows, all bit-exact")
+
+
+@cocotb.test()
+async def test_row_interleave_below_gs_min(dut):
+    """gs=ACC_GS_MIN//2 (4, == LANES) is exactly the configuration that
+    used to corrupt row boundaries (research R26 addendum) and is now
+    rejected outright by acc_regs.v's enqueue-time ERR_GS check --
+    confirming end to end, through the same real streaming path the other
+    tests in this file use, that the hazard is now structurally
+    unreachable rather than merely discouraged. acc_reject_tb.py's
+    test_err_gs_below_minimum proves the acc_regs.v side of this in
+    isolation; this is the integration-level confirmation that a
+    descriptor built this way genuinely cannot reach acc_top's streaming
+    datapath at all.
+    """
+    await start_clock(dut)
+    model = SDRAMModel()
+    cocotb.start_soon(sdram_responder(dut, model))
+    await reset_dut(dut)
+
+    below_min = ACC_GS_MIN // 2
+    assert below_min == 4 and below_min == LANES, "sanity: this must be the historically-broken value"
+    await issue_matmul(dut, w_q_base=0, w_s_base=0, x_slot=0, out_slot=0,
+                        n=below_min * 4, d=4, gs=below_min)
+    status = await wait_done(dut)
+    assert status & ACC_STATUS_ERR, f"gs={below_min} was not rejected, status=0x{status:08x}"
+    assert not (status & ACC_STATUS_DONE)
+    got_code = (status >> 4) & 0xF
+    assert got_code == ACC_ERR_GS, f"expected ACC_ERR_GS({ACC_ERR_GS}), got {got_code}"
+    cycles, _ = await read_perf(dut)
+    assert cycles == 0, f"gs={below_min}: PERF_CYCLES={cycles}, expected 0 (never started)"
+    dut._log.info(f"gs={below_min} (== LANES, the old GS_MIN): correctly rejected, ERR_GS, never started")
 
 
 
@@ -849,3 +897,4 @@ async def test_reject_mode_att_sum(dut):
         w_q_base=0, w_s_base=0, x_slot=0, out_slot=0, n=64, d=1, gs=64,
         mode=ACC_MODE_ATT_SUM,
     )
+

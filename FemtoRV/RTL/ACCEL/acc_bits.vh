@@ -61,10 +61,48 @@
 `define ACC_MODE_ATT_SUM   2'd2
 
 // ---- Supported group-size bounds ----
-// Lower bound is 4, deliberately not 64: research R16 found a real model whose
-// only valid group size was 4 before hidden_dim padding was adopted. Do not
-// narrow this to the value the current model happens to use.
-`define ACC_GS_MIN        4
+// Lower bound derivation (raised from 4 to 8, research R16->R26 addendum):
+// gs=4 was a leftover from before hidden_dim padding (research R16), when
+// this model's unpadded hidden_dim=172 forced a tiny group size. Padding to
+// 192 removed that constraint; the model has used gs=64 exclusively since,
+// so ACC_GS_MIN=4 was doing nothing but PERMITTING a configuration
+// acc_top.v cannot execute correctly.
+//
+// The actual hazard, found and root-caused via T036's integration
+// testbench (not assumed): acc_top.v's w_scale_q/x_scale_q registers only
+// re-latch once per group, on that group's own LAST address-phase word
+// (gated on is_group_last_c, using group_count_q/act_group_idx_q one cycle
+// before they advance -- see acc_top.v's own comment on those registers).
+// That gating buys exactly ONE cycle of settle time between "this group's
+// scale becomes correct" and "the next group's scale read could overwrite
+// it". At gs == LANES (a group is exactly one address-phase cycle wide),
+// there IS no settle cycle -- every cycle is simultaneously the last word
+// of its own group AND the first word of the next, so the very race the
+// gating exists to prevent reopens. At gs == 2*LANES (two address-phase
+// cycles per group), the settle cycle exists and the race cannot occur --
+// confirmed empirically (acc_unit_tb.py's row-interleave sweep: gs=LANES
+// produces gross, orders-of-magnitude-wrong results every time; gs=2*LANES
+// is clean over dozens of randomised trials once acc_mac.v's fp_add32 bug,
+// a separate and unrelated issue, was also fixed -- see research R26).
+//
+// This is NOT the acc_mac.v row-accumulator pipeline depth (5 cycles,
+// group_done -> row_valid) T030 originally worried about -- that hazard
+// turned out not to be real: acc_mac's rescale pipeline is a strict
+// in-order shift register with no possibility of two tokens colliding in
+// one stage, regardless of injection rate (traced cycle-by-cycle and
+// confirmed the row_first tag threads through correctly even at gs=LANES).
+// The binding constraint is the scale-register settle time above, which is
+// the much tighter bound of the two.
+//
+// Bound: gs/LANES >= 2, i.e. ACC_GS_MIN >= 2*LANES. LANES defaults to 4
+// (acc_mac.v/acc_top.v), giving ACC_GS_MIN=8. THIS DEPENDS ON LANES: if
+// LANES is ever raised, this constant MUST be revisited and re-verified
+// (empirically, the same way -- see acc_unit_tb.py's
+// test_row_interleave_no_gap / test_row_interleave_at_gs_min), not just
+// recomputed by formula, since deriving 2*LANES=8 the first time round
+// also required finding the actual mechanism rather than trusting an
+// earlier (wrong) 5-cycle guess.
+`define ACC_GS_MIN        8
 `define ACC_GS_MAX     1024
 
 `endif
