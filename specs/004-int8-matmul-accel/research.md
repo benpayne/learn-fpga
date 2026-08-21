@@ -1642,3 +1642,202 @@ subspace chosen for relevance to this algorithm's actual branch structure, and t
 docstring says so rather than leaving that judgement to be inferred from a raw pass count.
 
 ---
+
+## R33. Constitution re-evaluation (T079, 2026-08-20)
+
+This is normally an end-of-feature formality. It should not be treated as one here: this feature
+produced hard evidence about the constitution's own adequacy — two places where a principle held
+and closed a real gap, two places where a principle's wording turned out to have a hole in it,
+and one recurring pattern across R20/R21/R24/`sim_build` that the constitution does not currently
+name at all. Going through all six honestly, not rubber-stamping.
+
+### I. Simulate Before Hardware — SATISFIED, and the text has a demonstrated gap anyway
+
+Every board build in this feature (R22, R27-R29, R31) was preceded by simulation, and no RTL
+change went to a board without one. On its own literal terms the principle held throughout.
+
+But it held *and the feature still could not be built*: `acc_mac.v` passed 7/7 cocotb tests and
+1000/1000 bit-exact vectors while being **unsynthesizable** — `synth_ecp5`'s `share` pass never
+terminated (R21), reaching 21 GB RSS before an OOM-kill rather than failing. Nothing in Principle
+I, or anywhere else in the constitution, required checking that a module *can be turned into
+gates* before treating simulation-passing as sufficient. The `synth-check` target (added under
+T044, this document's earlier entries) closes that gap **in practice** now, and R26 shows it
+being used exactly as intended — re-run after every RTL change to `acc_top.v`/`acc_mac.v`, under
+a `ulimit`, checked before assuming synthesizability rather than after. But the constitution's
+own text still does not require it; the gap was closed by a team decision, not by the document
+that is supposed to prevent needing one.
+
+**Proposed wording** (not applied — amendment procedure is Governance's, not mine to invoke),
+as a new paragraph in Principle I:
+
+> Passing simulation is necessary but not sufficient. A module MUST also be confirmed to
+> synthesize — a standalone synthesis run against that module's own top, without full board
+> place-and-route — before its implementation is considered complete. Simulation proves a
+> module's logic is correct; it says nothing about whether the synthesis tool can produce gates
+> from that logic, and a module that cannot be synthesized has not actually satisfied "simulate
+> before hardware" — it has satisfied a check that hardware was never going to reach.
+
+### II. Cocotb Is the Verification Record — SATISFIED, and it visibly worked as designed
+
+`acc_regs.v`, `acc_weight_fetch.v`, `acc_mac.v`, `acc_top.v` all have registered testbenches
+(`acc_regs`/`acc_weight_fetch` covered via `acc_unit_tb.py`, `acc_mac_tb.py`, `acc_arb_tb.py`,
+`acc_reject_tb.py`), all runnable by name, all still registered after the `sim_build` fix rather
+than needing rediscovery. The suite grew honestly as defects were found rather than being written
+once and left static: `acc_mac_tb.py` went 7 -> 9 -> 10 tests as R26 and R30/R32 each added a
+permanent regression for a real bug, not just a fix. That is the principle doing exactly what it
+is for — the record accumulates evidence rather than merely existing.
+
+### III. Bottom-Up Verification — SATISFIED at the mechanism level, with the sharpest gap of all six
+
+The four-level ladder (unit / subsystem / hardware-isolated / hardware-integrated) worked exactly
+as the principle predicts: R26's scale-timing bug was invisible to `acc_mac_tb.py`'s unit tests
+(one group at a time, or several fed with the testbench in full control of timing) and only
+appeared once `acc_top`'s continuous address-phase streaming met `acc_weight_fetch`'s real burst
+timing — precisely the subsystem-level integration step the principle exists to isolate. When
+step 4 (T036's integration test) failed and steps 1-3 had passed, the fault search narrowed to
+integration exactly as Principle III's own rationale claims it should. **First-person
+accountability**: this was my own code (`acc_top.v`, T034). I designed the scale-register update
+timing with a deliberately careful cycle-by-cycle walkthrough, reported it to the team lead in
+detail, and it was still wrong — a one-cycle race that no amount of my own reasoning caught,
+only real streamed data did. The principle is not a substitute for careful design; it is what
+catches careful design being wrong anyway.
+
+Where the principle has a real gap, found by the same feature: **random sampling is not the
+right verification tool for defects concentrated on rare boundary conditions.** `fp_add32`'s two
+successive rounding bugs (R26, R30) were both invisible to 1000 bit-exact random trials run
+*before* either bug was found — and R30's follow-up search for the second bug's failure mode
+came up empty after **2,000,000 targeted random trials** constrained to realistic operand
+ranges. What actually closed the gap was R32's 540-case *deterministic* sweep — every `exp_diff`
+value enumerated exhaustively (0-28, plus one `>27` boundary check), not sampled. The ratio
+matters: 2,000,000 random trials found nothing; 540 constructed cases found the whole boundary
+region clean. That is not "more testing would have found it" — it is "this class of bug lives in
+a region random sampling essentially cannot reach at any practical sample size," and nothing in
+Principle III (or IV) currently says so.
+
+**Proposed wording**, as a new paragraph in Principle III:
+
+> Random sampling MUST NOT be relied upon as the sole verification method for logic whose known
+> failure modes concentrate on rare boundary conditions — floating-point rounding boundaries are
+> the case this project has hit twice. Where such a boundary is identifiable (e.g. by inspecting
+> the algorithm's own branch conditions), verification MUST include a deterministic, enumerated
+> sweep of that boundary space in addition to any random vectors, however many. A large random
+> sample count is not evidence of coverage for a defect class it is structurally unlikely to
+> reach.
+
+### IV. A Golden Reference Precedes Hardware — SATISFIED, and the strongest-complied principle here
+
+Every numeric computation in this feature was checked against a host reference before being
+trusted: quantization against `runq.c` (R15/R17/R18), the MAC unit against a Python/`numpy`
+float32 model (R26/R30/R32, all bit-exact), the integration tests against the same. R26's
+`fp_add32` fix was validated by an independent exact-`Decimal` re-derivation, not merely by the
+model agreeing with itself — the strongest form of this principle's intent. This is the one
+principle with no gap found in this feature; it is worth recording as a positive alongside the
+four with findings, so this entry is not read as only a list of failures.
+
+### V. Profiles Are Additive; Shared RTL Demands Regression — SATISFIED, with two honest caveats
+
+The regression discipline held: `make colorlight_i5.synth` was run after every shared-RTL change
+(T047/T056/T078, R28), passed, resources within 1% of baseline, timing slightly *better*
+(32.6 -> 33.33 MHz). That is real compliance, not a formality performed once and forgotten.
+
+Two things a full compliance claim would paper over, both already flagged in-line at R28 and
+worth repeating here rather than letting the "PASS" headline stand alone:
+
+1. **A shared module did change underneath the passing regression.** `muchtoremember_burst.v`
+   gained `CPU_PRIORITY`/`STARVE_LIMIT`/`starve_guard_fired` for this feature. The display
+   profile's own RTL is untouched (`NRV_IO_ACCEL`-gated), but the file it depends on is not the
+   same file it was before this feature started, and the -112 LUT delta (R28) is that
+   restructuring's fingerprint, not proof of "no change."
+2. **The display profile has never been re-run on hardware in this feature.** R28 is a synthesis
+   PASS — bitstream produced, timing closed — not a board test. The regression is real at the
+   level this feature's scope covers, but "the working display profile still works" is, honestly,
+   still an assumption above the synthesis level, not yet a measurement. R28 says this directly;
+   it belongs here too, not only in the entry most likely to be skimmed for its headline number.
+
+### VI. Measurements Replace Estimates — SATISFIED as a principle, violated once in practice, by the team lead's own account
+
+The record throughout this feature is genuinely measurement-heavy: R19's burst sweep replaced
+DESIGN.md's estimated table with 3000-sample measurements; R22/R29/R31 each recorded a real
+`nextpnr` frequency rather than carrying forward a target. The principle's INTENT — don't let an
+estimate become the record of truth — held almost everywhere.
+
+The one violation is the team lead's own, stated plainly in their message to me rather than left
+for this entry to discover: R22 recorded **26.21 MHz**, `nextpnr`'s post-*placement* estimate,
+as the design's frequency, and built the "12.6% margin, PASS" conclusion on it — when the real
+post-*routing* figure was **28.15 MHz**. Both numbers came from the same tool run, both look like
+"a measurement" if the distinction between placement-stage and routing-stage timing isn't
+carried in the recording, and Principle VI's current text only requires that a number be labelled
+measured/simulated/estimated — it says nothing about *which stage* of a multi-stage tool's output
+counts as "measured" when the tool reports more than one. This is not a case of an estimate
+masquerading as a measurement (Principle VI's stated failure mode); it is two real measurements
+from the same tool, one earlier and less final than the other, with no rule saying which one the
+document should hold.
+
+**Proposed wording**, as a new sentence in Principle VI:
+
+> Where a tool reports a value at more than one stage of its own process (e.g. a post-placement
+> estimate and a later post-routing figure from the same `nextpnr` run), the specification MUST
+> record which stage's number is being used, and MUST use the latest/most final stage available
+> unless a stated reason requires an earlier one. "Measured" is not enough to distinguish two
+> real numbers that disagree.
+
+### A pattern the constitution does not name: shared, unnamespaced, silently-colliding state
+
+Four independent instances in this feature alone, none of them related to each other's root
+cause:
+
+| | Shared resource | Failure, and why it was silent |
+|---|---|---|
+| R20 | `femtosoc.*` output filenames, both synthesis profiles | wrong bitstream flashed; the filename gives no indication which profile produced it |
+| R21 | process exit status through a shell pipeline (`make \| tee`) | an OOM-killed build reported success, because `$?` reflected `tee`, not `make` |
+| (this doc, T044) | `TEST/sim_build/`, every cocotb testbench | two testbenches running concurrently silently ran each other's DUT |
+| R24 | `FIRMWARE/config.mk`, both firmware profiles | a regression run left it pointed at the other profile, latent until the configs diverge |
+
+Three of the four now have per-consumer namespacing or an explicit no-pipe rule; `config.mk` is
+recorded as a known, currently-benign hazard rather than fixed, since a genuine per-profile split
+is a wider change than this feature should make unilaterally (R24's own judgement, which I agree
+with).
+
+**My view, since it was asked for**: this earns a place in the constitution, but as an addition
+to an existing principle rather than a new numbered one. The four instances span build artifacts,
+process semantics, test infrastructure and firmware config — different enough in mechanism that a
+single new principle titled something like "state is namespaced" would either be so general it
+adds little beyond "be careful," or would need enough sub-clauses to basically restate Principles
+I/II/V's existing ground (simulate before hardware, testbenches are the record, regression is
+mandatory) with "and don't let it collide" appended to each. The common thread is real and worth
+naming, but it reads more like a *habit of mind* this project's principles already imply — check
+what's shared, not just what changed — than like a sixth (seventh) independent discipline with
+its own verification method. I'd fold one sentence into Principle V's rationale instead, since
+three of the four instances are specifically about **regression discipline being undermined by
+collision** (a passing regression that ran the wrong artifact, or overwrote the wrong config,
+proves nothing):
+
+> When adding a new consumer of a shared, mutable resource (a build artifact name, a scratch
+> directory, a config file, a process exit-status contract), check whether that resource is
+> already implicitly single-consumer before assuming a second consumer is safe. This project has
+> hit this pattern four times in one feature (R20, R21, the `TEST/sim_build/` collision, R24);
+> each failure was silent — a wrong result reported as a right one — which is the class of defect
+> regression discipline exists to prevent.
+
+If the team lead weighs this differently — full principle rather than a folded sentence — I'd
+still put the verification burden the same place: on **checking for existing single-consumer
+assumptions before adding a second consumer**, since that is the one action that would have
+caught all four instances, not four different fixes for four different mechanisms.
+
+### Summary
+
+| Principle | Verdict | Gap found | Proposed text change |
+|---|---|---|---|
+| I. Simulate before hardware | Satisfied | Simulation passing said nothing about synthesizability (R21) | Yes, above |
+| II. Cocotb is the record | Satisfied | None found | — |
+| III. Bottom-up verification | Satisfied | Random sampling is the wrong tool for boundary-clustered defects (R26/R30/R32) | Yes, above |
+| IV. Golden reference | Satisfied | None found | — |
+| V. Regression discipline | Satisfied, with caveats | Shared module changed under a passing regression; display profile untested on real hardware (R28) | No — caveat noted, not a wording gap |
+| VI. Measurements replace estimates | Satisfied | Which measurement, not just "a measurement" (R22 placement-vs-routing) | Yes, above |
+| (cross-cutting) | — | Shared/unnamespaced state fails silently, 4x in one feature | Fold into V's rationale, not a new principle |
+
+Four of six principles closed a real gap this feature found; two (II, IV) had none. That is not
+a bad ratio for a constitution one feature old — it means the principles are specific enough to
+be falsifiable, which a principle that never turns up a gap usually is not.
+
+---
