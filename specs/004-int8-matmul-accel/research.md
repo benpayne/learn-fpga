@@ -2077,7 +2077,7 @@ This should be checked directly against the post-synthesis resource table, not a
 
 ---
 
-## R36. `LIBFEMTOC/printf.c` silently mis-parses any format it does not know (2026-08-20)
+## R37. `LIBFEMTOC/printf.c` silently mis-parses any format it does not know (2026-08-20)
 
 The two reporting defects in R35's transcript turned out to be **one root cause**, and it is
 worth recording because the failure mode is much nastier than a cosmetic misprint.
@@ -2127,5 +2127,60 @@ Flagged rather than chased: it predates this feature and is not on its critical 
 recorded benchmark figure whose print path may not be able to represent it is exactly the kind
 of number this project's own Principle VI exists to protect, and it should be confirmed before
 being quoted again.
+
+---
+
+## R38. Pipelining measured — 30.79 MHz, 23.2% margin. Timing is resolved (2026-08-20)
+
+Board build on 61d6255 (fp32 rescale split 4 -> 8 stages). Post-routing:
+
+| Build | Fmax | Margin | |
+|---|---|---|---|
+| Before the correctness fixes (R22) | 28.15 MHz | 12.6% | |
+| First `fp_add32` fix (R29) | 23.55 MHz | — | FAIL |
+| Corrected `fp_add32` (R31) | 25.61 MHz | 2.4% | |
+| BRAM resize (R34) | 26.13 MHz | 4.5% | |
+| **Pipelined rescale (this)** | **30.79 MHz** | **23.2%** | |
+
+**+4.66 MHz, +18%.** This is the first build with a margin above the 13.6% at which this project
+rejected the 256-entry cache, and above the 12.6% the design had before the correctness fixes.
+Timing is no longer the constraint.
+
+| Resource | BRAM-resize build | Pipelined | |
+|---|---|---|---|
+| LUT4 | 13,468 (55%) | 13,528 (55%) | +60 |
+| DP16KD | 33 (58%) | 33 (58%) | 0 |
+| **MULT18X18D** | 25 (89%) | **25 (89%)** | **0** |
+
+### The open question mac-unit flagged, answered
+
+It asked whether pipelining would reduce `MULT18X18D` count or merely redistribute the same
+multiplies across more registers, and declined to assume either. **It redistributes: DSP count is
+unchanged at 25/28.** Both `fp_mul32_s1` instances still perform one unshared multiply each.
+
+The 4.66 MHz came entirely from placer and router freedom around the new register boundaries —
+precisely the mechanism mac-unit predicted, and precisely *not* the one R34 predicted. Worth
+being explicit about that, because R34 argued from DSP occupancy that the DSPs were constraining
+placement. The occupancy was indeed the constraint, but the fix was not to use fewer of them; it
+was to give the tool somewhere to break the paths between them.
+
+### The critical path moved
+
+```
+before:  u_mac.s3_rescaled_f_q -> u_mac.row_result_q     13.1 ns logic, 23.8 ns routing
+now:     u_mac.row_result_q    -> u_mac.p4a_add_s1       10.6 ns logic, 21.8 ns routing
+```
+
+Still inside `acc_mac`, but it is now the **accumulator feedback loop** — the in-place 2-cycle
+read/write hazard mac-unit documented, where `row_result_q` feeds back into the first add stage.
+That is a genuinely different path from the one that has held the critical position in every
+prior build, and it is the expected shape after pipelining a chain that terminates in an
+accumulate: the feed-forward work is now split, and what remains is the loop that cannot be.
+
+Further pipelining would not help this path — a feedback loop cannot be split without changing
+the accumulation itself. Recovering more than 30.79 MHz would need a different accumulator
+structure (for instance multiple partial accumulators summed at row end), which would change
+rounding and therefore break bit-exactness against `runq.c`. **30.79 MHz is the right place to
+stop.**
 
 ---
