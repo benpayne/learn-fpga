@@ -47,15 +47,17 @@ module acc_unit_wrapper #(
     input         io_sel_dat,
 
     // ---- Result BRAM -- CPU-facing synchronous read port ----
+    // Widths track acc_top's RESULT_AWIDTH/ACT_AWIDTH defaults (11/10,
+    // research R31/R32's BRAM-sizing congestion fix -- were both 12/[11:0]).
     input         res_sel,
     input         res_rstrb,
-    input  [11:0] res_addr,
+    input  [10:0] res_addr,
     output [31:0] res_rdata,
 
     // ---- Activation BRAM -- CPU-facing write port ----
     input         act_sel,
     input  [3:0]  act_wmask,
-    input  [11:0] act_addr,
+    input  [9:0]  act_addr,
     input  [31:0] act_wdata
 );
 

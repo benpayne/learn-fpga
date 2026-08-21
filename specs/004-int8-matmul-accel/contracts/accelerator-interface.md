@@ -69,6 +69,14 @@ checks `DONE` explicitly instead of using the blocking form above MUST apply the
 
 Results never enter SDRAM. The CPU cache cannot hold a stale copy of them.
 
+`slot_size` is 512 words (2 KB) and there are 4 result slots (`ACC_NUM_SLOTS` in
+`acc_driver.h`/`NUM_SLOTS` in `acc_top.v`) as of research R31/R32's BRAM-sizing congestion fix --
+was 8 slots before, at the same 512 words/slot (unchanged: `RESULT_AWIDTH` narrowed from 12 to 11
+alongside `NUM_SLOTS` narrowing from 8 to 4, so 2048/4 lands on the same per-slot size 4096/8 did).
+The activation BRAM at `0x180000` follows the same `slot * slot_size` addressing with a DIFFERENT
+`slot_size` (256 words / 1 KB, 4 slots) -- the two BRAMs are sized independently for their own
+content, not required to match each other.
+
 ---
 
 ## Error reporting

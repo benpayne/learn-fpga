@@ -68,6 +68,30 @@ colorlight_i5_llm.firmware_config:
 	BOARD=colorlight_i5_llm TOOLS/make_config.sh -DCOLORLIGHT_I5 -DCOLORLIGHT_I5_LLM
 	(cd FIRMWARE && make libs)
 
+# Session A's bitstream: this same profile with the accelerator suppressed, i.e.
+# feature 003's minimal SoC (40.76 MHz). Kept as a target rather than a manual
+# rebuild because the original femtosoc_llm.bit was destroyed when R20's rename
+# claimed that filename, and "rebuild it by hand with a define" is exactly the
+# instruction that gets followed wrongly at the board (research R27).
+LLM_SOFT_ARTIFACT=femtosoc_llm_soft
+
+colorlight_i5_llm_soft.synth: FIRMWARE/firmware.hex
+	yosys -DNRV_NO_ACCEL $(YOSYS_COLORLIGHT_I5_LLM_OPT_SOFT)
+	nextpnr-ecp5 --force --timing-allow-fail --json $(LLM_SOFT_ARTIFACT).json \
+	  --lpf BOARDS/colorlight_i5_llm.lpf --textcfg $(LLM_SOFT_ARTIFACT)_out.config \
+	  --25k --freq 25 --package CABGA381
+	ecppack --compress --svf-rowsize 100000 --svf $(LLM_SOFT_ARTIFACT).svf \
+	  $(LLM_SOFT_ARTIFACT)_out.config $(LLM_SOFT_ARTIFACT).bit
+
+# Same flow as the accelerator build. `share` is left IN here: R21's pathology is
+# acc_mac.v's, and this variant does not instantiate it — so this target also
+# serves as a standing check that the workaround is still needed only where
+# claimed.
+YOSYS_COLORLIGHT_I5_LLM_OPT_SOFT=-DCOLORLIGHT_I5 -DCOLORLIGHT_I5_LLM -DNRV_NO_ACCEL -DACTIVE_LOW_LEDS -q -p "read_verilog -Ilib/ps2-controller-lib -IRTL/ACCEL -DCOLORLIGHT_I5 -DCOLORLIGHT_I5_LLM -DNRV_NO_ACCEL -DACTIVE_LOW_LEDS $(VERILOGS); synth_ecp5 -abc9 -top $(PROJECTNAME) -json $(LLM_SOFT_ARTIFACT).json"
+
+colorlight_i5_llm_soft.prog_fast:
+	sudo openFPGALoader -c cmsisdap -v --file-type bin $(LLM_SOFT_ARTIFACT).bit
+
 colorlight_i5_llm.lint:
 	verilator -DCOLORLIGHT_I5 -DCOLORLIGHT_I5_LLM -DBENCH --lint-only --top-module $(PROJECTNAME) \
          -IRTL -IRTL/PROCESSOR -IRTL/DEVICES -IRTL/PLL -Ilib/ps2-controller-lib $(VERILOGS)

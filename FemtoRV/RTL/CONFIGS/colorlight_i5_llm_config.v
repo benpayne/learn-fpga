@@ -16,6 +16,14 @@
 `define NRV_IO_SDCARD      // Mapped IO, SPI SDCARD
 `define NRV_IO_TIMER
 `define NRV_IO_SDRAM       // SDRAM (main RAM, via muchtoremember controller)
+// Suppressed by -DNRV_NO_ACCEL, which builds this same profile WITHOUT the
+// accelerator. That variant is feature 003's minimal SoC and is what Session A
+// runs: the Q8_0 software path is the golden reference every later hardware
+// result is compared against, and it should not be measured on a build whose
+// timing margin is thin (research R27/R31). Guard rather than a separate config
+// file, because the two differ in exactly one define and a forked copy would
+// drift.
+`ifndef NRV_NO_ACCEL
 `define NRV_IO_ACCEL       // int8 matmul accelerator (feature 004). Occupies the burst-port
                            // instantiation site video_fetch_engine would otherwise use in this
                            // profile (DESIGN.md sec 9a, research R10) -- mutually exclusive with
@@ -24,6 +32,7 @@
                            // (HardwareConfig_bits.v). Sets muchtoremember_burst's CPU_PRIORITY=1
                            // for this profile only -- the display profile's default (0,
                            // burst-first) is unchanged.
+`endif
 
 /************************* Frequency ********************************************************************************/
 

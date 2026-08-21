@@ -97,13 +97,18 @@ ACC_ERR_FULL = 5
 ACC_ERR_MODE = 6
 
 LANES = 4
-NUM_SLOTS = 8
-ACT_AWIDTH = 12
-RESULT_AWIDTH = 12
+# acc_top.v defaults. NUM_SLOTS/ACT_AWIDTH/RESULT_AWIDTH were 8/12/12;
+# research R31/R32's BRAM-sizing congestion fix narrowed the address widths
+# and slot count together (narrowing width alone while leaving NUM_SLOTS=8
+# would silently halve each slot's capacity below what a single classifier
+# op needs -- see acc_top.v's own parameter comments for the full reasoning).
+NUM_SLOTS = 4
+ACT_AWIDTH = 10
+RESULT_AWIDTH = 11
 ACT_XS_WORDS = 32
-ACT_SLOT_WORDS = (1 << ACT_AWIDTH) // NUM_SLOTS      # 512
-RESULT_SLOT_WORDS = (1 << RESULT_AWIDTH) // NUM_SLOTS  # 512
-ACT_XQ_WORDS = ACT_SLOT_WORDS - ACT_XS_WORDS           # 480
+ACT_SLOT_WORDS = (1 << ACT_AWIDTH) // NUM_SLOTS      # 256
+RESULT_SLOT_WORDS = (1 << RESULT_AWIDTH) // NUM_SLOTS  # 512 (unchanged: 2048/4 == 4096/8)
+ACT_XQ_WORDS = ACT_SLOT_WORDS - ACT_XS_WORDS           # 224
 MAX_N = 4096   # acc_top.v parameter default
 MAX_D = 4096   # acc_top.v parameter default
 ACC_GS_MIN = 8   # acc_bits.vh (research R26 addendum: 2*LANES, see the define's
@@ -854,8 +859,10 @@ async def test_reject_slot_d_overflow(dut):
 
 @cocotb.test()
 async def test_reject_slot_bad_index(dut):
-    """out_slot=8 is one past the last valid slot (0..NUM_SLOTS-1=7) --
-    the other way accept_slot_bad can fire, independent of d entirely."""
+    """out_slot=8 is well past the last valid slot (0..NUM_SLOTS-1=3,
+    research R31/R32's BRAM-sizing fix narrowed NUM_SLOTS from 8 to 4 --
+    8 remains out of range either way, so this case is unaffected) -- the
+    other way accept_slot_bad can fire, independent of d entirely."""
     await start_clock(dut)
     model = SDRAMModel()
     cocotb.start_soon(sdram_responder(dut, model))

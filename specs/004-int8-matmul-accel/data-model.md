@@ -66,12 +66,17 @@ follow it, and nothing specified it before):
 
 | Words within a slot | Contents |
 |---|---|
-| 0 .. 479 | packed int8 `xq`, four per 32-bit word |
-| 480 .. 511 | fp32 `xs`, one scale per group |
+| 0 .. 223 | packed int8 `xq`, four per 32-bit word |
+| 224 .. 255 | fp32 `xs`, one scale per group |
 
-Slots are 512 words (2 KB); there are 8 of them. The split is a parameter (`ACT_XS_WORDS`) but
-firmware and hardware must agree on it, so treat it as an interface, not an implementation
-detail.
+Slots are 256 words (1 KB); there are 4 of them. Was 512 words (2 KB) / 8 slots until research
+R31/R32's BRAM-sizing congestion fix (`ACT_AWIDTH` 12->10, `NUM_SLOTS` 8->4, done together
+deliberately -- narrowing the address width alone while leaving slot count unchanged would have
+silently halved capacity below what a real operation needs). Per-slot capacity is unchanged by
+that fix (224 `xq` words comfortably covers `ceil(512/LANES)=128`, the largest resident vector
+any planned mode needs -- `seq_len=512` for T064's `MODE_ATT_SUM`, far above this model's actual
+`n<=192` today). The split is a parameter (`ACT_XS_WORDS`, unchanged at 32) but firmware and
+hardware must agree on it, so treat it as an interface, not an implementation detail.
 
 **Rules**
 - Produced by the CPU before each operation, matching `runq.c`'s `quantize()` exactly so results

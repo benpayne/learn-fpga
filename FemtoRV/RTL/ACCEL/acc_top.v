@@ -106,22 +106,48 @@ module acc_top #(
                                      // module actually built. Both checks run; neither alone is
                                      // sufficient at every possible parameterisation.
     parameter MAX_D         = 4096, // largest supported output row count (see MAX_N note)
-    parameter ACT_AWIDTH    = 12,   // activation BRAM address width (slot index + element offset)
-    parameter RESULT_AWIDTH = 12,   // result BRAM address width (slot index + element offset);
+    parameter ACT_AWIDTH    = 10,   // activation BRAM address width (slot index + element offset).
+                                     // Was 12 (research R31/R32): sized from MAX_N/MAX_D=4096, but
+                                     // this model's n never exceeds 192 today and the largest
+                                     // resident vector any planned mode needs is seq_len=512
+                                     // (MODE_ATT_SUM's softmaxed-weights vector, T064). 10 gives
+                                     // 1024 words total -- with NUM_SLOTS below, 256 words/slot,
+                                     // comfortably covering ceil(512/LANES)+ACT_XS_WORDS = 128+32 =
+                                     // 160 words with margin. The oversized 4096-word original
+                                     // was 87% of the device's BRAM alongside RESULT_AWIDTH below,
+                                     // and was the ~2/3-of-critical-path routing term R31 measured;
+                                     // shrinking both is the low-risk congestion fix tried before
+                                     // rewriting acc_mac.v's rescale pipeline.
+    parameter RESULT_AWIDTH = 11,   // result BRAM address width (slot index + element offset);
                                      // RESULT_AWIDTH words MUST cover at least max_d fp32 values
                                      // per slot (data-model.md entity 6: "2 KB covers the d=512
-                                     // classifier")
-    parameter NUM_SLOTS     = 8,    // NEW (not in the T001 skeleton's parameter list, added here):
+                                     // classifier"). Was 12 (research R31/R32): 11 gives 2048 words
+                                     // total -- with NUM_SLOTS below, 512 words/slot, EXACTLY the
+                                     // classifier's d=512 (data-model.md's own worked example),
+                                     // not a rounder number picked independently of it.
+    parameter NUM_SLOTS     = 4,    // NEW (not in the T001 skeleton's parameter list, added here):
                                      // number of independent activation/result slots actually
                                      // implemented. x_slot/out_slot are 8-bit descriptor fields
                                      // (256 possible values) but there is no way to fit 256 slots
                                      // each sized for MAX_N/MAX_D inside a 12-bit address space --
                                      // that tension is inherent to the T001 defaults, not
                                      // introduced here. NUM_SLOTS MUST evenly divide both
-                                     // 2**ACT_AWIDTH and 2**RESULT_AWIDTH. Default 8 makes each
-                                     // result slot exactly 512 words (2 KB), matching the "2 KB
-                                     // covers d=512" example in the RESULT_AWIDTH comment above --
-                                     // that match is what validates this choice, not a coincidence.
+                                     // 2**ACT_AWIDTH and 2**RESULT_AWIDTH. Was 8 (research R31/R32:
+                                     // BRAM-sizing congestion fix, done together with narrowing
+                                     // ACT_AWIDTH/RESULT_AWIDTH above -- narrowing the address
+                                     // width alone while keeping NUM_SLOTS=8 would be the WRONG
+                                     // fix: it would silently halve every slot's capacity below
+                                     // what a single classifier operation (d=512) needs, either
+                                     // overflowing silently or tripping ERR_SLOT on a legitimate
+                                     // op depending on whether the check is right. Reducing slot
+                                     // COUNT together with slot WIDTH is what keeps per-slot
+                                     // capacity unchanged (512 words/slot, both before and after).
+                                     // 4 was checked against actual driver usage, not assumed:
+                                     // runq.c's only call site uses exactly two fixed slots
+                                     // (ACC_X_SLOT=0, ACC_OUT_SLOT=1, runq.c:364-365) and never
+                                     // varies them -- 4 leaves headroom for that to grow (e.g.
+                                     // double-buffering across layers) without implying a need
+                                     // this codebase has actually demonstrated yet.
     parameter ACT_XS_WORDS  = 32     // NEW: words reserved at the END of each activation slot for
                                      // the fp32 per-group activation scales (xs, data-model.md
                                      // entity 3). The remainder of the slot (ACT_SLOT_WORDS -

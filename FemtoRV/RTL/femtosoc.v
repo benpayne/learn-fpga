@@ -547,18 +547,25 @@ module femtosoc(
       .io_sel_dat(io_word_address[IO_ACC_DAT_bit]),
 
       // Result BRAM -- memory-mapped at 0x100000 (T045, research R8),
-      // ordinary CPU loads, not IO reads.
+      // ordinary CPU loads, not IO reads. res_addr's width MUST track
+      // acc_top's RESULT_AWIDTH default (11 words, research R31/R32's
+      // BRAM-sizing congestion fix -- was 12/[13:2]): the chip-select
+      // decode above (mem_address_is_accel_res) reserves a fixed 512KB
+      // region regardless of how much of it is actually backed by real
+      // BRAM, so only this offset slice needs to shrink, not the decode.
       .res_sel(mem_address_is_accel_res),
       .res_rstrb(mem_rstrb),
-      .res_addr(mem_address[13:2]),
+      .res_addr(mem_address[12:2]),
       .res_rdata(accel_res_rdata),
 
       // Activation BRAM -- memory-mapped at 0x180000, ordinary CPU stores
       // (byte-maskable, unlike the IO bus's whole-word register writes --
-      // needed since xq is packed int8).
+      // needed since xq is packed int8). act_addr's width MUST track
+      // acc_top's ACT_AWIDTH default (10 words -- was 12/[13:2]), same
+      // reasoning as res_addr above.
       .act_sel(mem_address_is_accel_act),
       .act_wmask(mem_wmask),
-      .act_addr(mem_address[13:2]),
+      .act_addr(mem_address[11:2]),
       .act_wdata(mem_wdata),
 
       // SDRAM burst port -- same wires video_fetch_engine used below.

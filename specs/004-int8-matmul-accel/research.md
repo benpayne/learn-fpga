@@ -1841,3 +1841,58 @@ a bad ratio for a constitution one feature old — it means the principles are s
 be falsifiable, which a principle that never turns up a gap usually is not.
 
 ---
+
+## R34. Congestion relief measured — it works on resources, barely moves timing (2026-08-20)
+
+R31 argued for trying the low-risk congestion fix before the pipelining rewrite, on the grounds
+that every build in this series has been routing-dominated. That has now been measured, and the
+hypothesis was **wrong**.
+
+| | 25.61 MHz build | BRAM-resized | Delta |
+|---|---|---|---|
+| DP16KD | 49/56 (87%) | **33/56 (58%)** | **-16** |
+| MULT18X18D | 25/28 (89%) | 25/28 (89%) | 0 |
+| LUT4 | 13,549 (55%) | 13,468 (55%) | -81 |
+| Critical path routing | 26.0 ns | **23.8 ns** | -2.2 |
+| Critical path logic | 13.1 ns | 14.5 ns | +1.4 |
+| **Fmax** | 25.61 MHz | **26.13 MHz** | **+0.52** |
+
+The resize did exactly what it was designed to do — 16 block RAMs returned, better than the ~10
+predicted, and 2.2 ns off the routing term. **And the frequency moved 0.52 MHz.** Margin goes
+from 2.4% to 4.5%, still far below the 13.6% at which this project rejected the 256-entry cache.
+
+### What that rules out, and what it points to
+
+Dropping BRAM occupancy from 87% to 58% is a large change. Buying half a megahertz with it is
+strong evidence that **BRAM congestion was not what was driving the long routes.** The
+routing-dominated critical path is real, but block RAM placement was not its cause.
+
+What did not change is `MULT18X18D` at **25/28, 89%** — now by far the tightest resource. ECP5
+DSP blocks live in fixed columns, so at 25 of 28 the placer has almost no freedom about where
+multiplier-connected logic sits, and everything touching them gets routed a long way. Thirteen
+of the accelerator's seventeen DSPs are consumed by `acc_mac`'s fp32 mantissa multiplies.
+
+So the same block is implicated a fourth time: it made `share` diverge (R21), it holds the
+critical path (R22, R29, R31), it consumes the DSPs that now constrain placement, and it is
+where all three correctness bugs lived. Every road leads back to the single-cycle fp32 rescale.
+
+### Decision: pipeline it
+
+The cheap lever has been pulled and measured, which is what R31 asked for. It bought 0.52 MHz,
+so the rewrite is now the remaining option rather than a preference.
+
+The case for doing it is stronger than when R29 first raised it:
+
+- **The throughput cost is still zero.** A rescale happens once per group of GS=64 elements — 16
+  cycles at LANES=4 — so several pipeline stages fit inside existing slack.
+- **It attacks the DSP constraint, not just depth.** Registered stages let the tool retime and
+  share multiplier resources instead of demanding them all in one cycle.
+- **The risk is far lower than it was.** When R29 proposed this, `acc_mac` had just produced
+  three bugs and had 7 tests. It now has 10, including a 540-case deterministic boundary sweep
+  (R32) and verbatim replays of both real defects, plus 12 integration tests on real weight data
+  at every shape this model uses. There is now something to validate a rewrite against.
+
+Keep the BRAM resize regardless: 16 block RAMs returned and 2.2 ns off routing are real, and the
+headroom matters for US6's attention modes.
+
+---
