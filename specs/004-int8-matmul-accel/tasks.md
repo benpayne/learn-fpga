@@ -186,9 +186,9 @@ length from measurement.
 - [X] T057 [US5] Implement `FemtoRV/FIRMWARE/llama2/acc_driver.c` and `acc_driver.h` per contracts/accelerator-interface.md — descriptor issue, status polling, counter reads, and a timeout that aborts rather than waiting forever
 - [X] T058 [US5] Confirm the completion spin loop in `FemtoRV/FIRMWARE/llama2/acc_driver.c` fits the CPU instruction cache by inspecting `llama2.list`; if it does not, waiting generates SDRAM traffic that competes with the transfer being waited on (FR-015, contracts note)
 - [X] T059 [US5] Replace the weight `matmul` call in `FemtoRV/FIRMWARE/llama2/runq.c` with the accelerator path, keeping the software implementation available behind a compile-time switch for A/B comparison
-- [ ] T060 [HW] [US5] Run `(cd FemtoRV/FIRMWARE/llama2 && make upload)` and confirm output is **byte-identical** to T023's software transcript for the same prompt and seed (SC-009) — *Session C*
-- [ ] T061 [HW] [US5] Record the generation rate in `specs/004-int8-matmul-accel/research.md`; expect roughly 2.5x over the US1 baseline, consistent with accelerating ~61% of the work — *Session C*
-- [ ] T062 [HW] [US5] Re-run the profiler (`MEASURE_MODE 1` in `FemtoRV/FIRMWARE/llama2/runq.c`) and confirm the matmul category has collapsed and attention is now the largest; record the breakdown in `specs/004-int8-matmul-accel/research.md` — *Session C*
+- [X] T060 [HW] [US5] Run `(cd FemtoRV/FIRMWARE/llama2 && make upload)` and confirm output is **byte-identical** to T023's software transcript for the same prompt and seed (SC-009) — *Session C*
+- [X] T061 [HW] [US5] Record the generation rate in `specs/004-int8-matmul-accel/research.md`; expect roughly 2.5x over the US1 baseline, consistent with accelerating ~61% of the work — *Session C*
+- [X] T062 [HW] [US5] Re-run the profiler (`MEASURE_MODE 1` in `FemtoRV/FIRMWARE/llama2/runq.c`) and confirm the matmul category has collapsed and attention is now the largest; record the breakdown in `specs/004-int8-matmul-accel/research.md` — *Session C*
 - [ ] T063 [US5] If the speed-up is well short of expectation, use `PERF_STALL`/`PERF_CYCLES` to attribute it to bandwidth or control logic (SC-015) and record the finding before proceeding
 
 **Checkpoint**: US5 complete — the accelerator is doing useful work end to end.

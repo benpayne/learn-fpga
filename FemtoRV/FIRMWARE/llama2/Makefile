@@ -58,16 +58,31 @@ runq_accel.elf: $(RUNQ_ACCEL_OBJS) $(RV_BINARIES)
 	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_RUNQ) $(RUNQ_ACCEL_OBJS) -o $@ $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
 
 llama2.o: llama2.c model_load.h profile.h
+# -ffp-contract=off on BOTH runq objects, and on quantize.o.
+#
+# The accelerator rounds after every multiply and every add. GCC's default
+# -ffp-contract=fast fuses `a*b + c` into a single fmadd.s once it inlines
+# across a statement boundary, skipping that intermediate rounding -- and
+# rv32imafc has hardware FMA to fuse into. Built that way, runq.bin's software
+# matmul and runq_accel.bin's hardware matmul compute genuinely different
+# things, and the A/B comparison that is supposed to PROVE the accelerator
+# instead reports a difference that is nobody's bug (research R40/R43).
+#
+# It goes on runq.o as well as runq_accel.o because the comparison is between
+# those two binaries: they must round identically everywhere except in the
+# matmul the accelerator replaces.
 runq.o: runq.c model_load.h profile.h quantize.h q8_format.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -ffp-contract=off -c runq.c -o runq.o
 model_load.o: model_load.c model_load.h q8_format.h
 profile.o: profile.c profile.h
 quantize.o: quantize.c quantize.h
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -ffp-contract=off -c quantize.c -o quantize.o
 acc_driver.o: acc_driver.c acc_driver.h
 
 # Explicit compile rule (bypasses the implicit .c.o suffix rule on purpose
 # -- see RUNQ_ACCEL_OBJS comment above).
 runq_accel.o: runq.c model_load.h profile.h quantize.h q8_format.h acc_driver.h
-	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -DUSE_ACC_MATMUL -c runq.c -o runq_accel.o
+	$(RVGCC) $(RVCFLAGS) $(RVUSERCFLAGS) -ffp-contract=off -DUSE_ACC_MATMUL -c runq.c -o runq_accel.o
 
 llama2.bin: llama2.elf
 	$(RVOBJCOPY) -O binary $< $@

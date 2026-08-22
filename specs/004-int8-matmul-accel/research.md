@@ -2687,3 +2687,63 @@ The remaining 15.2% is `other` 7.5%, `sample` 4.4%, `quant` 2.5%, `rmsnorm` 0.4%
 now justifies hardware, which is the correct place to stop.
 
 ---
+
+## R46. THE ACCELERATOR WORKS ON HARDWARE — 2.16x end to end, output byte-identical (T060-T062, 2026-08-22)
+
+`runq_accel.bin` on `femtosoc_llm.bit`. The software baseline was re-run on **the same
+bitstream** with **the same compiler flags**, so the only variable between the two is which
+matmul executes.
+
+| | software | accelerated | |
+|---|---|---|---|
+| **Rate** | 1.24 tok/s | **2.68 tok/s** | **2.16x** |
+| 110 tokens | 88.5 s | **40.9 s** | |
+| `matmul` | 55.0% (1,217,957,556 cyc) | **3.2% (32,321,982 cyc)** | **37.7x** |
+| `attention` | 30.0% | **64.7%** | now dominant |
+| `sample` | 4.4% | 9.4% | same cycles, larger share |
+| `other` | 7.4% | 16.2% | same cycles, larger share |
+
+**Output is byte-identical** — 233 characters, zero differences, across 110 tokens and five
+layers of accumulated arithmetic. **SC-009 is satisfied** in the form that matters: the
+accelerator computes exactly what the software computes.
+
+**No fallback occurred.** The driver sets `g_acc_fell_back` and warns on any non-OK status; the
+transcript contains no such warning. This was checked explicitly rather than inferred from the
+output matching, because a silent fallback would produce identical text and a baseline rate —
+indistinguishable from success without the flag.
+
+### The numbers are self-consistent
+
+matmul fell 37.7x, from 55.0% of runtime to 3.2%. Removing it entirely would predict
+`1/(1-0.550) = 2.22x`; measured **2.16x**. The small shortfall is the residual 3.2% the
+accelerator still costs. Nothing unexplained.
+
+`sample` and `other` rose as *percentages* while their absolute cycle counts barely moved
+(96.3M -> 95.9M, 163.8M -> 165.6M) — they are unchanged work occupying a larger share of a
+shorter token. Reading those as regressions would be a mistake.
+
+### What this validates
+
+- The RTL is correct on silicon, not merely in simulation — through five layers of accumulation,
+  not a single dot product.
+- The bit-exactness chain holds end to end: Python reference -> cocotb -> `verify-fw-math` ->
+  hardware.
+- The `-ffp-contract=off` requirement (R40/R43) was real and necessary. Without it the software
+  matmul fuses to `fmadd.s` while the accelerator rounds separately, and this comparison would
+  have shown a divergence that was nobody's bug.
+- The memory-sharing design works under real load: the CPU ran a full inference while the
+  accelerator streamed weights, with no starvation and no corruption.
+
+### Attention is now the target — and it is worth more than matmul was
+
+`attention` is **64.7%** of a token, up from 30.0%, because everything else got faster. It is
+663M cycles, essentially unchanged in absolute terms.
+
+Accelerating it (US6, T064-T068) would predict roughly `1/(1-0.647) = 2.8x` further, to about
+**7.5 tok/s**. R25's finding applies directly: the KV cache's 128-byte stride means a naive
+per-head fetch wastes 75% of its bandwidth, and the fix is to demultiplex all `n_kv_heads` from
+a single stream pass rather than adding a strided fetch mode.
+
+SC-011's 8 tok/s target is now within reach, from a measured position rather than an estimate.
+
+---
