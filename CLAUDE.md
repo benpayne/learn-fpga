@@ -741,13 +741,41 @@ stream program output, exiting after an idle period. Override the port with `POR
 ### Per-token profile (the accelerator brief)
 
 ```
-matmul 61.3% | attention 27.4% | sample 4.0% | other 6.6% | rmsnorm 0.4% | rope 0.2%
+fp32 : matmul 61.3% | attention 27.4% | sample 4.0% | other 6.6% | rmsnorm 0.4% | rope 0.2%
+Q8_0 : matmul 55.4% | attention 29.4% | sample 4.4% | other 7.5% | quant 2.5% | rope 0.3%
 ```
 
-matmul + attention = **88.7%**, both matrix-multiply shaped. At 50x acceleration: matmul
-alone gives ~2.5x end-to-end, matmul + attention gives ~7.6x. **An accelerator must cover
-attention as well as the weight matrices**; they differ only in streaming the KV cache versus
-weights, so one datapath serves both.
+matmul + attention = **88.7%** fp32, **84.8%** Q8_0 — both matrix-multiply shaped. At 50x
+acceleration: matmul alone gives ~2.5x end-to-end, matmul + attention gives ~7.6x. **An
+accelerator must cover attention as well as the weight matrices**; they differ only in
+streaming the KV cache versus weights, so one datapath serves both.
+
+### Q8_0 on hardware (feature 004, 2026-08-21)
+
+| | fp32 | Q8_0 |
+|---|---|---|
+| Rate | 1.38 tok/s | **1.26 tok/s** |
+| Model on card | 1,056,540 B | **299,008 B** (ratio 0.283) |
+| Capacity in the 2 MB region | ~524K params | **~1.97M params** (3.76x) |
+| Accelerable | 88.7% | 84.8% |
+| Scalar remainder | 11.3% | 15.2% |
+
+**Q8_0 is slower than fp32 on this CPU and that is expected** — int8 was chosen for capacity,
+not scalar speed. A CPU with hardware fp32 does int8 dot products more slowly, and the
+activation vector must be quantized before every matmul.
+
+Two costs that looked structural were **artefacts of transcribing upstream literally**, and
+both were removed without changing a single generated token (research R44/R45):
+
+- `quantize_activations()` used `fabs()`/`round()` — the **double** libm entries — on a CPU with
+  no double hardware, compiling to `__extendsfdf2`/`round`/`__fixdfsi` per element. `roundf()`
+  is bit-identical here (verified over 2,264,378 values). **8.5% -> 2.4%.**
+- RoPE recomputed 4 distinct `(cos,sin)` pairs **160 times per token** — `freq` depends only on
+  `i % head_size` and `pos` is fixed per forward pass. Hoisted. **4.5% -> 0.3%, 14.6x.**
+
+Together: 1.14 -> 1.26 tok/s (+10.5%), accelerable 76.0% -> 84.8%. Transcribing upstream
+literally is the right default — it is how three real arithmetic bugs were avoided — but the
+cost of that fidelity should be measured, not assumed acceptable.
 
 ### Traps worth knowing
 
@@ -777,12 +805,42 @@ weights, so one datapath serves both.
 
 ### Sub-project: 004-int8-matmul-accel (current branch)
 - Hardware matrix-multiply accelerator, 8-bit integer weights (Q8_0)
-- Targets matmul (61.3%) + attention (27.4%) = 88.7% of per-token time
+- Targets matmul (55.4%) + attention (29.4%) = 84.8% of per-token time
 - Memory-bound by design: 1 x 32-bit SDRAM port = 4 int8 weights/cycle = 4 MAC lanes.
   More lanes need more bandwidth, not more multipliers.
-- int8 chosen for CAPACITY (~5.3M params vs ~1.5M), not speed — the scalar
-  remainder dominates, so int8 vs fp32 is only ~11% end-to-end.
+- int8 chosen for CAPACITY (3.76x measured), not speed
 - Design rationale: `FemtoRV/RTL/ACCEL/DESIGN.md`; spec in `specs/004-int8-matmul-accel/`
+
+**Status (2026-08-22)**: RTL complete and verified in simulation (37 tests across
+`acc_mac_tb`/`acc_unit_tb`/`acc_reject_tb`, bit-exact against a Python fp32 reference on real
+weight bytes). Synthesizes and **runs on the board** — 200/200 descriptors accepted, zero
+rejections, zero timeouts. **Not yet proven to compute a correct result on hardware**, and
+`runq_accel.bin` has not been run end to end.
+
+| | |
+|---|---|
+| Resources | LUT 13,528 (55%), BRAM 33 (58%), **DSP 25/28 (89%)**, PLL 1/2 |
+| Fmax | **30.79 MHz** (23.2% margin at 25 MHz) |
+| Burst efficiency | 91.3% at `BURST_LEN=128` |
+| CPU worst-case wait | exactly 128 cycles under heavy load |
+
+Three build traps specific to this profile, all in `BOARDS/colorlight_i5_llm.mk` with comments:
+
+- **`synth_ecp5`'s `share` pass does not terminate on `acc_mac.v`** (21 GB, OOM-killed). The
+  coarse stage runs explicitly without it. Do not "simplify" it back. Reproduce in seconds:
+  `yosys -p "read_verilog -I. acc_mac.v; synth_ecp5 -top acc_mac"`.
+- **Both profiles used to write the same artifact names.** The LLM profile now writes
+  `femtosoc_llm.*`; `colorlight_i5_llm_soft.synth` builds the no-accelerator variant
+  (`-DNRV_NO_ACCEL`, 40.40 MHz) used as the software reference.
+- **`-ffp-contract=off` is required** on anything whose fp32 result is compared against the
+  accelerator. GCC fuses `a*b + c` into `fmadd.s` once inlined, skipping the intermediate
+  rounding the hardware performs, and the comparison then reports a difference that is nobody's
+  bug.
+
+Useful tools added here: `FIRMWARE/examples/sdput.c` writes a staged SDRAM buffer to the FAT
+card (derives its length from the Q8_0 header, verifies on readback) — this is how
+`model.q8.bin` gets onto the card without a card reader. `TOOLS/xmodem_upload.py --no-run`
+loads data without jumping to it.
 
 ### Sub-project: 003-llama2-minimal-soc
 - Minimal SoC profile: CPU + SDRAM + UART only, all other peripherals stripped
