@@ -811,11 +811,23 @@ cost of that fidelity should be measured, not assumed acceptable.
 - int8 chosen for CAPACITY (3.76x measured), not speed
 - Design rationale: `FemtoRV/RTL/ACCEL/DESIGN.md`; spec in `specs/004-int8-matmul-accel/`
 
-**Status (2026-08-22)**: RTL complete and verified in simulation (37 tests across
-`acc_mac_tb`/`acc_unit_tb`/`acc_reject_tb`, bit-exact against a Python fp32 reference on real
-weight bytes). Synthesizes and **runs on the board** — 200/200 descriptors accepted, zero
-rejections, zero timeouts. **Not yet proven to compute a correct result on hardware**, and
-`runq_accel.bin` has not been run end to end.
+**Status (2026-08-23)**: **The accelerator works on hardware.** RTL verified in simulation
+(37 tests across `acc_mac_tb`/`acc_unit_tb`/`acc_reject_tb`), bit-exact in isolation on the
+board (200/200 trials, R47), and proven end to end through `runq_accel.bin` (R46).
+
+Measured on the board, `runq.bin` vs `runq_accel.bin` on the **same** `femtosoc_llm.bit` with
+the **same** compiler flags, so the only variable is which matmul executes:
+
+| | software | accelerated | |
+|---|---|---|---|
+| Rate | 1.22 tok/s | **2.61 tok/s** | **2.14x** |
+| 110 tokens | 89.8 s | **42.0 s** | |
+| `matmul` | 53.0% (1,190M cyc) | **3.0% (31.5M cyc)** | **37.7x** |
+| Output | 237 bytes | 237 bytes | **byte-identical** |
+
+Output identity is checked with `cmp`, and the absence of a silent fallback is checked via
+`g_acc_fell_back` rather than inferred from the text matching — a fallback produces identical
+text at the baseline rate, which is indistinguishable from success without the flag.
 
 | | |
 |---|---|
@@ -823,6 +835,11 @@ rejections, zero timeouts. **Not yet proven to compute a correct result on hardw
 | Fmax | **30.79 MHz** (23.2% margin at 25 MHz) |
 | Burst efficiency | 91.3% at `BURST_LEN=128` |
 | CPU worst-case wait | exactly 128 cycles under heavy load |
+
+**Next target is not what R46 assumed.** Attention is now 64.7% of a token, but R48's
+sub-timers show it is *softmax*, not the dot products: `att_soft` 39.6% versus `att_score`
+12.1% + `att_sum` 12.8%. US6 as specified would accelerate the smaller half. Confirm newlib's
+`expf` (~1,700 cycles/call) before committing to any RTL for this.
 
 Three build traps specific to this profile, all in `BOARDS/colorlight_i5_llm.mk` with comments:
 
