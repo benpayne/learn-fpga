@@ -455,6 +455,23 @@ with a measurement in Stage 4, not upfront.
 Each stage has an exit criterion that can fail. A stage is not done because the code is
 written; it is done when its criterion is met.
 
+**Status as of 2026-08-23** (criteria checked, not code-written):
+
+| Stage | | Evidence |
+|---|---|---|
+| -1 int8 in software | **DONE** | KL 0.000977, top-1 100%, 1.26 tok/s baseline (R43/R44/R45) |
+| 0 MAC datapath in sim | **DONE** | 1000/1000 bit-identical + 540-case boundary sweep (R32) |
+| 1 Full accelerator vs sim SDRAM | **DONE** | 4 real shapes bit-exact, no FIFO underrun, 91.3% w/c (R19) |
+| 2 Arbiter in sim | **DONE** | CPU worst case exactly one burst; burst table swept (R19/R23) |
+| 3 Hardware in isolation | **DONE** | 200/200 bit-exact on board; capture replayed in sim (R47) |
+| 4 Hardware integrated | **DONE** | Byte-identical text, **2.16x**, matmul 55.0%->3.2% (R46) |
+| 5 Attention modes | not started | now the largest category at **64.7%** |
+| 6 Clock + scalar remainder | partial | scalar software work done early (R44/R45); clock untouched |
+| 7 Larger model | not started | |
+
+**Stage 4 was completed before Stage 3** — both variables changed at once rather than one.
+It worked, but that inverted the ordering this section exists to enforce; see R47.
+
 ### Stage -1 — int8 in software, no RTL
 Port upstream `runq.c` (Q8_0) to the CPU. Quantize the model on the host. Run it on the board
 using the existing minimal profile.

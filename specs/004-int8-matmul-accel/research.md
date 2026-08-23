@@ -2747,3 +2747,55 @@ a single stream pass rather than adding a strided fetch mode.
 SC-011's 8 tok/s target is now within reach, from a measured position rather than an estimate.
 
 ---
+
+## R47. Stage 3 CLOSED — isolated hardware test bit-exact, and the capture/replay loop works (T053-T055, 2026-08-23)
+
+DESIGN.md Stage 3's exit criterion — *"bit-identical result on hardware"* from the isolated
+test — had never been met. `acc_test`'s comparison was untrustworthy until R41's confound was
+fixed, and the fixed binary had never been run.
+
+Run on `femtosoc_llm.bit` (30.79 MHz build), shape `n=64 d=16 gs=16`:
+
+```
+completed(OK)=200  rejected(ERR)=0  timeout=0
+of 200 completed: 0 mismatched, 200 bit-exact
+all 16 words: always correct
+PERF_CYCLES: min=382 max=385 (n=200)
+PERF_STALL : min=116 max=119 (n=200)
+```
+
+**Stage 3's criterion is met.** The remaining Stage 3 items were already satisfied: timing
+(30.79 MHz, 23.2% margin), resources recorded (R34), full-profile regression passing (R28).
+
+The test's own diagnosis states the caveat rather than overclaiming: a clean run establishes
+correctness *under these 200 trials at these board conditions*, and does not prove timing is
+safe, since marginal paths are temperature- and voltage-sensitive.
+
+### The capture/replay loop is closed
+
+The board's dump was saved as `FemtoRV/TEST/acc_dump_fixtures/board_v1_20260823.txt` (checksum
+`DD98B875`) and replayed through the real RTL in simulation via `acc_dump_replay_tb`: **PASS**.
+
+That closes the loop R35 opened. A hardware transcript is now reproducible in simulation from
+**captured** bytes rather than a regeneration — which is precisely what `acc_r27_gs16_data.py`
+attempted and, per R41, structurally could not be. The activation scales in the dump read
+`3D000000 3E000000 3E800000 3D000000` — exact powers of two, confirming `pow2f_exact()` does
+what it claims and that no compiler flag can perturb this vector again.
+
+### Efficiency at this shape, for the record
+
+`n=64 d=16` is 1,024 weights; at 4 lanes the compute floor is 256 cycles. Measured 382 with 116
+stall cycles, so ~266 non-stalled cycles against a 256 floor. The overhead is per-descriptor
+setup, and it is proportionally large **because this shape is tiny** — 16 output rows. R19's
+91.3% streaming efficiency was measured on sustained bursts and remains the right figure for
+real weight matrices.
+
+### Stage ordering, recorded honestly
+
+**Stage 4 was completed before Stage 3.** DESIGN.md's "Why this order" says Stage 3 puts
+hardware in the loop with *one* variable changed and Stage 4 changes one more; both were changed
+at once. It worked, and the end-to-end byte-identical result (R46) is stronger evidence than the
+isolated test would have been — but had R46 failed there would have been two candidate causes
+instead of one, which is the exact failure the sequencing exists to prevent.
+
+---
