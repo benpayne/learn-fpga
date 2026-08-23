@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.astro/
+*.log
+.env
+.env.*
+.DS_Store
+
+# jetbrains setting folder
+.idea/
+
+# The repository root .gitignore has a blanket "*.json" rule -- it exists for
+# nextpnr netlists on the FPGA side of this repo. It also matches package.json,
+# package-lock.json and tsconfig.json, so without this negation the site gets
+# committed in a state nobody can build from a fresh clone.
+#
+# This lives here rather than in the root .gitignore because the deeper file
+# takes precedence, and because node_modules/, dist/ and .astro/ above are
+# EXCLUDED DIRECTORIES -- git never descends into them, so their thousands of
+# .json files cannot be resurrected by this rule. Scoped un-ignore, not a
+# global one.
+!*.json

@@ -1,0 +1,36 @@
+---
+// blog/[...slug].astro — One page per blog entry. Prev/next are wired up from
+// the sorted-by-pubDate list so readers can walk the archive.
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+import PostLayout from '../../layouts/PostLayout.astro';
+
+export async function getStaticPaths() {
+  const entries = (
+    await getCollection('blog', ({ data }) => !data.draft)
+  ).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+
+  return entries.map((entry, i) => {
+    // Sorted newest-first: "prev" = older post (later in list),
+    // "next" = newer post (earlier in list).
+    const next = i > 0 ? entries[i - 1] : undefined;
+    const prev = i < entries.length - 1 ? entries[i + 1] : undefined;
+    return {
+      params: { slug: entry.id },
+      props: { entry, prev, next },
+    };
+  });
+}
+
+interface Props {
+  entry: CollectionEntry<'blog'>;
+  prev?: CollectionEntry<'blog'>;
+  next?: CollectionEntry<'blog'>;
+}
+
+const { entry, prev, next } = Astro.props;
+const { Content } = await render(entry);
+---
+
+<PostLayout entry={entry} prev={prev} next={next}>
+  <Content />
+</PostLayout>

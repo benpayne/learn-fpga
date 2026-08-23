@@ -1,0 +1,441 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import '../styles/prose.css';
+
+const title = 'Architecture';
+const description =
+  'Common bus standard, memory map, and peripheral interface for the Retro-Active ecosystem.';
+---
+
+<PageLayout title={title} description={description}>
+  <article class="prose">
+    <h1>Architecture</h1>
+
+    <p>
+      Retro-Active is building toward a <strong>common bus standard</strong> so
+      that peripheral cards, backplanes, and host-CPU boards from different
+      contributors can plug together regardless of how each one is built
+      &mdash; discrete logic, PAL/GAL, FPGA, or whatever comes next. This
+      page is an early draft of that standard: it documents where we are
+      today, the thinking behind the current signals, and where the open
+      questions still live. Expect it to change as the community weighs in.
+    </p>
+
+    <h2>
+      A Protocol, Not a Pinout
+      <span class="status-badge">DRAFT</span>
+    </h2>
+
+    <p>
+      Most retro expansion buses &mdash; the Apple II slot, the original IBM
+      PC ISA bus, and a lot of homebrew 68k buses &mdash; are essentially the
+      host CPU&rsquo;s pins brought out to a connector. That makes cards
+      simple, but it locks the bus to one CPU family forever. A card
+      designed for a 6502 machine can&rsquo;t drop into a 68000 machine and
+      vice versa, even when the card&rsquo;s actual job (driving a UART,
+      blitting pixels, talking to an SD card) has nothing to do with the
+      host CPU.
+    </p>
+
+    <p>
+      Retro-Active&rsquo;s bus is closer in spirit to <strong>PCI</strong>:
+      it defines its own signals, its own timing, and its own transactions,
+      independent of any specific CPU. Each host connects through a small
+      <em>bridge</em> &mdash; a handful of 74-series chips, a PAL/GAL, or a
+      simple FPGA block &mdash; that translates the host&rsquo;s native
+      cycles into bus transactions. The bridge is the only CPU-specific
+      part. Past it, every card behaves identically.
+    </p>
+
+    <p>
+      We&rsquo;re not building PCI. The complexity target matches the era
+      &mdash; simpler timing, slower clocks, a smaller signal count, and
+      bridges you can draw on a napkin. But the core idea &mdash; a
+      CPU-independent protocol with a bridge per host &mdash; is what makes
+      the same card work with an 8-, 16-, or 32-bit host, and what lets one
+      driver (recompiled for each CPU via GCC) target them all.
+    </p>
+
+    <h3>Design Goals</h3>
+    <ul>
+      <li><strong>Implementation-neutral</strong> — any build that honours the timing is legal: plain 74-logic cards, PAL/GAL decoders, or FPGAs.</li>
+      <li><strong>Host-CPU independent</strong> — the bus doesn't assume 6502, 68000, Z80, 8086, or anything else. A small bridge per CPU does the translation.</li>
+      <li><strong>Vintage-friendly</strong> — tolerant of slow clocks, synchronous or asynchronous host timing, and 8-, 16-, or 32-bit host data paths.</li>
+      <li><strong>Modest signal count</strong> — few enough lines to fit on a reasonable backplane connector, and possible to draw out by hand.</li>
+      <li><strong>Portable drivers</strong> — the same C driver (recompiled for the host CPU) works across every system that speaks the bus.</li>
+      <li><strong>Open specification</strong> — every signal, every register, every timing diagram published under a permissive license.</li>
+    </ul>
+
+    <h3>Signal Lines (Planned)</h3>
+    <p>
+      The bus splits into two kinds of lines: <em>shared</em> lines that
+      run across the entire backplane and every slot sees in common, and
+      <em>per-slot</em> lines that each slot connector carries on its own
+      pins. The tables below are the current working sketch, drawn from
+      the reference implementation. Widths, directions, and even the
+      existence of some lines are likely to change once more than one
+      card is prototyped on more than one host.
+    </p>
+
+    <p><strong>Shared backplane lines</strong> &mdash; one wire, every slot sees the same value:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th>Direction</th>
+          <th>Width</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>CLK</code></td>
+          <td>host → cards</td>
+          <td>1</td>
+          <td>System clock (25 MHz reference)</td>
+        </tr>
+        <tr>
+          <td><code>RESET_N</code></td>
+          <td>host → cards</td>
+          <td>1</td>
+          <td>Active-low global reset</td>
+        </tr>
+        <tr>
+          <td><code>ADDR</code></td>
+          <td>host → cards</td>
+          <td>24</td>
+          <td>Address bus (16 MB window)</td>
+        </tr>
+        <tr>
+          <td><code>DATA</code></td>
+          <td>bidir</td>
+          <td>32</td>
+          <td>Data bus (driven by the host on writes, by the selected slot on reads)</td>
+        </tr>
+        <tr>
+          <td><code>WSTRB</code></td>
+          <td>host → cards</td>
+          <td>4</td>
+          <td>Write strobe, one bit per byte lane</td>
+        </tr>
+        <tr>
+          <td><code>RSTRB</code></td>
+          <td>host → cards</td>
+          <td>1</td>
+          <td>Read strobe</td>
+        </tr>
+        <tr>
+          <td><code>READY</code></td>
+          <td>cards → host</td>
+          <td>1</td>
+          <td>Transaction complete / wait-state release (wire-OR; only the selected slot drives)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p><strong>Per-slot connector pins</strong> &mdash; one wire per physical slot position:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th>Direction</th>
+          <th>Width</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>SLOT_SEL_n</code></td>
+          <td>backplane → card</td>
+          <td>1</td>
+          <td>Active-low chip-select for this slot, decoded from <code>ADDR[19:16]</code> by the backplane</td>
+        </tr>
+        <tr>
+          <td><code>IRQ_n</code></td>
+          <td>card → host</td>
+          <td>1</td>
+          <td>Active-low interrupt request owned exclusively by this slot</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      One open design choice: the bus can either have a fixed native width
+      (with bridges narrowing or widening for smaller or larger hosts, like
+      PCI does) or scale with the host. The current sketch shows a 32-bit
+      data bus; an 8-bit host&rsquo;s bridge would serialise accesses over
+      multiple cycles. Feedback welcome.
+    </p>
+
+    <h2>Bridging to a Host CPU</h2>
+
+    <p>
+      Every host talks to the bus through a bridge. The bridge waits for the
+      CPU to start a memory or IO cycle aimed at a bus address range,
+      translates that cycle into a bus transaction (address, direction,
+      width, data if writing), drives the bus signals with the right timing,
+      and returns data and any wait states back to the CPU when the bus
+      answers.
+    </p>
+
+    <p>
+      For slow hosts (a 1&nbsp;MHz 6502, a 4&nbsp;MHz Z80) the bridge can be
+      a handful of gates and a PAL. For faster hosts (a 10&nbsp;MHz 68000, a
+      25&nbsp;MHz 386) a bundle of 74-series parts or a small FPGA handles
+      the pipelining. The bridge absorbs every CPU-specific quirk so the
+      rest of the system doesn&rsquo;t have to care.
+    </p>
+
+    <h2>Slots and Backplane</h2>
+
+    <p>
+      The bus is organised around a physical backplane with up to
+      <strong>16 slots</strong>. Each slot is identified by a number in the
+      range 0&ndash;15 and gets a <strong>64&nbsp;KB register window</strong>
+      in the host's address space.
+    </p>
+
+    <p>
+      Slot numbers are encoded directly into the upper bits of the bus address:
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Address bits</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ADDR[23:20]</code></td>
+          <td>IO-region tag &mdash; must be <code>0x4</code> for a card cycle</td>
+        </tr>
+        <tr>
+          <td><code>ADDR[19:16]</code></td>
+          <td>Slot number (0 &ndash; 15)</td>
+        </tr>
+        <tr>
+          <td><code>ADDR[15:0]</code></td>
+          <td>Per-slot register space (64 KB per card)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      The backplane decodes <code>ADDR[19:16]</code> through a single
+      <code>74LS154</code> (4-to-16 line decoder) to produce 16 active-low
+      <code>SLOT_SEL_n</code> lines, one per connector. The decoder is
+      enabled only when <code>ADDR[23:20]</code> equals the IO tag and at
+      least one strobe (<code>WSTRB</code> or <code>RSTRB</code>) is active.
+      Cards therefore <em>do not</em> need to decode the address themselves;
+      they just wait for <code>SLOT_SEL_n</code> to go low and use
+      <code>ADDR[15:0]</code> to pick a register. That keeps the card's
+      decode logic to a single AND gate or two.
+    </p>
+
+    <p>
+      Each card exposes a small bank of memory-mapped registers behind its
+      slot window. A 16-bit register offset gives plenty of room &mdash;
+      typical cards use only a handful of registers near the bottom of the
+      window and leave the rest reserved. Writes are accepted via
+      <code>WSTRB</code>; reads are driven onto <code>DATA</code> on the
+      same cycle <code>READY</code> is asserted.
+    </p>
+
+    <p>
+      See the <a href="https://github.com/benpayne/learn-fpga/blob/master/bus-design/docs/backplane.md"
+      rel="noopener">backplane reference document</a> for the full slot pinout,
+      the decoder schematic, and a connector-pin budget.
+    </p>
+
+    <h2>Interrupts</h2>
+
+    <p>
+      Each slot owns its own <code>IRQ_n</code> line back to the host. That
+      gives up to 16 independently-reported interrupt sources on a 16-slot
+      backplane &mdash; no polling required to tell cards apart, no
+      wire-ORing, no daisy-chain priority schemes. A card pulls its own
+      <code>IRQ_n</code> low whenever it has something to report, and
+      releases it when the host acknowledges.
+    </p>
+
+    <p>
+      What happens on the host side depends on the CPU. Each host bridge is
+      paired with a small <strong>interrupt controller peripheral</strong>
+      that aggregates the per-slot IRQ lines into whatever the CPU's
+      interrupt pins expect:
+    </p>
+
+    <ul>
+      <li>
+        <strong>6502 (and similar single-IRQ CPUs)</strong>: the 16
+        <code>IRQ_n</code> lines feed an interrupt controller that ORs them
+        onto the CPU's <code>/IRQB</code> pin and exposes a status register
+        telling the CPU which slot fired. The FemtoRV reference
+        implementation already uses this pattern with 32 sources;
+        generalising to 16 slots is a strict subset.
+      </li>
+      <li>
+        <strong>68000 (and other priority-encoded CPUs)</strong>: the 16
+        <code>IRQ_n</code> lines feed a <code>74LS148</code> (or two
+        cascaded for 16 inputs) which produces a 3-bit priority code
+        wired directly to <code>/IPL[2:0]</code>. Slot assignment maps
+        priority levels 1&ndash;7 across the 16 slots however the builder
+        likes &mdash; typically, low-numbered slots get lower-priority
+        interrupts.
+      </li>
+    </ul>
+
+    <p>
+      The interrupt controller is a <em>required</em> host-side peripheral
+      &mdash; it's part of the platform every bridge assumes &mdash; but it
+      lives outside the bridge proper. That separation keeps the bridge's
+      chip count honest (nine chips for a 6502, twelve for a 68k) regardless
+      of how many interrupt sources the system ultimately supports, and it
+      lets a builder put the interrupt controller on its own card if they
+      prefer.
+    </p>
+
+    <p>
+      Within a card, multiple internal interrupt sources collapse onto the
+      single <code>IRQ_n</code> pin via a simple wire-OR or open-drain gate.
+      The host's interrupt controller handles the "who raised me?" question
+      at slot granularity; anything finer (which ring buffer filled? which
+      timer expired?) is the card's responsibility, usually answered by a
+      read of one of its own status registers.
+    </p>
+
+    <h2>Example Memory Map</h2>
+
+    <p>
+      This is <em>one</em> valid memory layout &mdash; the one used by the
+      reference implementation. Builders are free to map memory however they
+      want, as long as the IO region's slot encoding
+      (<code>ADDR[23:20] = 0x4</code>, <code>ADDR[19:16]</code> = slot) and
+      the per-slot register window match the bus spec. The diagram and table
+      below show what ships on the current reference board today: a 24-bit
+      address space split between boot ROM, memory-mapped IO, kernel/program
+      RAM, a framebuffer, and a stack at the top of RAM.
+    </p>
+
+    <p>
+      Zooming in on the IO region: <code>0x400000</code> is slot 0's base,
+      <code>0x410000</code> is slot 1's base, and so on through
+      <code>0x4F0000</code> for slot 15. Each card's registers live in the
+      low 64&nbsp;KB of its window.
+    </p>
+
+    <img
+      src="/learn-fpga/images/architecture/memory-map.svg"
+      alt="Vertical memory map diagram showing BRAM BIOS at 0x000000, IO devices at 0x400000+, kernel space at 0x800000, program space at 0x810000, framebuffer at 0xA00000, free heap, and stack at the top of SDRAM ending at 0xFFFFF0."
+      width="600"
+      height="720"
+    />
+
+    <table>
+      <thead>
+        <tr>
+          <th>Range</th>
+          <th>Size</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>0x000000 – 0x007FFF</code></td>
+          <td>32 KB</td>
+          <td>BRAM: BIOS / boot ROM</td>
+        </tr>
+        <tr>
+          <td><code>0x400000 – 0x4FFFFF</code></td>
+          <td>1 MB</td>
+          <td>IO region &mdash; 16 slots × 64 KB each, slot <em>n</em> at <code>0x4n0000</code></td>
+        </tr>
+        <tr>
+          <td><code>0x800000 – 0x80FFFF</code></td>
+          <td>64 KB</td>
+          <td>Kernel space</td>
+        </tr>
+        <tr>
+          <td><code>0x810000 – 0x9FFFFF</code></td>
+          <td>~2 MB</td>
+          <td>Program space</td>
+        </tr>
+        <tr>
+          <td><code>0xA00000 – 0xA7CFFF</code></td>
+          <td>512 KB</td>
+          <td>Framebuffer (640 × 400 × 16 bpp)</td>
+        </tr>
+        <tr>
+          <td><code>0xA7D000 – 0xEFFFFF</code></td>
+          <td>~4.5 MB</td>
+          <td>Free heap</td>
+        </tr>
+        <tr>
+          <td><code>0xF00000 – 0xFFFFF0</code></td>
+          <td>1 MB</td>
+          <td>Stack (SDRAM, grows down)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Reference Implementation</h2>
+
+    <p>
+      The first working example of this architecture is a
+      <strong>Colorlight i5</strong> board (ECP5) running the
+      <strong>FemtoRV RV32IMFC</strong> soft core at 25 MHz, with an HDMI
+      GPU, a 4-voice 4-operator FM synthesizer plus sampled audio, a PS/2
+      keyboard controller, and an SD card FAT32 driver. This implementation
+      is FPGA-based because that&rsquo;s the fastest way to iterate on the
+      spec today &mdash; but it&rsquo;s <em>an</em> implementation, not the
+      spec. A discrete-logic reference build is planned alongside it so the
+      two can keep each other honest: anything that&rsquo;s easy in the FPGA
+      but impossible in 74-logic needs to change.
+    </p>
+
+    <p>
+      Source for the reference implementation lives in the
+      <a href="https://github.com/benpayne/learn-fpga" rel="noopener">benpayne/learn-fpga</a>
+      repository (branch <code>colorlight_i5_support</code>).
+    </p>
+
+    <h2>Standardization Roadmap</h2>
+    <ul>
+      <li><strong>Phase 1</strong> — document the current bus as-is, warts and all, so others can reproduce it.</li>
+      <li><strong>Phase 2</strong> — collect community feedback: what breaks on a 6502 bridge that works on a 68k? Is 16 slots enough, or should the slot field be wider? Does the interrupt controller belong on its own slot card, or on the host board?</li>
+      <li><strong>Phase 3</strong> — publish a v1.0 specification with fixed signal names, timing, register conventions, and connector pinout (nominally DIN 41612 96-pin, to match the ~75-signal-count budget with headroom for ground and power).</li>
+      <li><strong>Phase 4</strong> — reference cards, bridges, and a devkit: a minimal 4-slot backplane, a bridge per CPU family, a host-side interrupt controller, plus one or two peripheral cards anyone can build.</li>
+    </ul>
+  </article>
+</PageLayout>
+
+<style>
+  .status-badge {
+    display: inline-block;
+    margin-left: 0.5em;
+    padding: 0.1em 0.55em;
+    font-family: var(--font-mono);
+    font-size: 0.6em;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--color-accent-alt);
+    background-color: rgba(255, 176, 0, 0.08);
+    border: 1px solid var(--color-accent-alt);
+    border-radius: 3px;
+    vertical-align: middle;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
+
+  .prose :global(img) {
+    width: 100%;
+    height: auto;
+    max-width: 600px;
+    margin-inline: auto;
+    background-color: #0a0e12;
+  }
+</style>

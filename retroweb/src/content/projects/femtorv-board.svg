@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img" aria-label="FemtoRV board schematic: Colorlight i5 FPGA with labeled peripherals">
+  <defs>
+    <style>
+      .bg { fill: #0a0e12; }
+      .panel { fill: #101419; stroke: #1f2a1f; stroke-width: 2; }
+      .chip { fill: #0a0e12; stroke: #7fff7f; stroke-width: 2; }
+      .periph { fill: #0a0e12; stroke: #ffb000; stroke-width: 2; }
+      .trace { stroke: #5a6f5a; stroke-width: 1.5; fill: none; stroke-dasharray: 4 2; }
+      .bus { stroke: #7fff7f; stroke-width: 1.5; fill: none; }
+      .dot { fill: #5a6f5a; }
+      .led-on { fill: #7fff7f; }
+      .led-warn { fill: #ffb000; }
+      .label-title { fill: #7fff7f; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 14px; font-weight: 700; letter-spacing: 0.04em; }
+      .label-sub { fill: #ffb000; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+      .label-muted { fill: #5a6f5a; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.05em; }
+      .label-body { fill: #d4e4d2; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" x="0" y="0" width="800" height="500"/>
+
+  <!-- Top-left corner marker -->
+  <text class="label-muted" x="20" y="28">// colorlight_i5 :: femtorv_coprocessor</text>
+  <text class="label-muted" x="780" y="28" text-anchor="end">rev 0xA · 2026</text>
+
+  <!-- Board outline -->
+  <rect class="panel" x="40" y="60" width="720" height="400" rx="4"/>
+
+  <!-- Mounting hole dots -->
+  <circle class="dot" cx="56" cy="76" r="4"/>
+  <circle class="dot" cx="744" cy="76" r="4"/>
+  <circle class="dot" cx="56" cy="444" r="4"/>
+  <circle class="dot" cx="744" cy="444" r="4"/>
+
+  <!-- Decorative dashed traces -->
+  <path class="trace" d="M 100 200 H 280 V 300 H 500 V 200 H 680"/>
+  <path class="trace" d="M 120 380 H 680"/>
+  <path class="trace" d="M 400 100 V 140"/>
+
+  <!-- Central FPGA chip: FemtoRV / ECP5 -->
+  <rect class="chip" x="300" y="180" width="200" height="140" rx="2"/>
+  <!-- chip pins (decorative) -->
+  <g stroke="#5a6f5a" stroke-width="1">
+    <line x1="295" y1="200" x2="305" y2="200"/>
+    <line x1="295" y1="220" x2="305" y2="220"/>
+    <line x1="295" y1="240" x2="305" y2="240"/>
+    <line x1="295" y1="260" x2="305" y2="260"/>
+    <line x1="295" y1="280" x2="305" y2="280"/>
+    <line x1="295" y1="300" x2="305" y2="300"/>
+    <line x1="495" y1="200" x2="505" y2="200"/>
+    <line x1="495" y1="220" x2="505" y2="220"/>
+    <line x1="495" y1="240" x2="505" y2="240"/>
+    <line x1="495" y1="260" x2="505" y2="260"/>
+    <line x1="495" y1="280" x2="505" y2="280"/>
+    <line x1="495" y1="300" x2="505" y2="300"/>
+    <line x1="320" y1="175" x2="320" y2="185"/>
+    <line x1="360" y1="175" x2="360" y2="185"/>
+    <line x1="400" y1="175" x2="400" y2="185"/>
+    <line x1="440" y1="175" x2="440" y2="185"/>
+    <line x1="480" y1="175" x2="480" y2="185"/>
+    <line x1="320" y1="315" x2="320" y2="325"/>
+    <line x1="360" y1="315" x2="360" y2="325"/>
+    <line x1="400" y1="315" x2="400" y2="325"/>
+    <line x1="440" y1="315" x2="440" y2="325"/>
+    <line x1="480" y1="315" x2="480" y2="325"/>
+  </g>
+  <!-- chip pin-1 marker -->
+  <circle cx="310" cy="192" r="3" fill="#7fff7f"/>
+  <text class="label-title" x="400" y="240" text-anchor="middle">FemtoRV</text>
+  <text class="label-body" x="400" y="260" text-anchor="middle">RV32IMFC · 25 MHz</text>
+  <text class="label-muted" x="400" y="280" text-anchor="middle">ECP5 LFE5U-25F</text>
+
+  <!-- SDRAM peripheral block (top-left) -->
+  <rect class="periph" x="80" y="110" width="140" height="60" rx="2"/>
+  <text class="label-sub" x="150" y="135" text-anchor="middle">SDRAM</text>
+  <text class="label-body" x="150" y="154" text-anchor="middle">8 MB · cached</text>
+
+  <!-- HDMI peripheral block (top-right) -->
+  <rect class="periph" x="580" y="110" width="140" height="60" rx="2"/>
+  <text class="label-sub" x="650" y="135" text-anchor="middle">HDMI</text>
+  <text class="label-body" x="650" y="154" text-anchor="middle">640x400 · 16bpp</text>
+
+  <!-- SD card peripheral block (bottom-left) -->
+  <rect class="periph" x="80" y="340" width="140" height="60" rx="2"/>
+  <text class="label-sub" x="150" y="365" text-anchor="middle">SD</text>
+  <text class="label-body" x="150" y="384" text-anchor="middle">FAT32 · SPI</text>
+
+  <!-- PS/2 + Audio peripheral block (bottom-right) -->
+  <rect class="periph" x="580" y="340" width="140" height="60" rx="2"/>
+  <text class="label-sub" x="650" y="365" text-anchor="middle">PS/2 · I2S</text>
+  <text class="label-body" x="650" y="384" text-anchor="middle">kbd · 4-op FM</text>
+
+  <!-- Bus connections (solid green) -->
+  <line class="bus" x1="220" y1="140" x2="300" y2="200"/>
+  <line class="bus" x1="580" y1="140" x2="500" y2="200"/>
+  <line class="bus" x1="220" y1="370" x2="300" y2="300"/>
+  <line class="bus" x1="580" y1="370" x2="500" y2="300"/>
+
+  <!-- Status LEDs along the bottom edge -->
+  <g>
+    <circle class="led-on" cx="290" cy="435" r="5"/>
+    <circle class="led-on" cx="320" cy="435" r="5"/>
+    <circle class="led-warn" cx="350" cy="435" r="5"/>
+    <circle class="led-on" cx="380" cy="435" r="5"/>
+    <circle cx="410" cy="435" r="5" fill="#1f2a1f"/>
+    <circle cx="440" cy="435" r="5" fill="#1f2a1f"/>
+    <circle class="led-warn" cx="470" cy="435" r="5"/>
+    <circle class="led-on" cx="500" cy="435" r="5"/>
+  </g>
+  <text class="label-muted" x="395" y="458" text-anchor="middle">LEDS</text>
+
+  <!-- Footer caption -->
+  <text class="label-muted" x="400" y="490" text-anchor="middle">&gt; retro-active :: femtorv co-processor :: schematic placeholder</text>
+</svg>

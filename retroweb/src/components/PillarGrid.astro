@@ -1,0 +1,168 @@
+---
+// PillarGrid.astro — The four Retro-Active pillars in a responsive grid.
+// No JavaScript. Cards use scoped styles and global theme tokens.
+
+interface Pillar {
+  num: string;
+  title: string;
+  body: string;
+}
+
+const pillars: Pillar[] = [
+  {
+    num: '01',
+    title: 'Build',
+    body: 'Shared hardware standards &mdash; a common bus, cards, and peripherals you can mix and match from across the community.',
+  },
+  {
+    num: '02',
+    title: 'Share',
+    body: 'Portable drivers in C and C++ via GCC. Write a driver once, run it on many retro systems.',
+  },
+  {
+    num: '03',
+    title: 'Run',
+    body: 'Boot real retro operating systems like FreeDOS and EmuTOS on new hardware, and recompile vintage applications.',
+  },
+  {
+    num: '04',
+    title: 'Connect',
+    body: '74-series logic, PAL/GAL, FPGAs, or real vintage silicon &mdash; build however you want. Every card speaks the same bus.',
+  },
+];
+---
+
+<section class="pillars" aria-labelledby="pillars-heading">
+  <div class="pillars-inner">
+    <header class="pillars-header">
+      <p class="pillars-kicker" aria-hidden="true">// four pillars</p>
+      <h2 id="pillars-heading" class="pillars-heading">Pillars</h2>
+    </header>
+
+    <ul class="grid" role="list">
+      {pillars.map((p) => (
+        <li class="card">
+          <p class="card-num" aria-hidden="true">{p.num}</p>
+          <h3 class="card-title">{p.title}</h3>
+          <p class="card-body" set:html={p.body}></p>
+        </li>
+      ))}
+    </ul>
+  </div>
+</section>
+
+<style>
+  .pillars {
+    width: 100%;
+    padding-block: var(--space-48);
+  }
+
+  .pillars-inner {
+    max-width: var(--max-layout);
+    margin-inline: auto;
+    padding-inline: var(--space-16);
+  }
+
+  .pillars-header {
+    margin-bottom: var(--space-32);
+  }
+
+  .pillars-kicker {
+    font-family: var(--font-mono);
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-8) 0;
+  }
+
+  .pillars-heading {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    font-size: 1.75rem;
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+
+  @media (min-width: 768px) {
+    .pillars-heading {
+      font-size: 2rem;
+    }
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-16);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  @media (min-width: 768px) {
+    .grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-24);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    padding: var(--space-24);
+    background-color: color-mix(in srgb, var(--color-accent) 3%, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .card:hover {
+    border-color: var(--color-accent);
+  }
+
+  .card-num {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    letter-spacing: 0.15em;
+    margin: 0;
+  }
+
+  .card-title {
+    font-family: var(--font-heading);
+    font-size: 1.5rem;
+    color: var(--color-accent-alt);
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+
+  .card-body {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    font-size: 1rem;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  @media (min-width: 768px) {
+    .pillars-inner {
+      padding-inline: var(--space-24);
+    }
+
+    .pillars {
+      padding-block: var(--space-64);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .pillars-inner {
+      padding-inline: var(--space-32);
+    }
+  }
+</style>

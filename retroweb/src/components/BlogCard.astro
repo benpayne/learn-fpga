@@ -1,0 +1,158 @@
+---
+// BlogCard.astro — Listing tile for a blog entry. Entire card is an anchor
+// so mouse + keyboard users share one target.
+import type { CollectionEntry } from 'astro:content';
+
+export interface Props {
+  entry: CollectionEntry<'blog'>;
+}
+
+const { entry } = Astro.props;
+const { title, pubDate, summary, tags } = entry.data;
+
+const base = import.meta.env.BASE_URL;
+const href = `${base}blog/${entry.id}/`;
+
+// Fallback summary: first 150 chars of the body if no explicit summary.
+function bodyExcerpt(body: string | undefined, limit = 150): string {
+  if (!body) return '';
+  // Strip frontmatter-adjacent whitespace, headings, and basic markdown markers.
+  const plain = body
+    .replace(/^#.*$/gm, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/[*_`>#-]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (plain.length <= limit) return plain;
+  return plain.slice(0, limit).trimEnd() + '…';
+}
+
+const displaySummary =
+  (summary && summary.trim().length > 0)
+    ? summary
+    : bodyExcerpt(entry.body);
+
+const dateFormatter = new Intl.DateTimeFormat('en-US', {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+});
+const isoDate = pubDate.toISOString().slice(0, 10);
+---
+
+<a class="blog-card" href={href} aria-label={`Read blog post: ${title}`}>
+  <time class="blog-card-date" datetime={isoDate}>
+    {dateFormatter.format(pubDate)}
+  </time>
+
+  <h2 class="blog-card-title">{title}</h2>
+
+  {displaySummary && (
+    <p class="blog-card-summary">{displaySummary}</p>
+  )}
+
+  {tags && tags.length > 0 && (
+    <ul class="blog-card-tags" role="list" aria-label="Tags">
+      {tags.map((tag) => (
+        <li class="blog-card-tag">#{tag}</li>
+      ))}
+    </ul>
+  )}
+
+  <span class="blog-card-cta" aria-hidden="true">Read &rarr;</span>
+</a>
+
+<style>
+  .blog-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    text-decoration: none;
+    color: inherit;
+    background-color: color-mix(in srgb, var(--color-accent) 3%, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    padding: var(--space-24);
+    height: 100%;
+    transition:
+      border-color 0.15s ease-in-out,
+      transform 0.15s ease-in-out,
+      box-shadow 0.15s ease-in-out;
+  }
+
+  .blog-card:hover,
+  .blog-card:focus-visible {
+    border-color: var(--color-accent);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px -8px color-mix(in srgb, var(--color-accent) 40%, transparent);
+    text-decoration: none;
+  }
+
+  .blog-card:focus-visible {
+    outline: 2px solid var(--color-accent-alt);
+    outline-offset: 2px;
+  }
+
+  .blog-card-date {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    letter-spacing: 0.05em;
+    margin: 0;
+  }
+
+  .blog-card-title {
+    font-family: var(--font-heading);
+    color: var(--color-accent-alt);
+    font-size: 1.25rem;
+    margin: 0;
+    line-height: 1.25;
+    letter-spacing: 0.01em;
+  }
+
+  .blog-card:hover .blog-card-title,
+  .blog-card:focus-visible .blog-card-title {
+    color: var(--color-accent);
+  }
+
+  .blog-card-summary {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .blog-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .blog-card-tag {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    padding: 0.1em 0.5em;
+    letter-spacing: 0.02em;
+  }
+
+  .blog-card-cta {
+    margin-top: auto;
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 0.9rem;
+    letter-spacing: 0.05em;
+  }
+
+  .blog-card:hover .blog-card-cta,
+  .blog-card:focus-visible .blog-card-cta {
+    color: var(--color-accent-alt);
+  }
+</style>

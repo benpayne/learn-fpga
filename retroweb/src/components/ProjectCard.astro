@@ -1,0 +1,123 @@
+---
+// ProjectCard.astro — Card tile for a single project in the gallery grid.
+// The entire card is an anchor so mouse + keyboard users share one target.
+import { Image } from 'astro:assets';
+import type { CollectionEntry } from 'astro:content';
+
+export interface Props {
+  entry: CollectionEntry<'projects'>;
+}
+
+const { entry } = Astro.props;
+const { title, description, image } = entry.data;
+
+const base = import.meta.env.BASE_URL;
+const href = `${base}projects/${entry.id}/`;
+---
+
+<a class="project-card" href={href} aria-label={`View details for ${title}`}>
+  <div class="project-card-media">
+    {image && (
+      <Image
+        src={image}
+        alt={`Representative image for ${title}`}
+        widths={[400, 800]}
+        sizes="(min-width: 1024px) 360px, (min-width: 768px) 50vw, 100vw"
+        loading="lazy"
+        decoding="async"
+      />
+    )}
+  </div>
+
+  <div class="project-card-body">
+    <h3 class="project-card-title">{title}</h3>
+    <p class="project-card-desc">{description}</p>
+    <span class="project-card-cta" aria-hidden="true">View details &rarr;</span>
+  </div>
+</a>
+
+<style>
+  .project-card {
+    display: flex;
+    flex-direction: column;
+    text-decoration: none;
+    color: inherit;
+    background-color: color-mix(in srgb, var(--color-accent) 3%, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    overflow: hidden;
+    transition:
+      border-color 0.15s ease-in-out,
+      transform 0.15s ease-in-out,
+      box-shadow 0.15s ease-in-out;
+  }
+
+  .project-card:hover,
+  .project-card:focus-visible {
+    border-color: var(--color-accent);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px -8px color-mix(in srgb, var(--color-accent) 40%, transparent);
+    text-decoration: none;
+  }
+
+  .project-card:focus-visible {
+    outline: 2px solid var(--color-accent-alt);
+    outline-offset: 2px;
+  }
+
+  .project-card-media {
+    width: 100%;
+    aspect-ratio: 8 / 5;
+    background-color: #0a0e12;
+    border-bottom: 1px solid var(--color-border);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .project-card-media :global(img),
+  .project-card-media :global(svg) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .project-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    padding: var(--space-24);
+  }
+
+  .project-card-title {
+    font-family: var(--font-heading);
+    color: var(--color-accent-alt);
+    font-size: 1.25rem;
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+  }
+
+  .project-card-desc {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .project-card-cta {
+    margin-top: var(--space-8);
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 0.9rem;
+    letter-spacing: 0.05em;
+  }
+
+  .project-card:hover .project-card-cta,
+  .project-card:focus-visible .project-card-cta {
+    color: var(--color-accent-alt);
+  }
+</style>

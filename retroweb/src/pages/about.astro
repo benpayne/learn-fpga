@@ -1,0 +1,150 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import '../styles/prose.css';
+
+const base = import.meta.env.BASE_URL;
+const startedHref = `${base}getting-started/`;
+const blogHref = `${base}blog/`;
+const architectureHref = `${base}architecture/`;
+
+const description =
+  'The vision behind Retro-Active: a community ecosystem for retro computing builders.';
+---
+
+<PageLayout title="About" description={description}>
+  <article class="prose">
+    <h1>The Vision</h1>
+
+    <p>
+      Retro-Active is for hobbyists who want to build a <em>new</em> computer
+      in the spirit of the 8-, 16-, or even 32-bit machines that defined
+      early personal computing. Maybe you&rsquo;re doing it to teach yourself
+      how computers really work. Maybe you&rsquo;re doing it for the sheer
+      joy of wiring up a CPU, some RAM, and a bus and watching it boot.
+      Maybe you&rsquo;re finally building the machine you always wanted as
+      a kid. All of those are the point.
+    </p>
+
+    <p>
+      The catch: every builder ends up reinventing the same wheels &mdash; bus
+      timing, memory decoders, interrupt glue, expansion options, driver
+      stacks. Brilliant work gets done, then stays locked inside one project.
+      The next builder starts from scratch. Retro-Active is a community
+      ecosystem that tries to stop that. It gathers independent builders
+      around a set of shared standards so the work each of us does can plug
+      into the work everyone else does.
+    </p>
+
+    <h2>Why a Common Bus?</h2>
+
+    <p>
+      A bus is just an agreement: here are the pins, here is what the
+      signals mean, here is the timing. When that agreement is shared, the
+      community unlocks enormous leverage. One driver written for a
+      keyboard card works across every machine that speaks the bus.
+      One video card, designed once, can drop into a 6502 homebrew, a 68k
+      board, or a soft-core system. Someone builds a better SD controller
+      and suddenly every retro-active machine has better storage.
+    </p>
+
+    <p>
+      The common bus isn&rsquo;t about locking anyone in. It&rsquo;s about
+      giving independent builders a cheap way to share their
+      work <em>without</em> coordinating every detail in advance.
+    </p>
+
+    <h2>One Bus, Many CPUs</h2>
+
+    <p>
+      You might be thinking: <em>how can a 6502 and a 68000 and a 386 all
+      share the same bus? They have different pinouts, different word
+      widths, different timing.</em>
+    </p>
+
+    <p>
+      They can, because the Retro-Active bus isn&rsquo;t a projection of any
+      one CPU. Early home-computer expansion slots often were &mdash; the
+      Apple II slot, the original IBM PC ISA bus, and a lot of homebrew 68k
+      buses are essentially the host CPU&rsquo;s pins brought out to a
+      connector. That makes cards simple but locks the bus to one CPU
+      forever. Our approach is closer in spirit to <strong>PCI</strong>: the
+      bus is a defined protocol with its own signals, its own timing, and
+      its own rules. Each host CPU connects through a small
+      <em>bridge</em> &mdash; a handful of 74-series chips, a PAL/GAL, or a
+      simple FPGA block &mdash; that translates the CPU&rsquo;s native cycles
+      into bus transactions. The bridge is the only CPU-specific part.
+      Everything past it &mdash; cards, drivers, software &mdash; stays the
+      same.
+    </p>
+
+    <p>
+      We&rsquo;re not building PCI. The complexity target matches the era:
+      simpler timing, slower clocks, smaller address spaces, and bridges you
+      can draw on a napkin. But the core idea &mdash; a CPU-independent
+      protocol with a bridge per host &mdash; is what makes an 8-bit card
+      work on a 32-bit machine, and what lets one driver compiled for many
+      CPU families target them all.
+    </p>
+
+    <h2>Many Ways to Implement</h2>
+
+    <p>
+      How you build your cards is up to you. The bus is deliberately simple
+      enough that you can implement it with plain 74-series logic, with
+      PAL/GAL chips if you love that era, or with an FPGA if you want the
+      flexibility to pack a lot of functionality onto one board. Some
+      builders consider FPGAs cheating &mdash; that&rsquo;s a perfectly
+      valid position, and our goal is to keep the bus and the software
+      stack friendly to pure-logic designs. Others will reach for an
+      ECP5 or ICE40 the moment they need something dense. Both camps
+      ship cards that interoperate. That&rsquo;s the whole point.
+    </p>
+
+    <h2>Portable Software, Eternal Hardware</h2>
+
+    <p>
+      Hardware is only half the story. The other half is the software
+      that runs on it. GCC&rsquo;s retro back-ends (68k, 6502, 8086, Z80,
+      and the rest) let us write drivers and applications in C and C++
+      and retarget them across families. FreeDOS, EmuTOS, and other free
+      retro operating systems mean that &ldquo;boot to a real OS&rdquo; is not
+      a preservation problem &mdash; it&rsquo;s a compile job.
+    </p>
+
+    <p>
+      Together, those tools let a builder pick a CPU family, design a
+      new system around it, and still pull in decades of existing retro
+      software: recompile a vintage application for <em>your</em> system,
+      port an old driver to a new card, and everything keeps working.
+    </p>
+
+    <h2>Many Paths, One Community</h2>
+
+    <p>
+      Retro-Active doesn&rsquo;t require a single philosophy. A
+      74-series purist wire-wrapping a new 8-bit machine, a PAL/GAL
+      enthusiast trimming their chip count, an FPGA hobbyist packing a
+      whole system into one ECP5, and a hybrid builder mixing a real
+      6502 with modern glue all belong here. Each of them benefits when
+      someone in one camp publishes a bus decoder, a driver, or a boot
+      ROM that the other camps can pick up and use.
+    </p>
+
+    <p>
+      The goal is a rising tide &mdash; shared standards and shared code
+      so that everyone&rsquo;s project gets richer, faster, and more
+      reliable, without anyone having to change how they like to build.
+    </p>
+
+    <h2>Where to Start</h2>
+
+    <p>
+      If this sounds like your kind of project, head over to the
+      <a href={startedHref}>Getting Started</a> guide for on-ramps tailored
+      to discrete-logic builders, FPGA builders, and software developers.
+      The <a href={blogHref}>blog</a> has deeper dives into specific
+      decisions, and the <a href={architectureHref}>architecture</a> page
+      has the current state of the bus standard.
+    </p>
+  </article>
+</PageLayout>

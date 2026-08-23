@@ -1,0 +1,333 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import '../styles/prose.css';
+
+const description =
+  'Three on-ramps into the Retro-Active ecosystem: discrete-logic builder, FPGA builder, software developer.';
+---
+
+<PageLayout title="Getting Started" description={description}>
+  <div class="intro">
+    <h1>Getting Started</h1>
+    <p class="lede">
+      Pick the path that matches your background. Every path loops back to the
+      others &mdash; you don&rsquo;t have to commit to one.
+    </p>
+  </div>
+
+  <div class="path-grid">
+    <section class="path-card" aria-labelledby="path-discrete">
+      <p class="path-kicker" aria-hidden="true">// path_01</p>
+      <h2 id="path-discrete">I want to build with discrete logic</h2>
+      <p class="path-audience">For the 74-series, PAL/GAL, and breadboard crowd &mdash; no FPGA required.</p>
+      <ol class="path-steps">
+        <li>
+          Read the <a href="/learn-fpga/architecture/">Architecture</a> page
+          to learn the common bus signals, timing, and memory map.
+        </li>
+        <li>
+          Pick a CPU family you want to build around. The classics &mdash;
+          6502, Z80, 6809, 68000, 8088 &mdash; all map cleanly onto the bus.
+        </li>
+        <li>
+          Prototype on a breadboard or perfboard. Start with CPU, RAM, and a
+          simple output (LEDs or UART) before adding cards.
+        </li>
+        <li>
+          Design your first card &mdash; address decoder, UART, or a simple
+          peripheral. Plain 74-logic or a PAL/GAL for decode works fine.
+        </li>
+        <li>
+          Share schematics, BOMs, and timing notes back to the community so
+          others can build compatible cards.
+        </li>
+      </ol>
+    </section>
+
+    <section class="path-card" aria-labelledby="path-fpga">
+      <p class="path-kicker" aria-hidden="true">// path_02</p>
+      <h2 id="path-fpga">I want to build with an FPGA</h2>
+      <p class="path-audience">For builders who want to pack a lot onto one board with open-source tools.</p>
+      <ol class="path-steps">
+        <li>
+          Install the open-source FPGA toolchain: Yosys, nextpnr, and
+          OpenFPGALoader. Start at
+          <a href="https://yosyshq.net/" rel="noopener">yosyshq.net</a>.
+        </li>
+        <li>
+          Get an affordable starter board. Suggested: Colorlight i5 (ECP5)
+          or an ICE40-based board. See the
+          <a href="/learn-fpga/projects/">Projects</a> page.
+        </li>
+        <li>
+          Read the <a href="/learn-fpga/architecture/">Architecture</a> page
+          so your soft-core or peripheral can talk the common bus.
+        </li>
+        <li>
+          Clone the reference implementation at
+          <a href="https://github.com/benpayne/learn-fpga" rel="noopener">github.com/benpayne/learn-fpga</a>
+          and synthesize a known-good config.
+        </li>
+        <li>
+          Start modifying: drop in your own CPU, add a peripheral card,
+          share the bitstream and RTL back to the community.
+        </li>
+      </ol>
+    </section>
+
+    <section class="path-card" aria-labelledby="path-software">
+      <p class="path-kicker" aria-hidden="true">// path_03</p>
+      <h2 id="path-software">I want to write software</h2>
+      <p class="path-audience">For C/C++ developers new to embedded or bare-metal work.</p>
+      <ol class="path-steps">
+        <li>
+          Install the GCC retro back-end for your target CPU family
+          (6502, Z80, 68k, 8086, or RISC-V). GCC and its ports cover most
+          of the classic ISAs.
+        </li>
+        <li>
+          Read <a href="/learn-fpga/blog/">Portable Drivers with GCC</a> to
+          understand how one driver can target many systems that speak the
+          common bus.
+        </li>
+        <li>
+          Pick a reference build (or your own) and get a &ldquo;hello world&rdquo;
+          running over UART. This is the loop you&rsquo;ll iterate in.
+        </li>
+        <li>
+          Write a driver for a peripheral card you care about. Contribute
+          it back so every system that has that card gets it for free.
+        </li>
+        <li>
+          Port a retro app: try recompiling a FreeDOS or EmuTOS utility
+          for <em>your</em> system.
+        </li>
+      </ol>
+    </section>
+  </div>
+
+  <section class="closing" aria-labelledby="closing-heading">
+    <h2 id="closing-heading">Every Path Leads Home</h2>
+    <p>
+      All three audiences benefit from the same shared work. A card designed
+      with plain 74-logic and a card synthesized into an FPGA can look
+      identical to the software above them. A driver written for one system
+      works on every other system that speaks the bus. Blog posts written
+      for beginners save experts time. Pick a starting point, follow your
+      thread, and when you look up you&rsquo;ll find you&rsquo;ve been
+      building on everyone else&rsquo;s work &mdash; and they&rsquo;re
+      building on yours.
+    </p>
+  </section>
+
+  <section class="next" aria-labelledby="next-heading">
+    <p class="next-kicker" aria-hidden="true">// next</p>
+    <h2 id="next-heading">Where to go next</h2>
+    <ul class="next-links">
+      <li><a href="/learn-fpga/blog/">Blog &rarr; deep dives and build logs</a></li>
+      <li><a href="/learn-fpga/architecture/">Architecture &rarr; the common bus standard</a></li>
+      <li><a href="/learn-fpga/projects/">Projects &rarr; community showcase</a></li>
+    </ul>
+  </section>
+</PageLayout>
+
+<style>
+  .intro {
+    max-width: var(--max-prose);
+    margin-inline: auto;
+    margin-bottom: var(--space-48);
+  }
+
+  .intro h1 {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    margin-bottom: var(--space-16);
+  }
+
+  .lede {
+    font-size: 1.15rem;
+    color: var(--color-text);
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  /* ---------- Three-path grid ---------- */
+
+  .path-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-24);
+    margin-bottom: var(--space-64);
+  }
+
+  @media (min-width: 768px) {
+    .path-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .path-grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-32);
+    }
+  }
+
+  /* ---------- Path card ---------- */
+
+  .path-card {
+    border: 1px solid var(--color-border);
+    background-color: color-mix(in srgb, var(--color-accent) 2%, var(--color-bg));
+    padding: var(--space-24);
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .path-card:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  }
+
+  .path-kicker {
+    font-family: var(--font-mono);
+    color: var(--color-accent-alt);
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-8) 0;
+  }
+
+  .path-card h2 {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    font-size: 1.25rem;
+    line-height: 1.25;
+    margin: 0 0 var(--space-8) 0;
+  }
+
+  @media (min-width: 1024px) {
+    .path-card h2 {
+      font-size: 1.35rem;
+    }
+  }
+
+  .path-audience {
+    font-family: var(--font-body);
+    color: var(--color-muted);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    margin: 0 0 var(--space-16) 0;
+    font-style: italic;
+  }
+
+  .path-steps {
+    list-style: none;
+    counter-reset: step;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+
+  .path-steps li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 2.25rem;
+    line-height: 1.55;
+    font-size: 0.98rem;
+  }
+
+  .path-steps li::before {
+    content: counter(step, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--color-accent-alt);
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+
+  .path-steps code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--color-accent-alt);
+    background-color: rgba(255, 176, 0, 0.08);
+    padding: 0.05em 0.3em;
+    border-radius: 3px;
+    border: 1px solid var(--color-border);
+  }
+
+  .path-steps a {
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-underline-offset: 0.15em;
+  }
+
+  .path-steps a:hover,
+  .path-steps a:focus {
+    text-decoration-color: var(--color-accent-alt);
+  }
+
+  /* ---------- Closing section ---------- */
+
+  .closing {
+    max-width: var(--max-prose);
+    margin-inline: auto;
+    margin-bottom: var(--space-48);
+    padding-block: var(--space-24);
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .closing h2 {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    font-size: 1.5rem;
+    margin: 0 0 var(--space-16) 0;
+  }
+
+  .closing p {
+    line-height: 1.7;
+    margin: 0;
+  }
+
+  /* ---------- Next section ---------- */
+
+  .next {
+    max-width: var(--max-prose);
+    margin-inline: auto;
+  }
+
+  .next-kicker {
+    font-family: var(--font-mono);
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-8) 0;
+  }
+
+  .next h2 {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    font-size: 1.5rem;
+    margin: 0 0 var(--space-16) 0;
+  }
+
+  .next-links {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+
+  .next-links a {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    display: inline-block;
+    padding: var(--space-8) 0;
+  }
+</style>

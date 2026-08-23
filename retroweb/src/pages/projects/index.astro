@@ -1,0 +1,139 @@
+---
+// projects/index.astro — Projects gallery landing page.
+import { getCollection } from 'astro:content';
+import PageLayout from '../../layouts/PageLayout.astro';
+import ProjectCard from '../../components/ProjectCard.astro';
+
+const entries = await getCollection('projects');
+
+// Sort by order asc, then title asc.
+entries.sort((a, b) => {
+  const orderDiff = (a.data.order ?? 100) - (b.data.order ?? 100);
+  if (orderDiff !== 0) return orderDiff;
+  return a.data.title.localeCompare(b.data.title);
+});
+
+const description =
+  'Community projects built on the Retro-Active ecosystem.';
+---
+
+<PageLayout title="Projects" description={description}>
+  <section class="projects">
+    <header class="projects-header">
+      <p class="projects-kicker" aria-hidden="true">// ls projects/</p>
+      <h1 class="projects-heading">Projects</h1>
+      <p class="projects-lede">{description}</p>
+    </header>
+
+    {entries.length === 0 ? (
+      <div class="empty" role="status">
+        <pre class="empty-terminal">&gt; projects/ (empty)</pre>
+        <p class="empty-body">
+          No projects yet &mdash; be the first!{' '}
+          <a
+            href="https://github.com/benpayne/learn-fpga/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Submit yours
+          </a>
+          .
+        </p>
+      </div>
+    ) : (
+      <ul class="grid" role="list">
+        {entries.map((entry) => (
+          <li class="grid-item">
+            <ProjectCard entry={entry} />
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
+</PageLayout>
+
+<style>
+  .projects {
+    width: 100%;
+  }
+
+  .projects-header {
+    margin-bottom: var(--space-32);
+  }
+
+  .projects-kicker {
+    font-family: var(--font-mono);
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-8) 0;
+  }
+
+  .projects-heading {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    margin: 0 0 var(--space-12) 0;
+  }
+
+  .projects-lede {
+    color: var(--color-text);
+    font-family: var(--font-body);
+    max-width: 60ch;
+    margin: 0;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-24);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .grid-item {
+    display: flex;
+  }
+
+  .grid-item > :global(*) {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  @media (min-width: 768px) {
+    .grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-32);
+    }
+  }
+
+  .empty {
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    background-color: color-mix(in srgb, var(--color-accent) 3%, var(--color-bg));
+    padding: var(--space-32);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+    max-width: 60ch;
+  }
+
+  .empty-terminal {
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  .empty-body {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    margin: 0;
+  }
+</style>

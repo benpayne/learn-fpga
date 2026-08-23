@@ -1,0 +1,8 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1777433030" />
+    <testcase name="test_6502_writes_dont_reach_slot5" classname="bridge_6502_multislot_tb" file="/opt/wip/learn-fpga-web/.venv/lib/python3.10/site-packages/cocotb/decorators.py" lineno="40" time="0.1241912841796875" sim_time_ns="34020.001" ratio_time="273932.2749153458" />
+    <testcase name="test_6502_writes_land_in_slot0" classname="bridge_6502_multislot_tb" file="/opt/wip/learn-fpga-web/.venv/lib/python3.10/site-packages/cocotb/decorators.py" lineno="63" time="0.01816844940185547" sim_time_ns="4620.001000000004" ratio_time="254287.02790278746" />
+    <testcase name="test_6502_round_trip_slot0" classname="bridge_6502_multislot_tb" file="/opt/wip/learn-fpga-web/.venv/lib/python3.10/site-packages/cocotb/decorators.py" lineno="83" time="0.009345531463623047" sim_time_ns="2480.0009999999966" ratio_time="265367.57269003487" />
+  </testsuite>
+</testsuites>

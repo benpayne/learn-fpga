@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://benpayne.github.io/learn-fpga/sitemap-index.xml

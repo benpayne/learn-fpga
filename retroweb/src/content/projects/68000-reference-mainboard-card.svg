@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" font-family="'IBM Plex Mono', ui-monospace, monospace" role="img" aria-label="Specification card for the 68000 Main Board project.">
+  <defs>
+    <style>
+      .bg { fill: #0a0e12; }
+      .frame { fill: #101419; stroke: #ffb000; stroke-width: 2; rx: 6; }
+      .corner { fill: #ffb000; }
+      .kicker { fill: #5a6f5a; font-size: 13px; letter-spacing: 0.12em; }
+      .title { fill: #ffb000; font-size: 38px; font-weight: 700; }
+      .sub { fill: #d4e4d2; font-size: 16px; }
+      .feat { fill: #d4e4d2; font-size: 14px; }
+      .bullet { fill: #7fff7f; font-size: 14px; }
+      .status { fill: #7fff7f; font-size: 12px; font-weight: 700; letter-spacing: 0.15em; }
+      .status-frame { fill: none; stroke: #7fff7f; stroke-width: 1; rx: 3; }
+      .deco { fill: #ffb000; opacity: 0.10; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="800" height="500"/>
+
+  <rect class="frame" x="20" y="20" width="760" height="460"/>
+
+  <!-- decorative corner brackets -->
+  <path d="M 32 50 L 32 32 L 50 32" stroke="#ffb000" stroke-width="2" fill="none"/>
+  <path d="M 768 32 L 750 32 L 768 32 L 768 50" stroke="#ffb000" stroke-width="2" fill="none"/>
+  <path d="M 32 450 L 32 468 L 50 468" stroke="#ffb000" stroke-width="2" fill="none"/>
+  <path d="M 768 468 L 750 468 L 768 468 L 768 450" stroke="#ffb000" stroke-width="2" fill="none"/>
+
+  <!-- kicker / category -->
+  <text x="60" y="80" class="kicker">HARDWARE / Main Board</text>
+
+  <!-- title -->
+  <text x="60" y="140" class="title">68000 Main Board</text>
+
+  <!-- subtitle / one-liner -->
+  <text x="60" y="180" class="sub">CPU + bridge + RAM + ROM + slots, full async bus.</text>
+
+  <!-- feature bullets -->
+  <text x="78" y="250" class="bullet">▸</text>
+  <text x="100" y="250" class="feat">Motorola MC68000 at 10 MHz</text>
+  <text x="78" y="280" class="bullet">▸</text>
+  <text x="100" y="280" class="feat">6-chip PAL bridge (or 12-chip pure-74)</text>
+  <text x="78" y="310" class="bullet">▸</text>
+  <text x="100" y="310" class="feat">256 KB DRAM/SRAM, 32 KB boot ROM</text>
+  <text x="78" y="340" class="bullet">▸</text>
+  <text x="100" y="340" class="feat">74LS148 IPL encoder; 4× slot connectors</text>
+
+  <!-- status badge -->
+  <rect class="status-frame" x="600" y="430" width="160" height="32"/>
+  <text x="680" y="451" text-anchor="middle" class="status">PLANNED</text>
+
+  <!-- decorative motif -->
+  <g transform="translate(540,250)" opacity="0.45"><rect x="0" y="0" width="22" height="80" fill="none" stroke="#ffb000" stroke-width="1.4"/><rect x="30" y="0" width="22" height="80" fill="none" stroke="#ffb000" stroke-width="1.4"/><rect x="60" y="0" width="22" height="80" fill="none" stroke="#ffb000" stroke-width="1.4"/><rect x="90" y="0" width="22" height="80" fill="none" stroke="#ffb000" stroke-width="1.4"/><rect x="-30" y="20" width="20" height="40" fill="none" stroke="#ffb000" stroke-width="1.4"/><text x="-25" y="45" font-size="9" fill="#ffb000">CPU</text></g>
+</svg>

@@ -601,3 +601,10 @@ The HDMI display uses a dual-mode GPU (character + bitmap graphics) with DVI/TMD
 - **Block RAM budget**: 92% (52/56 DP16KD) — VRAM is 32KB, char buffer is 4.8KB
 
 This is an exciting project with clear ASIC potential! FemtoRV is the perfect foundation.
+
+## Active Technologies
+- TypeScript 5.x / JavaScript, Node.js 22+ + Astro 6.1.x, Shiki (bundled), Zod (bundled) (002-retro-web)
+- Markdown files in `src/content/` (content collections); images in `public/images/` (002-retro-web)
+
+## Recent Changes
+- 002-retro-web: Added TypeScript 5.x / JavaScript, Node.js 22+ + Astro 6.1.x, Shiki (bundled), Zod (bundled)

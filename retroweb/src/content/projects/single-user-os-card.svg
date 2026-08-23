@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" font-family="'IBM Plex Mono', ui-monospace, monospace" role="img" aria-label="Specification card for the Single-User OS project.">
+  <defs>
+    <style>
+      .bg { fill: #0a0e12; }
+      .frame { fill: #101419; stroke: #7fff7f; stroke-width: 2; rx: 6; }
+      .corner { fill: #7fff7f; }
+      .kicker { fill: #5a6f5a; font-size: 13px; letter-spacing: 0.12em; }
+      .title { fill: #7fff7f; font-size: 38px; font-weight: 700; }
+      .sub { fill: #d4e4d2; font-size: 16px; }
+      .feat { fill: #d4e4d2; font-size: 14px; }
+      .bullet { fill: #ffb000; font-size: 14px; }
+      .status { fill: #ffb000; font-size: 12px; font-weight: 700; letter-spacing: 0.15em; }
+      .status-frame { fill: none; stroke: #ffb000; stroke-width: 1; rx: 3; }
+      .deco { fill: #7fff7f; opacity: 0.10; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="800" height="500"/>
+
+  <rect class="frame" x="20" y="20" width="760" height="460"/>
+
+  <!-- decorative corner brackets -->
+  <path d="M 32 50 L 32 32 L 50 32" stroke="#7fff7f" stroke-width="2" fill="none"/>
+  <path d="M 768 32 L 750 32 L 768 32 L 768 50" stroke="#7fff7f" stroke-width="2" fill="none"/>
+  <path d="M 32 450 L 32 468 L 50 468" stroke="#7fff7f" stroke-width="2" fill="none"/>
+  <path d="M 768 468 L 750 468 L 768 468 L 768 450" stroke="#7fff7f" stroke-width="2" fill="none"/>
+
+  <!-- kicker / category -->
+  <text x="60" y="80" class="kicker">SOFTWARE / Operating System</text>
+
+  <!-- title -->
+  <text x="60" y="140" class="title">Single-User OS</text>
+
+  <!-- subtitle / one-liner -->
+  <text x="60" y="180" class="sub">"DOS plus Unix shell": one program at a time, FAT32 filesystem, pipes and redirection.</text>
+
+  <!-- feature bullets -->
+  <text x="78" y="250" class="bullet">▸</text>
+  <text x="100" y="250" class="feat">Bourne-style shell with pipes</text>
+  <text x="78" y="280" class="bullet">▸</text>
+  <text x="100" y="280" class="feat">FAT32 read/write via SD card driver</text>
+  <text x="78" y="310" class="bullet">▸</text>
+  <text x="100" y="310" class="feat">Coreutils-style binaries (ls, cat, …)</text>
+  <text x="78" y="340" class="bullet">▸</text>
+  <text x="100" y="340" class="feat">Footprint target: ≤ 32 KB on the 6502</text>
+
+  <!-- status badge -->
+  <rect class="status-frame" x="600" y="430" width="160" height="32"/>
+  <text x="680" y="451" text-anchor="middle" class="status">DESIGN</text>
+
+  <!-- decorative motif -->
+  <g transform="translate(540,255)" opacity="0.5" font-family="monospace" font-size="11" fill="#7fff7f">
+            <text x="0" y="0">$ ls /etc</text>
+            <text x="0" y="18">passwd  motd  shells</text>
+            <text x="0" y="36">$ cat /proc/version</text>
+            <text x="0" y="54">retro-os 0.1 (6502)_</text>
+          </g>
+</svg>

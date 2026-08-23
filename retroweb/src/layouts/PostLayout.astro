@@ -1,0 +1,581 @@
+---
+// PostLayout.astro — Blog post article shell. Extends PageLayout with a post
+// header (title, byline, tags), optional hero image, prose wrapper for the
+// markdown slot, and prev/next navigation.
+import { Image } from 'astro:assets';
+import type { CollectionEntry } from 'astro:content';
+import PageLayout from './PageLayout.astro';
+import '../styles/prose.css';
+
+export interface Props {
+  entry: CollectionEntry<'blog'>;
+  prev?: CollectionEntry<'blog'>;
+  next?: CollectionEntry<'blog'>;
+}
+
+const { entry, prev, next } = Astro.props;
+const { title, summary, author, pubDate, updatedDate, tags, heroImage } =
+  entry.data;
+
+const base = import.meta.env.BASE_URL;
+const blogHref = `${base}blog/`;
+
+const dateFormatter = new Intl.DateTimeFormat('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+const isoFormatter = (d: Date): string => d.toISOString().slice(0, 10);
+---
+
+<PageLayout title={title} description={summary}>
+  <article class="post">
+    <header class="post-header">
+      <p class="post-kicker" aria-hidden="true">// blog/{entry.id}</p>
+      <h1 class="post-title">{title}</h1>
+
+      <div class="post-meta">
+        <span class="meta-author">{author}</span>
+        <span class="meta-sep" aria-hidden="true">·</span>
+        <time class="meta-date" datetime={isoFormatter(pubDate)}>
+          {dateFormatter.format(pubDate)}
+        </time>
+        {updatedDate && (
+          <>
+            <span class="meta-sep" aria-hidden="true">·</span>
+            <span class="meta-updated">
+              Updated{' '}
+              <time datetime={isoFormatter(updatedDate)}>
+                {dateFormatter.format(updatedDate)}
+              </time>
+            </span>
+          </>
+        )}
+      </div>
+
+      {tags && tags.length > 0 && (
+        <ul class="post-tags" role="list" aria-label="Tags">
+          {tags.map((tag) => (
+            <li class="post-tag">#{tag}</li>
+          ))}
+        </ul>
+      )}
+
+      {heroImage && (
+        <div class="post-hero">
+          <Image
+            src={heroImage}
+            alt={`Hero image for ${title}`}
+            widths={[400, 800, 1200]}
+            sizes="(min-width: 1024px) 960px, 100vw"
+            loading="eager"
+            decoding="async"
+          />
+        </div>
+      )}
+
+      {summary && <p class="post-summary">{summary}</p>}
+    </header>
+
+    <div class="prose">
+      <slot />
+    </div>
+
+    <nav class="post-nav" aria-label="Post navigation">
+      <div class="post-nav-prev">
+        {prev && (
+          <a href={`${base}blog/${prev.id}/`} rel="prev">
+            <span class="post-nav-label">&larr; Previous</span>
+            <span class="post-nav-title">{prev.data.title}</span>
+          </a>
+        )}
+      </div>
+      <div class="post-nav-next">
+        {next && (
+          <a href={`${base}blog/${next.id}/`} rel="next">
+            <span class="post-nav-label">Next &rarr;</span>
+            <span class="post-nav-title">{next.data.title}</span>
+          </a>
+        )}
+      </div>
+    </nav>
+
+    <footer class="post-footer">
+      <a href={blogHref} class="back-link">&larr; Back to all posts</a>
+    </footer>
+  </article>
+
+  <dialog class="zoom-dialog" aria-label="Image viewer">
+    <button
+      class="zoom-close"
+      type="button"
+      data-zoom-close
+      aria-label="Close image viewer"
+    >
+      &times;
+    </button>
+    <div class="zoom-stage">
+      <img class="zoom-image" alt="" />
+    </div>
+    <p class="zoom-hint" aria-hidden="true">
+      scroll / pinch to zoom &nbsp;·&nbsp; drag to pan &nbsp;·&nbsp; esc to close
+    </p>
+  </dialog>
+</PageLayout>
+
+<style>
+  .post {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-32);
+    max-width: 960px;
+    margin-inline: auto;
+  }
+
+  .post-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+  }
+
+  .post-kicker {
+    font-family: var(--font-mono);
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    margin: 0;
+  }
+
+  .post-title {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  .post-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    align-items: baseline;
+    font-family: var(--font-mono);
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    letter-spacing: 0.02em;
+  }
+
+  .meta-author {
+    color: var(--color-text);
+  }
+
+  .meta-sep {
+    color: var(--color-border);
+  }
+
+  .meta-updated {
+    color: var(--color-accent-alt);
+  }
+
+  .post-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .post-tag {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    padding: 0.15em 0.6em;
+    letter-spacing: 0.02em;
+  }
+
+  .post-hero {
+    width: 100%;
+    aspect-ratio: 8 / 5;
+    overflow: hidden;
+    background-color: #0a0e12;
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    margin-top: var(--space-8);
+  }
+
+  .post-hero :global(img),
+  .post-hero :global(svg) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .post-summary {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    font-size: 1.1rem;
+    line-height: 1.6;
+    margin: 0;
+    max-width: 65ch;
+    font-style: italic;
+    opacity: 0.9;
+  }
+
+  .prose {
+    /* prose.css handles inner typography */
+    margin-inline: 0;
+  }
+
+  .post-nav {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-16);
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+    padding-block: var(--space-24);
+  }
+
+  @media (min-width: 768px) {
+    .post-nav {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .post-nav-prev,
+  .post-nav-next {
+    display: flex;
+  }
+
+  .post-nav-next {
+    justify-content: flex-end;
+    text-align: right;
+  }
+
+  .post-nav a {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    text-decoration: none;
+    font-family: var(--font-body);
+    color: var(--color-text);
+    padding: var(--space-8) 0;
+    border-bottom: 1px solid transparent;
+  }
+
+  .post-nav a:hover,
+  .post-nav a:focus-visible {
+    color: var(--color-accent-alt);
+    text-decoration: none;
+  }
+
+  .post-nav-label {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-accent);
+    letter-spacing: 0.05em;
+  }
+
+  .post-nav-title {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    color: inherit;
+    line-height: 1.3;
+  }
+
+  .post-footer {
+    padding-top: var(--space-8);
+  }
+
+  .back-link {
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 0.95rem;
+    letter-spacing: 0.03em;
+  }
+
+  .back-link:hover,
+  .back-link:focus {
+    color: var(--color-accent-alt);
+  }
+
+  /* --------------------------------------------------------------
+     Click-to-zoom: make any image inside the post body feel
+     clickable.  The script at the bottom of this file wires up the
+     behaviour; the CSS here handles the visual affordances.
+     -------------------------------------------------------------- */
+  .prose :global(img) {
+    cursor: zoom-in;
+    transition: filter 0.12s ease;
+  }
+
+  .prose :global(img):hover,
+  .prose :global(img):focus-visible {
+    filter: brightness(1.08);
+  }
+
+  .zoom-dialog {
+    /* Reset the native dialog so we can style freely */
+    padding: 0;
+    border: 1px solid var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-bg) 92%, black);
+    color: var(--color-text);
+    max-width: 100vw;
+    max-height: 100vh;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  .zoom-dialog::backdrop {
+    background-color: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(2px);
+  }
+
+  .zoom-dialog[open] {
+    display: grid;
+    grid-template-rows: 1fr auto;
+  }
+
+  .zoom-close {
+    position: absolute;
+    top: var(--space-16);
+    right: var(--space-16);
+    width: 2.25rem;
+    height: 2.25rem;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 1.6rem;
+    line-height: 1;
+    color: var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-bg) 80%, black);
+    border: 1px solid var(--color-accent);
+    border-radius: 2px;
+    cursor: pointer;
+    z-index: 2;
+  }
+
+  .zoom-close:hover,
+  .zoom-close:focus-visible {
+    color: var(--color-accent-alt);
+    border-color: var(--color-accent-alt);
+  }
+
+  .zoom-stage {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    touch-action: none; /* let the JS handle pinch-zoom / pan */
+    user-select: none;
+  }
+
+  .zoom-image {
+    max-width: 100%;
+    max-height: 100%;
+    cursor: grab;
+    transform-origin: center center;
+    transition: transform 0.05s linear;
+    will-change: transform;
+    /* SVGs get a slight background so diagrams stay readable on the
+       already-dark backdrop */
+    background-color: var(--color-bg);
+  }
+
+  .zoom-image.is-panning {
+    cursor: grabbing;
+    transition: none;
+  }
+
+  .zoom-hint {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    text-align: center;
+    padding: var(--space-12);
+    margin: 0;
+    border-top: 1px solid var(--color-border);
+    background-color: var(--color-bg);
+  }
+
+  @media (max-width: 640px) {
+    .zoom-hint {
+      font-size: 0.75rem;
+    }
+  }
+</style>
+
+<script>
+  // Click-to-zoom lightbox for images inside .prose.
+  // Vanilla JS, no dependencies.  Uses the native <dialog> element.
+
+  const dialog = document.querySelector<HTMLDialogElement>('.zoom-dialog');
+  const stage = dialog?.querySelector<HTMLDivElement>('.zoom-stage');
+  const image = dialog?.querySelector<HTMLImageElement>('.zoom-image');
+  const closeBtn = dialog?.querySelector<HTMLButtonElement>('[data-zoom-close]');
+
+  if (dialog && stage && image && closeBtn) {
+    let scale = 1;
+    let panX = 0;
+    let panY = 0;
+
+    const MIN_SCALE = 0.5;
+    const MAX_SCALE = 12;
+
+    const apply = () => {
+      image.style.transform =
+        `translate(${panX}px, ${panY}px) scale(${scale})`;
+    };
+
+    const reset = () => {
+      scale = 1;
+      panX = 0;
+      panY = 0;
+      apply();
+    };
+
+    const open = (src: string, alt: string) => {
+      image.src = src;
+      image.alt = alt;
+      reset();
+      dialog.showModal();
+    };
+
+    const close = () => {
+      dialog.close();
+      image.src = '';
+    };
+
+    // Wire every image in any .prose block.
+    document.querySelectorAll<HTMLImageElement>('.prose img').forEach((img) => {
+      img.setAttribute('tabindex', '0');
+      img.setAttribute('role', 'button');
+      const label = `Zoom image${img.alt ? ': ' + img.alt : ''}`;
+      img.setAttribute('aria-label', label);
+
+      img.addEventListener('click', () => open(img.currentSrc || img.src, img.alt));
+      img.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open(img.currentSrc || img.src, img.alt);
+        }
+      });
+    });
+
+    closeBtn.addEventListener('click', close);
+
+    // Clicking the backdrop (but not the image or close button) closes.
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) close();
+    });
+
+    // ESC is already handled by <dialog>, but make sure we also reset.
+    dialog.addEventListener('close', () => reset());
+
+    // Wheel zoom centred roughly where the cursor is.
+    stage.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        const rect = image.getBoundingClientRect();
+        const cx = e.clientX - (rect.left + rect.width / 2);
+        const cy = e.clientY - (rect.top + rect.height / 2);
+        const step = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * step));
+        // Keep the point under the cursor roughly stationary.
+        panX = panX - cx * (next / scale - 1);
+        panY = panY - cy * (next / scale - 1);
+        scale = next;
+        apply();
+      },
+      { passive: false }
+    );
+
+    // Drag to pan (mouse).
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    const startDrag = (clientX: number, clientY: number) => {
+      dragging = true;
+      lastX = clientX;
+      lastY = clientY;
+      image.classList.add('is-panning');
+    };
+
+    const moveDrag = (clientX: number, clientY: number) => {
+      if (!dragging) return;
+      panX += clientX - lastX;
+      panY += clientY - lastY;
+      lastX = clientX;
+      lastY = clientY;
+      apply();
+    };
+
+    const endDrag = () => {
+      dragging = false;
+      image.classList.remove('is-panning');
+    };
+
+    image.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startDrag(e.clientX, e.clientY);
+    });
+    window.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+    window.addEventListener('mouseup', endDrag);
+
+    // Touch: one-finger drag to pan, two-finger pinch to zoom.
+    let pinchStart: { dist: number; scale: number } | null = null;
+
+    const distance = (a: Touch, b: Touch) =>
+      Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+
+    stage.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.touches.length === 1) {
+          startDrag(e.touches[0].clientX, e.touches[0].clientY);
+        } else if (e.touches.length === 2) {
+          dragging = false;
+          pinchStart = {
+            dist: distance(e.touches[0], e.touches[1]),
+            scale,
+          };
+        }
+      },
+      { passive: true }
+    );
+
+    stage.addEventListener(
+      'touchmove',
+      (e) => {
+        if (e.touches.length === 1 && dragging) {
+          moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+        } else if (e.touches.length === 2 && pinchStart) {
+          e.preventDefault();
+          const d = distance(e.touches[0], e.touches[1]);
+          const next = Math.max(
+            MIN_SCALE,
+            Math.min(MAX_SCALE, pinchStart.scale * (d / pinchStart.dist))
+          );
+          scale = next;
+          apply();
+        }
+      },
+      { passive: false }
+    );
+
+    stage.addEventListener('touchend', () => {
+      endDrag();
+      pinchStart = null;
+    });
+
+    // Double-click/tap to reset.
+    image.addEventListener('dblclick', reset);
+  }
+</script>

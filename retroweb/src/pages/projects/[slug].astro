@@ -1,0 +1,379 @@
+---
+// projects/[slug].astro — One detail page per project entry.
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+import { Image } from 'astro:assets';
+import PageLayout from '../../layouts/PageLayout.astro';
+import '../../styles/prose.css';
+
+export async function getStaticPaths() {
+  const entries = await getCollection('projects');
+  return entries.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }));
+}
+
+interface Props {
+  entry: CollectionEntry<'projects'>;
+}
+
+const { entry } = Astro.props;
+const { title, description, image, components, links } = entry.data;
+
+const { Content } = await render(entry);
+
+const base = import.meta.env.BASE_URL;
+const projectsHref = `${base}projects/`;
+---
+
+<PageLayout title={title} description={description}>
+  <article class="project">
+    <header class="hero">
+      {image && (
+        <div class="hero-media">
+          <Image
+            src={image}
+            alt={`Representative image for ${title}`}
+            widths={[400, 800, 1200]}
+            sizes="(min-width: 1024px) 960px, 100vw"
+            loading="eager"
+            decoding="async"
+          />
+        </div>
+      )}
+      <h1 class="hero-title">{title}</h1>
+      <p class="hero-lede">{description}</p>
+    </header>
+
+    {components && components.length > 0 && (
+      <section class="block" aria-labelledby="components-heading">
+        <h2 id="components-heading" class="block-heading">Components</h2>
+        <ul class="components-list">
+          {components.map((c) => (
+            <li>{c}</li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {links && links.length > 0 && (
+      <section class="block" aria-labelledby="links-heading">
+        <h2 id="links-heading" class="block-heading">Links</h2>
+        <ul class="links-list">
+          {links.map((l) => (
+            <li>
+              <a href={l.url} target="_blank" rel="noopener noreferrer">
+                {l.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    <section class="block prose">
+      <Content />
+    </section>
+
+    <footer class="footer-nav">
+      <a href={projectsHref} class="back-link">&larr; Back to projects</a>
+    </footer>
+  </article>
+
+  <dialog class="zoom-dialog" aria-label="Image viewer">
+    <button
+      class="zoom-close"
+      type="button"
+      data-zoom-close
+      aria-label="Close image viewer"
+    >
+      &times;
+    </button>
+    <div class="zoom-stage">
+      <img class="zoom-image" alt="" />
+    </div>
+    <p class="zoom-hint" aria-hidden="true">
+      scroll / pinch to zoom &nbsp;·&nbsp; drag to pan &nbsp;·&nbsp; esc to close
+    </p>
+  </dialog>
+</PageLayout>
+
+<style>
+  .project {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-48);
+    max-width: 960px;
+    margin-inline: auto;
+  }
+
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+  }
+
+  .hero-media {
+    width: 100%;
+    aspect-ratio: 8 / 5;
+    overflow: hidden;
+    background-color: #0a0e12;
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+  }
+
+  .hero-media :global(img),
+  .hero-media :global(svg) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .hero-title {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    margin: 0;
+  }
+
+  .hero-lede {
+    font-family: var(--font-body);
+    color: var(--color-text);
+    font-size: 1.1rem;
+    line-height: 1.6;
+    margin: 0;
+    max-width: 65ch;
+  }
+
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+
+  .block-heading {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    margin: 0;
+  }
+
+  .components-list,
+  .links-list {
+    margin: 0;
+    padding-left: 1.25em;
+    color: var(--color-text);
+    font-family: var(--font-body);
+    line-height: 1.7;
+  }
+
+  .components-list li,
+  .links-list li {
+    margin-block: 0.25em;
+  }
+
+  .prose {
+    max-width: var(--max-prose);
+    margin-inline: 0;
+  }
+
+  .footer-nav {
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--space-24);
+  }
+
+  .back-link {
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 0.95rem;
+    letter-spacing: 0.03em;
+  }
+
+  .back-link:hover,
+  .back-link:focus {
+    color: var(--color-accent-alt);
+  }
+
+  /* Click-to-zoom for any image inside the prose body. */
+  .prose :global(img) {
+    cursor: zoom-in;
+    transition: filter 0.12s ease;
+  }
+  .prose :global(img):hover,
+  .prose :global(img):focus-visible {
+    filter: brightness(1.08);
+  }
+
+  .zoom-dialog {
+    padding: 0;
+    border: 1px solid var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-bg) 92%, black);
+    color: var(--color-text);
+    max-width: 100vw;
+    max-height: 100vh;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  .zoom-dialog::backdrop {
+    background-color: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(2px);
+  }
+
+  .zoom-dialog[open] {
+    display: grid;
+    grid-template-rows: 1fr auto;
+  }
+
+  .zoom-close {
+    position: absolute;
+    top: var(--space-16);
+    right: var(--space-16);
+    width: 2.25rem;
+    height: 2.25rem;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 1.6rem;
+    line-height: 1;
+    color: var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-bg) 80%, black);
+    border: 1px solid var(--color-accent);
+    border-radius: 2px;
+    cursor: pointer;
+    z-index: 2;
+  }
+
+  .zoom-close:hover,
+  .zoom-close:focus-visible {
+    color: var(--color-accent-alt);
+    border-color: var(--color-accent-alt);
+  }
+
+  .zoom-stage {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .zoom-image {
+    max-width: 100%;
+    max-height: 100%;
+    cursor: grab;
+    transform-origin: center center;
+    transition: transform 0.05s linear;
+    will-change: transform;
+    background-color: var(--color-bg);
+  }
+
+  .zoom-image.is-panning {
+    cursor: grabbing;
+    transition: none;
+  }
+
+  .zoom-hint {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    text-align: center;
+    padding: var(--space-12);
+    margin: 0;
+    border-top: 1px solid var(--color-border);
+    background-color: var(--color-bg);
+  }
+</style>
+
+<script>
+  // Click-to-zoom for images inside .prose blocks. Same pattern as PostLayout.
+  const dialog = document.querySelector<HTMLDialogElement>('.zoom-dialog');
+  const stage = dialog?.querySelector<HTMLDivElement>('.zoom-stage');
+  const image = dialog?.querySelector<HTMLImageElement>('.zoom-image');
+  const closeBtn = dialog?.querySelector<HTMLButtonElement>('[data-zoom-close]');
+
+  if (dialog && stage && image && closeBtn) {
+    let scale = 1;
+    let panX = 0;
+    let panY = 0;
+    const MIN_SCALE = 0.5;
+    const MAX_SCALE = 12;
+
+    const apply = () => {
+      image.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    };
+    const reset = () => { scale = 1; panX = 0; panY = 0; apply(); };
+    const open = (src: string, alt: string) => {
+      image.src = src; image.alt = alt; reset(); dialog.showModal();
+    };
+    const close = () => { dialog.close(); image.src = ''; };
+
+    document.querySelectorAll<HTMLImageElement>('.prose img').forEach((img) => {
+      img.setAttribute('tabindex', '0');
+      img.setAttribute('role', 'button');
+      img.setAttribute('aria-label', `Zoom image${img.alt ? ': ' + img.alt : ''}`);
+      img.addEventListener('click', () => open(img.currentSrc || img.src, img.alt));
+      img.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open(img.currentSrc || img.src, img.alt);
+        }
+      });
+    });
+
+    closeBtn.addEventListener('click', close);
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) close(); });
+    dialog.addEventListener('close', () => reset());
+
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = image.getBoundingClientRect();
+      const cx = e.clientX - (rect.left + rect.width / 2);
+      const cy = e.clientY - (rect.top + rect.height / 2);
+      const step = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * step));
+      panX = panX - cx * (next / scale - 1);
+      panY = panY - cy * (next / scale - 1);
+      scale = next;
+      apply();
+    }, { passive: false });
+
+    let dragging = false, lastX = 0, lastY = 0;
+    const startDrag = (cx: number, cy: number) => {
+      dragging = true; lastX = cx; lastY = cy; image.classList.add('is-panning');
+    };
+    const moveDrag = (cx: number, cy: number) => {
+      if (!dragging) return;
+      panX += cx - lastX; panY += cy - lastY; lastX = cx; lastY = cy; apply();
+    };
+    const endDrag = () => { dragging = false; image.classList.remove('is-panning'); };
+
+    image.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); });
+    window.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+    window.addEventListener('mouseup', endDrag);
+
+    let pinchStart: { dist: number; scale: number } | null = null;
+    const distance = (a: Touch, b: Touch) => Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+    stage.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) startDrag(e.touches[0].clientX, e.touches[0].clientY);
+      else if (e.touches.length === 2) {
+        dragging = false;
+        pinchStart = { dist: distance(e.touches[0], e.touches[1]), scale };
+      }
+    }, { passive: true });
+    stage.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && dragging) {
+        moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+      } else if (e.touches.length === 2 && pinchStart) {
+        e.preventDefault();
+        const d = distance(e.touches[0], e.touches[1]);
+        const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStart.scale * (d / pinchStart.dist)));
+        scale = next; apply();
+      }
+    }, { passive: false });
+    stage.addEventListener('touchend', () => { endDrag(); pinchStart = null; });
+    image.addEventListener('dblclick', reset);
+  }
+</script>

@@ -23,6 +23,10 @@ FemtoRV/FIRMWARE/TOOLS/firmware_words
 FemtoRV/RTL/CONFIGS/my_config.v
 FemtoRV/femtosoc.txt
 FemtoRV/FIRMWARE/config.mk
+# Python virtualenvs -- 32 MB / ~770 files if this is ever missing.
+.venv/
+venv/
+__pycache__/
 FemtoRV/TOOLS/environment.yml
 FemtoRV/TOOLS/requirements.txt
 FemtoRV/obj_dir/

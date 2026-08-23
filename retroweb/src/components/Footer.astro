@@ -1,0 +1,123 @@
+---
+// Footer.astro - Site-wide footer with project links, resources, community, and copyright.
+const base = import.meta.env.BASE_URL;
+const repoUrl = 'https://github.com/benpayne/learn-fpga';
+const issuesUrl = 'https://github.com/benpayne/learn-fpga/issues';
+const discussionsUrl = 'https://github.com/benpayne/learn-fpga/discussions';
+---
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <section class="footer-section">
+      <h3 class="footer-heading">Project</h3>
+      <p class="footer-tagline">
+        Retro-Active: an open FPGA co-processor bringing modern peripherals
+        to vintage CPUs.
+      </p>
+      <p>
+        <a href={repoUrl} class="footer-link">learn-fpga on GitHub</a>
+      </p>
+    </section>
+
+    <section class="footer-section">
+      <h3 class="footer-heading">Resources</h3>
+      <ul class="footer-list">
+        <li><a href={`${base}architecture/`} class="footer-link">Architecture</a></li>
+        <li><a href={`${base}getting-started/`} class="footer-link">Getting Started</a></li>
+        <li><a href={`${base}blog/`} class="footer-link">Blog</a></li>
+      </ul>
+    </section>
+
+    <section class="footer-section">
+      <h3 class="footer-heading">Community</h3>
+      <ul class="footer-list">
+        <li><a href={discussionsUrl} class="footer-link">GitHub Discussions</a></li>
+        <li><a href={issuesUrl} class="footer-link">Report an Issue</a></li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="footer-copyright">
+    &copy; 2026 Retro-Active. Built with Astro. Open source under the learn-fpga project.
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    background: var(--color-bg);
+    color: var(--color-text);
+    border-top: 1px solid var(--color-muted);
+    padding: 2rem 1.25rem 1.25rem;
+    margin-top: 3rem;
+    font-family: var(--font-mono, ui-monospace, 'Courier New', monospace);
+  }
+
+  .footer-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .footer-section {
+    min-width: 0;
+  }
+
+  .footer-heading {
+    color: var(--color-accent);
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 0.75rem;
+    border-bottom: 1px dashed var(--color-muted);
+    padding-bottom: 0.25rem;
+  }
+
+  .footer-tagline {
+    color: var(--color-text);
+    margin: 0 0 0.75rem;
+    line-height: 1.5;
+  }
+
+  .footer-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .footer-list li {
+    margin: 0.25rem 0;
+  }
+
+  .footer-link {
+    color: var(--color-amber);
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .footer-link:hover,
+  .footer-link:focus {
+    color: var(--color-accent);
+    border-bottom-color: var(--color-accent);
+    outline: none;
+  }
+
+  .footer-copyright {
+    max-width: 1100px;
+    margin: 1.5rem auto 0;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-muted);
+    color: var(--color-muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  @media (min-width: 768px) {
+    .footer-inner {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2.5rem;
+    }
+  }
+</style>

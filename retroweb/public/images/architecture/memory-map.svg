@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 720" role="img" aria-labelledby="mm-title mm-desc">
+  <title id="mm-title">Reference memory map (FemtoRV on Colorlight i5)</title>
+  <desc id="mm-desc">Vertical diagram showing the reference implementation's 24-bit address space: 32KB BRAM at the bottom, IO devices at 0x400000, then kernel, program, framebuffer, free heap, and stack regions up to 0xFFFFFF.</desc>
+
+  <!-- Background -->
+  <rect width="600" height="720" fill="#0a0e12"/>
+
+  <!-- Title -->
+  <text x="300" y="36" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace" font-weight="700"
+        font-size="20" fill="#7fff7f">Reference Memory Map</text>
+  <text x="300" y="58" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace" font-size="12" fill="#ffb000">
+    DRAFT — FemtoRV on Colorlight i5 (24-bit address space)
+  </text>
+
+  <!-- Address column header -->
+  <text x="30" y="92" font-family="JetBrains Mono, monospace"
+        font-size="11" fill="#5a6f5a">ADDRESS</text>
+  <text x="230" y="92" font-family="JetBrains Mono, monospace"
+        font-size="11" fill="#5a6f5a">REGION</text>
+  <text x="540" y="92" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="11" fill="#5a6f5a">SIZE</text>
+
+  <!-- Top axis line -->
+  <line x1="30" y1="100" x2="570" y2="100" stroke="#1f2a1f" stroke-width="1"/>
+
+  <!-- Region: Stack (top of memory) -->
+  <rect x="30" y="108" width="540" height="60"
+        fill="#0a0e12" stroke="#ffb000" stroke-width="1.5"/>
+  <text x="40" y="132" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0xFFFFF0</text>
+  <text x="40" y="152" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">0xF00000</text>
+  <text x="230" y="132" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#ffb000">Stack</text>
+  <text x="230" y="152" font-family="Inter, sans-serif"
+        font-size="11" fill="#d4e4d2">SDRAM, grows down</text>
+  <text x="560" y="144" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#ffb000">1 MB</text>
+
+  <!-- Region: Free heap -->
+  <rect x="30" y="176" width="540" height="72"
+        fill="#0a0e12" stroke="#5a6f5a" stroke-width="1"/>
+  <text x="40" y="200" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0xEFFFFF</text>
+  <text x="40" y="220" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">0xA7D000</text>
+  <text x="230" y="200" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#d4e4d2">Free heap</text>
+  <text x="230" y="220" font-family="Inter, sans-serif"
+        font-size="11" fill="#5a6f5a">Unallocated SDRAM</text>
+  <text x="560" y="216" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#d4e4d2">~4.5 MB</text>
+
+  <!-- Region: Framebuffer -->
+  <rect x="30" y="256" width="540" height="60"
+        fill="#0a0e12" stroke="#7fff7f" stroke-width="1.5"/>
+  <text x="40" y="280" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0xA7CFFF</text>
+  <text x="40" y="300" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">0xA00000</text>
+  <text x="230" y="280" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#7fff7f">Framebuffer</text>
+  <text x="230" y="300" font-family="Inter, sans-serif"
+        font-size="11" fill="#d4e4d2">640 × 400 × 16bpp (stride 2KB)</text>
+  <text x="560" y="292" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#7fff7f">512 KB</text>
+
+  <!-- Region: Program space -->
+  <rect x="30" y="324" width="540" height="72"
+        fill="#0a0e12" stroke="#5a6f5a" stroke-width="1"/>
+  <text x="40" y="348" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0x9FFFFF</text>
+  <text x="40" y="368" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">0x810000</text>
+  <text x="230" y="348" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#d4e4d2">Program space</text>
+  <text x="230" y="368" font-family="Inter, sans-serif"
+        font-size="11" fill="#5a6f5a">User programs loaded from SD</text>
+  <text x="560" y="364" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#d4e4d2">~2 MB</text>
+
+  <!-- Region: Kernel space -->
+  <rect x="30" y="404" width="540" height="60"
+        fill="#0a0e12" stroke="#7fff7f" stroke-width="1.5"/>
+  <text x="40" y="428" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0x80FFFF</text>
+  <text x="40" y="448" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">0x800000</text>
+  <text x="230" y="428" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#7fff7f">Kernel space</text>
+  <text x="230" y="448" font-family="Inter, sans-serif"
+        font-size="11" fill="#d4e4d2">RetroKernel resident image</text>
+  <text x="560" y="440" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#7fff7f">64 KB</text>
+
+  <!-- Gap marker between 0x4xxxxx and 0x8xxxxx -->
+  <line x1="280" y1="472" x2="320" y2="472" stroke="#5a6f5a" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="300" y="486" text-anchor="middle" font-family="JetBrains Mono, monospace"
+        font-size="10" fill="#5a6f5a">reserved</text>
+
+  <!-- Region: IO devices -->
+  <rect x="30" y="498" width="540" height="72"
+        fill="#0a0e12" stroke="#ffb000" stroke-width="1.5"/>
+  <text x="40" y="522" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0x400000+</text>
+  <text x="40" y="542" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">one-hot</text>
+  <text x="230" y="522" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#ffb000">IO devices</text>
+  <text x="230" y="542" font-family="Inter, sans-serif"
+        font-size="11" fill="#d4e4d2">UART · LEDs · Timer · PS/2 · GPU · Synth · SD · IRQ</text>
+  <text x="560" y="538" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#ffb000">variable</text>
+
+  <!-- Gap marker between 0x007FFF and 0x400000 -->
+  <line x1="280" y1="578" x2="320" y2="578" stroke="#5a6f5a" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="300" y="592" text-anchor="middle" font-family="JetBrains Mono, monospace"
+        font-size="10" fill="#5a6f5a">reserved</text>
+
+  <!-- Region: BRAM / BIOS -->
+  <rect x="30" y="604" width="540" height="60"
+        fill="#0a0e12" stroke="#7fff7f" stroke-width="1.5"/>
+  <text x="40" y="628" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#d4e4d2">0x007FFF</text>
+  <text x="40" y="648" font-family="JetBrains Mono, monospace"
+        font-size="12" fill="#5a6f5a">0x000000</text>
+  <text x="230" y="628" font-family="IBM Plex Mono, monospace"
+        font-weight="700" font-size="14" fill="#7fff7f">BRAM / BIOS</text>
+  <text x="230" y="648" font-family="Inter, sans-serif"
+        font-size="11" fill="#d4e4d2">Boot ROM + SD loader</text>
+  <text x="560" y="640" text-anchor="end" font-family="JetBrains Mono, monospace"
+        font-size="13" fill="#7fff7f">32 KB</text>
+
+  <!-- Bottom axis line -->
+  <line x1="30" y1="672" x2="570" y2="672" stroke="#1f2a1f" stroke-width="1"/>
+
+  <!-- Footer -->
+  <text x="300" y="700" text-anchor="middle"
+        font-family="JetBrains Mono, monospace" font-size="10" fill="#5a6f5a">
+    Diagram not to scale. Addresses in hexadecimal. SDRAM access routed through 64-entry write-through cache.
+  </text>
+</svg>

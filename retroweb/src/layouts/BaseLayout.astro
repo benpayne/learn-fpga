@@ -1,0 +1,54 @@
+---
+// BaseLayout.astro — HTML document shell with head meta, Open Graph, favicon,
+// and global CSS. No page chrome (header/footer) — PageLayout adds that.
+import '../styles/global.css';
+
+export interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+
+const base = import.meta.env.BASE_URL;
+const siteTitle = title && title.length > 0 ? `${title} — Retro-Active` : 'Retro-Active';
+const metaDescription =
+  description || 'A community ecosystem for building retro computers with shared standards.';
+const faviconHref = `${base}favicon.svg`;
+// Default OG image is an SVG for easy editing; many crawlers (Facebook, LinkedIn)
+// prefer PNG/JPG for Open Graph previews. For production, consider converting
+// public/images/og/og-default.svg to PNG (e.g. via rsvg-convert, sharp, or
+// Astro's getImage helper) and pointing this at the PNG. We don't do it at
+// build time to avoid pulling in a raster-conversion dependency.
+const ogImageUrl = ogImage || `${base}images/og/og-default.svg`;
+const canonicalUrl = Astro.url.toString();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{siteTitle}</title>
+    <meta name="description" content={metaDescription} />
+    <link rel="icon" type="image/svg+xml" href={faviconHref} />
+
+    {/* Open Graph */}
+    <meta property="og:title" content={siteTitle} />
+    <meta property="og:description" content={metaDescription} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={ogImageUrl} />
+
+    {/* Twitter card */}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={siteTitle} />
+    <meta name="twitter:description" content={metaDescription} />
+    <meta name="twitter:image" content={ogImageUrl} />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

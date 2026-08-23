@@ -1,0 +1,198 @@
+/* ==========================================================================
+   prose.css — Typography for long-form blog posts and markdown content
+   ========================================================================== */
+
+.prose {
+  max-width: var(--max-prose);
+  margin-inline: auto;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  line-height: 1.7;
+}
+
+/* ---------- Paragraphs ---------- */
+
+.prose p {
+  margin-block: 1em;
+  line-height: 1.7;
+}
+
+/* ---------- Headings inside prose ---------- */
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  font-family: var(--font-heading);
+  color: var(--color-accent);
+  margin-top: 2em;
+  margin-bottom: 0.5em;
+  line-height: 1.25;
+}
+
+.prose h1 { font-size: 2.2rem; }
+.prose h2 { font-size: 1.8rem; }
+.prose h3 { font-size: 1.4rem; }
+.prose h4 { font-size: 1.2rem; }
+.prose h5 { font-size: 1.05rem; }
+.prose h6 {
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+}
+
+.prose > :first-child {
+  margin-top: 0;
+}
+
+/* ---------- Lists ---------- */
+
+.prose ul,
+.prose ol {
+  margin-block: 1em;
+  padding-left: 1.5em;
+}
+
+.prose ul {
+  list-style: disc;
+}
+
+.prose ol {
+  list-style: decimal;
+}
+
+.prose li {
+  margin-block: 0.35em;
+}
+
+.prose li > ul,
+.prose li > ol {
+  margin-block: 0.25em;
+}
+
+/* ---------- Blockquotes ---------- */
+
+.prose blockquote {
+  margin-block: 1.5em;
+  padding-left: 1em;
+  border-left: 3px solid var(--color-accent);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.prose blockquote p {
+  margin-block: 0.5em;
+}
+
+/* ---------- Inline code ---------- */
+
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--color-accent-alt);
+  background-color: rgba(255, 176, 0, 0.08);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+}
+
+/* ---------- Code blocks ---------- */
+
+.prose pre {
+  margin-block: 1.25em;
+  padding: 1em;
+  overflow-x: auto;
+  background-color: #111;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.prose pre code {
+  font-family: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+/* ---------- Images ---------- */
+
+.prose img {
+  margin-block: 1em;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+}
+
+.prose figure {
+  margin-block: 1.5em;
+}
+
+.prose figcaption {
+  margin-top: 0.5em;
+  font-size: 0.9em;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+/* ---------- Tables ---------- */
+
+.prose table {
+  width: 100%;
+  margin-block: 1.5em;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.prose th {
+  text-align: left;
+  color: var(--color-accent);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  padding: 0.5em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.prose td {
+  padding: 0.5em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ---------- Horizontal rule ---------- */
+
+.prose hr {
+  margin: 2em auto;
+  width: 50%;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---------- Links (inherit global, with a stronger underline in prose) ---------- */
+
+.prose a {
+  text-decoration: underline;
+  text-decoration-color: var(--color-border);
+  text-underline-offset: 0.2em;
+}
+
+.prose a:hover,
+.prose a:focus {
+  text-decoration-color: var(--color-accent-alt);
+}
+
+/* ---------- Strong / em ---------- */
+
+.prose strong {
+  color: var(--color-accent-alt);
+  font-weight: 700;
+}
+
+.prose em {
+  font-style: italic;
+}

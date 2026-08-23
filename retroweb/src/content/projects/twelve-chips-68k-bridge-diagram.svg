@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 860" font-family="'IBM Plex Mono', ui-monospace, monospace" role="img" aria-label="Block diagram of the MC68000-to-Retro-Active bus bridge with twelve 74-series chips">
+  <defs>
+    <style>
+      .bg { fill: #0a0e12; }
+      .chip { fill: #101419; stroke: #7fff7f; stroke-width: 1.6; }
+      .cpu-box { fill: #1a1208; stroke: #ffb000; stroke-width: 2; }
+      .bus-box { fill: #101419; stroke: #d4e4d2; stroke-width: 1.2; stroke-dasharray: 5 3; }
+      .title-lbl { fill: #ffb000; font-size: 18px; font-weight: 700; }
+      .chip-ref { fill: #7fff7f; font-size: 13px; font-weight: 700; }
+      .chip-role { fill: #d4e4d2; font-size: 11px; }
+      .sig { fill: #d4e4d2; font-size: 11px; }
+      .sig-muted { fill: #5a6f5a; font-size: 10px; font-style: italic; }
+      .wire-addr { stroke: #ffb000; stroke-width: 1.6; fill: none; }
+      .wire-data { stroke: #7fff7f; stroke-width: 1.6; fill: none; }
+      .wire-ctrl { stroke: #8ca58c; stroke-width: 1.1; fill: none; }
+      .note { fill: #5a6f5a; font-size: 11px; }
+      .crosswire-lbl { fill: #7fff7f; font-size: 9px; font-style: italic; }
+    </style>
+    <marker id="ah-addr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <polygon points="0 0, 8 4, 0 8" fill="#ffb000"/>
+    </marker>
+    <marker id="ah-data" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <polygon points="0 0, 8 4, 0 8" fill="#7fff7f"/>
+    </marker>
+    <marker id="ah-ctrl" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <polygon points="0 0, 8 4, 0 8" fill="#8ca58c"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1200" height="860"/>
+
+  <text x="30" y="34" class="title-lbl">68000 Bridge — 12 chips (pure 74-series)</text>
+
+  <g transform="translate(820,22)">
+    <line x1="0"   y1="10" x2="28"  y2="10" class="wire-addr"/>
+    <text x="34"  y="14" class="sig-muted">address</text>
+    <line x1="110" y1="10" x2="138" y2="10" class="wire-data"/>
+    <text x="144" y="14" class="sig-muted">data</text>
+    <line x1="200" y1="10" x2="228" y2="10" class="wire-ctrl"/>
+    <text x="234" y="14" class="sig-muted">control</text>
+  </g>
+
+  <!-- ============== 68000 CPU on the left ============== -->
+  <rect class="cpu-box" x="40" y="80" width="170" height="560" rx="6"/>
+  <text x="125" y="110" text-anchor="middle" class="title-lbl">MC68000</text>
+  <text x="125" y="128" text-anchor="middle" class="sig-muted">16-bit host CPU</text>
+
+  <text x="205" y="180" text-anchor="end" class="sig">A[23:1]</text>
+  <text x="205" y="240" text-anchor="end" class="sig">D[15:8]</text>
+  <text x="205" y="280" text-anchor="end" class="sig">D[7:0]</text>
+  <text x="205" y="330" text-anchor="end" class="sig">R/W</text>
+  <text x="205" y="360" text-anchor="end" class="sig">/AS</text>
+  <text x="205" y="390" text-anchor="end" class="sig">/UDS</text>
+  <text x="205" y="420" text-anchor="end" class="sig">/LDS</text>
+  <text x="205" y="460" text-anchor="end" class="sig">/DTACK</text>
+  <text x="205" y="500" text-anchor="end" class="sig">/IPL[2:0]</text>
+  <text x="205" y="540" text-anchor="end" class="sig">/RESET</text>
+
+  <!-- ============== Chips (middle) ============== -->
+
+  <!-- U1 U2 U3: address buffers -->
+  <rect class="chip" x="280" y="140" width="180" height="50" rx="3"/>
+  <text x="370" y="161" text-anchor="middle" class="chip-ref">U1  —  74LS244</text>
+  <text x="370" y="178" text-anchor="middle" class="chip-role">A[ 8:1] buffer</text>
+
+  <rect class="chip" x="490" y="140" width="180" height="50" rx="3"/>
+  <text x="580" y="161" text-anchor="middle" class="chip-ref">U2  —  74LS244</text>
+  <text x="580" y="178" text-anchor="middle" class="chip-role">A[16:9] buffer</text>
+
+  <rect class="chip" x="280" y="200" width="180" height="50" rx="3"/>
+  <text x="370" y="221" text-anchor="middle" class="chip-ref">U3  —  74LS244</text>
+  <text x="370" y="238" text-anchor="middle" class="chip-role">A[23:17] buffer</text>
+
+  <!-- U4 / U5: data transceivers with cross-wire -->
+  <rect class="chip" x="490" y="220" width="180" height="50" rx="3"/>
+  <text x="580" y="241" text-anchor="middle" class="chip-ref">U4  —  74LS245</text>
+  <text x="580" y="258" text-anchor="middle" class="chip-role">D[15:8] ↔ DATA[7:0]</text>
+
+  <rect class="chip" x="490" y="280" width="180" height="50" rx="3"/>
+  <text x="580" y="301" text-anchor="middle" class="chip-ref">U5  —  74LS245</text>
+  <text x="580" y="318" text-anchor="middle" class="chip-role">D[7:0] ↔ DATA[15:8]</text>
+
+  <!-- U6: /AS synchroniser -->
+  <rect class="chip" x="280" y="360" width="180" height="50" rx="3"/>
+  <text x="370" y="381" text-anchor="middle" class="chip-ref">U6  —  74LS74</text>
+  <text x="370" y="398" text-anchor="middle" class="chip-role">/AS → 2-FF sync</text>
+
+  <!-- U7: FSM -->
+  <rect class="chip" x="490" y="360" width="180" height="50" rx="3"/>
+  <text x="580" y="381" text-anchor="middle" class="chip-ref">U7  —  74LS74</text>
+  <text x="580" y="398" text-anchor="middle" class="chip-role">FSM  (S1, S0)</text>
+
+  <!-- U8: NAND quad #1 — /DTACK + IRQ invert + spare NAND inverters -->
+  <rect class="chip" x="280" y="440" width="390" height="50" rx="3"/>
+  <text x="475" y="461" text-anchor="middle" class="chip-ref">U8  —  74LS00</text>
+  <text x="475" y="478" text-anchor="middle" class="chip-role">/DTACK + IRQ→/IPL + inverters for ~cpu_rw, ~uds_n</text>
+
+  <!-- U9: NAND quad #2 — 245 OE gates + RSTRB OR combiner + ~lds_n -->
+  <rect class="chip" x="280" y="498" width="390" height="50" rx="3"/>
+  <text x="475" y="519" text-anchor="middle" class="chip-ref">U9  —  74LS00</text>
+  <text x="475" y="536" text-anchor="middle" class="chip-role">U4 / U5 OE gates + RSTRB combiner + ~lds_n inverter</text>
+
+  <!-- U10, U11, U12: AND + OR pack -->
+  <rect class="chip" x="280" y="556" width="125" height="50" rx="3"/>
+  <text x="342" y="577" text-anchor="middle" class="chip-ref">U10  —  74LS08</text>
+  <text x="342" y="594" text-anchor="middle" class="chip-role">AND gates</text>
+
+  <rect class="chip" x="417" y="556" width="125" height="50" rx="3"/>
+  <text x="479" y="577" text-anchor="middle" class="chip-ref">U11  —  74LS08</text>
+  <text x="479" y="594" text-anchor="middle" class="chip-role">AND gates</text>
+
+  <rect class="chip" x="554" y="556" width="125" height="50" rx="3"/>
+  <text x="616" y="577" text-anchor="middle" class="chip-ref">U12  —  74LS32</text>
+  <text x="616" y="594" text-anchor="middle" class="chip-role">OR gates</text>
+
+  <!-- Brace showing glue block -->
+  <path d="M 280 614 L 280 618 L 475 618 L 475 624 L 475 618 L 680 618 L 680 614" class="wire-ctrl"/>
+  <text x="475" y="638" text-anchor="middle" class="sig-muted">next-state + WSTRB/RSTRB decode  (one 22V10 PAL/GAL would absorb U8-U12)</text>
+
+  <!-- ============== Bus on the right ============== -->
+  <rect class="bus-box" x="760" y="80" width="180" height="620" rx="6"/>
+  <text x="850" y="110" text-anchor="middle" class="title-lbl">Bus</text>
+  <text x="850" y="128" text-anchor="middle" class="sig-muted">retro-active backplane</text>
+
+  <text x="772" y="170" class="sig">ADDR[8:1]</text>
+  <text x="772" y="190" class="sig">ADDR[16:9]</text>
+  <text x="772" y="210" class="sig">ADDR[23:17]</text>
+  <text x="772" y="230" class="sig-muted">ADDR[0] = 0</text>
+
+  <text x="772" y="262" class="sig">DATA[7:0]</text>
+  <text x="772" y="282" class="sig">DATA[15:8]</text>
+  <text x="772" y="302" class="sig-muted">DATA[31:16] = Z</text>
+
+  <text x="772" y="338" class="sig">WSTRB[0]</text>
+  <text x="772" y="358" class="sig">WSTRB[1]</text>
+  <text x="772" y="378" class="sig-muted">WSTRB[3:2] = 0</text>
+  <text x="772" y="400" class="sig">RSTRB</text>
+
+  <text x="772" y="438" class="sig">READY</text>
+  <text x="772" y="470" class="sig">IRQ</text>
+
+  <text x="772" y="520" class="sig">CLK (25 MHz)</text>
+  <text x="772" y="540" class="sig">RESET_N</text>
+
+  <!-- ============== Wires ============== -->
+
+  <!-- Address bus: CPU A[23:1] fans out to U1, U2, U3 -->
+  <!-- A[8:1] to U1 -->
+  <path d="M 210 180 L 240 180 L 240 168 L 280 168" class="wire-addr" marker-end="url(#ah-addr)"/>
+  <!-- A[16:9] to U2 -->
+  <path d="M 240 180 L 240 148 L 470 148 L 470 165 L 490 165" class="wire-addr" marker-end="url(#ah-addr)"/>
+  <!-- A[23:17] to U3 -->
+  <path d="M 240 180 L 240 228 L 280 228" class="wire-addr" marker-end="url(#ah-addr)"/>
+
+  <!-- U1 → bus ADDR[8:1] -->
+  <path d="M 460 168 L 730 168 L 730 167 L 760 167" class="wire-addr" marker-end="url(#ah-addr)"/>
+  <!-- U2 → bus ADDR[16:9] -->
+  <path d="M 670 165 L 735 165 L 735 187 L 760 187" class="wire-addr" marker-end="url(#ah-addr)"/>
+  <!-- U3 → bus ADDR[23:17] -->
+  <path d="M 460 228 L 728 228 L 728 207 L 760 207" class="wire-addr" marker-end="url(#ah-addr)"/>
+
+  <!-- Data bus: CPU D[15:8] and D[7:0] through 74LS245s -->
+  <!-- CPU D[15:8] → U4 A-side -->
+  <path d="M 210 240 L 490 240" class="wire-data"/>
+  <path d="M 485 236 L 220 236" class="wire-data" marker-end="url(#ah-data)"/>
+  <path d="M 220 244 L 485 244" class="wire-data" marker-end="url(#ah-data)"/>
+
+  <!-- CPU D[7:0] → U5 A-side -->
+  <path d="M 210 280 L 470 280 L 470 298 L 490 298" class="wire-data"/>
+  <path d="M 485 294 L 475 294 L 475 276 L 220 276" class="wire-data" marker-end="url(#ah-data)"/>
+  <path d="M 220 284 L 475 284 L 475 302 L 485 302" class="wire-data" marker-end="url(#ah-data)"/>
+
+  <!-- U4 B-side → bus DATA[7:0]  (cross-wire label) -->
+  <path d="M 670 240 L 700 240 L 700 258 L 760 258" class="wire-data"/>
+  <path d="M 695 254 L 675 254 L 675 236 L 680 236" class="wire-data" marker-end="url(#ah-data)"/>
+  <path d="M 680 244 L 675 244 L 675 262 L 755 262" class="wire-data" marker-end="url(#ah-data)"/>
+  <text x="710" y="233" class="crosswire-lbl">cross-wired</text>
+
+  <!-- U5 B-side → bus DATA[15:8] -->
+  <path d="M 670 298 L 710 298 L 710 280 L 760 280" class="wire-data"/>
+  <path d="M 705 276 L 685 276 L 685 294 L 680 294" class="wire-data" marker-end="url(#ah-data)"/>
+  <path d="M 680 302 L 685 302 L 685 284 L 755 284" class="wire-data" marker-end="url(#ah-data)"/>
+
+  <!-- /AS from CPU → U6 -->
+  <path d="M 210 360 L 240 360 L 240 385 L 280 385" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- /UDS from CPU → U4 OE -->
+  <path d="M 210 390 L 260 390 L 260 310 L 520 310 L 520 330" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- /LDS from CPU → U5 OE -->
+  <path d="M 210 420 L 270 420 L 270 335 L 540 335 L 540 330" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- R/W from CPU → U4/U5 DIR and U8 -->
+  <path d="M 210 330 L 450 330 L 450 250 L 500 250" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 450 330 L 450 440" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- U6 → U7 (sync'd /AS gates FSM) -->
+  <path d="M 460 385 L 490 385" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <!-- U6 → U8 -->
+  <path d="M 370 410 L 370 440" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- U7 ↔ U8: state bits go to glue -->
+  <path d="M 580 410 L 580 440" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 610 440 L 610 410" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- U7 → U1/U2/U3 OE (cycle_active) -->
+  <path d="M 500 360 L 500 348 L 430 348 L 430 126 L 370 126 L 370 140" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 430 126 L 580 126 L 580 140" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 430 348 L 430 212 L 370 212 L 370 200" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- U8 → CPU /DTACK -->
+  <path d="M 390 490 L 390 560 L 215 560 L 215 460" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- U8 → CPU /IPL lines -->
+  <path d="M 420 490 L 420 580 L 220 580 L 220 500" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- U8 → bus WSTRB / RSTRB -->
+  <path d="M 670 455 L 690 455 L 690 338 L 760 338" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 670 460 L 695 460 L 695 358 L 760 358" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 670 475 L 700 475 L 700 400 L 760 400" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- Bus READY → U7 -->
+  <path d="M 760 438 L 720 438 L 720 395 L 670 395" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- Bus IRQ → U8 -->
+  <path d="M 760 470 L 710 470 L 710 475 L 670 475" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- Bus CLK → U6 and U7 -->
+  <path d="M 760 520 L 490 520 L 490 500" class="wire-ctrl"/>
+  <path d="M 490 500 L 370 500 L 370 410" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+  <path d="M 490 500 L 580 500 L 580 410" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- Bus RESET_N → CPU /RESET and FSM CLR (combined line) -->
+  <path d="M 760 540 L 225 540 L 225 540 L 215 540" class="wire-ctrl" marker-end="url(#ah-ctrl)"/>
+
+  <!-- ============== Notes at the bottom ============== -->
+  <text x="30" y="688" class="note">Notes</text>
+  <line x1="30" y1="696" x2="110" y2="696" class="wire-ctrl"/>
+  <text x="30" y="716" class="sig">•  U4 / U5 data paths are cross-wired for 68k big-endian alignment: even byte on CPU D[15:8] becomes bus byte lane 0 (DATA[7:0])</text>
+  <text x="30" y="734" class="sig">•  Each 74LS245 is OE'd only while its own strobe is asserted — UDS gates U4, LDS gates U5, so byte-only accesses don't drive the other lane</text>
+  <text x="30" y="752" class="sig">•  FSM: IDLE (00) → ACTIVE (01) on /AS low sync'd — ACTIVE → DONE (11) on bus READY — DONE → IDLE when /AS goes high</text>
+  <text x="30" y="770" class="sig">•  /DTACK = low only in DONE; this is the 68000's handshake "I'm satisfied, you can end the cycle"</text>
+  <text x="30" y="788" class="sig">•  WSTRB[0] / WSTRB[1] are gated per byte lane; RSTRB extends through DONE so read data stays valid until /AS releases</text>
+  <text x="30" y="806" class="sig">•  Bus ADDR[0] = 0, WSTRB[3:2] = 0, DATA[31:16] = Z — this is a 16-bit host using bus lanes 0 and 1 only</text>
+  <text x="30" y="824" class="sig">•  All 12 chips are stock 74LS parts — no PAL/GAL/FPGA.  A follow-up post shows the same bridge collapsed with a PAL/GAL.</text>
+</svg>

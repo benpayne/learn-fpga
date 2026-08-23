@@ -1,0 +1,104 @@
+---
+// blog/index.astro — Blog landing: newest-first list of non-draft posts.
+import { getCollection } from 'astro:content';
+import PageLayout from '../../layouts/PageLayout.astro';
+import BlogCard from '../../components/BlogCard.astro';
+
+const description =
+  'Technical posts on FPGA design, retro computing, and the Retro-Active ecosystem.';
+
+const posts = (
+  await getCollection('blog', ({ data }) => !data.draft)
+).sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+---
+
+<PageLayout title="Blog" description={description}>
+  <section class="blog">
+    <header class="blog-header">
+      <p class="blog-kicker" aria-hidden="true">// ls blog/</p>
+      <h1 class="blog-heading">Blog</h1>
+      <p class="blog-lede">{description}</p>
+    </header>
+
+    {posts.length === 0 ? (
+      <div class="empty" role="status">
+        <pre class="empty-terminal">&gt; blog/ (empty) &mdash; posts coming soon</pre>
+      </div>
+    ) : (
+      <ul class="post-list" role="list">
+        {posts.map((entry) => (
+          <li class="post-item">
+            <BlogCard entry={entry} />
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
+</PageLayout>
+
+<style>
+  .blog {
+    width: 100%;
+    max-width: 960px;
+    margin-inline: auto;
+  }
+
+  .blog-header {
+    margin-bottom: var(--space-32);
+  }
+
+  .blog-kicker {
+    font-family: var(--font-mono);
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-8) 0;
+  }
+
+  .blog-heading {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    margin: 0 0 var(--space-12) 0;
+  }
+
+  .blog-lede {
+    color: var(--color-text);
+    font-family: var(--font-body);
+    max-width: 60ch;
+    margin: 0;
+  }
+
+  .post-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-24);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .post-item {
+    display: flex;
+  }
+
+  .post-item > :global(*) {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .empty {
+    border: 1px solid var(--color-border);
+    border-radius: 2px;
+    background-color: color-mix(in srgb, var(--color-accent) 3%, var(--color-bg));
+    padding: var(--space-32);
+    max-width: 60ch;
+  }
+
+  .empty-terminal {
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-size: 1rem;
+    margin: 0;
+    white-space: pre-wrap;
+  }
+</style>

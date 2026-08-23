@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" font-family="'IBM Plex Mono', ui-monospace, monospace" role="img" aria-label="Specification card for the Audio Card project.">
+  <defs>
+    <style>
+      .bg { fill: #0a0e12; }
+      .frame { fill: #101419; stroke: #ffb000; stroke-width: 2; rx: 6; }
+      .corner { fill: #ffb000; }
+      .kicker { fill: #5a6f5a; font-size: 13px; letter-spacing: 0.12em; }
+      .title { fill: #ffb000; font-size: 38px; font-weight: 700; }
+      .sub { fill: #d4e4d2; font-size: 16px; }
+      .feat { fill: #d4e4d2; font-size: 14px; }
+      .bullet { fill: #7fff7f; font-size: 14px; }
+      .status { fill: #7fff7f; font-size: 12px; font-weight: 700; letter-spacing: 0.15em; }
+      .status-frame { fill: none; stroke: #7fff7f; stroke-width: 1; rx: 3; }
+      .deco { fill: #ffb000; opacity: 0.10; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="800" height="500"/>
+
+  <rect class="frame" x="20" y="20" width="760" height="460"/>
+
+  <!-- decorative corner brackets -->
+  <path d="M 32 50 L 32 32 L 50 32" stroke="#ffb000" stroke-width="2" fill="none"/>
+  <path d="M 768 32 L 750 32 L 768 32 L 768 50" stroke="#ffb000" stroke-width="2" fill="none"/>
+  <path d="M 32 450 L 32 468 L 50 468" stroke="#ffb000" stroke-width="2" fill="none"/>
+  <path d="M 768 468 L 750 468 L 768 468 L 768 450" stroke="#ffb000" stroke-width="2" fill="none"/>
+
+  <!-- kicker / category -->
+  <text x="60" y="80" class="kicker">HARDWARE / Peripheral Card</text>
+
+  <!-- title -->
+  <text x="60" y="140" class="title">Audio Card</text>
+
+  <!-- subtitle / one-liner -->
+  <text x="60" y="180" class="sub">4-voice FM synth plus sampled PCM playback. I²S DAC, mixer, ring buffer.</text>
+
+  <!-- feature bullets -->
+  <text x="78" y="250" class="bullet">▸</text>
+  <text x="100" y="250" class="feat">4-voice 4-operator FM (TDM)</text>
+  <text x="78" y="280" class="bullet">▸</text>
+  <text x="100" y="280" class="feat">1024-sample 48 kHz PCM ring buffer</text>
+  <text x="78" y="310" class="bullet">▸</text>
+  <text x="100" y="310" class="feat">I²S out + headphone PWM</text>
+  <text x="78" y="340" class="bullet">▸</text>
+  <text x="100" y="340" class="feat">Saturating 17-bit FM/PCM mixer</text>
+
+  <!-- status badge -->
+  <rect class="status-frame" x="600" y="430" width="160" height="32"/>
+  <text x="680" y="451" text-anchor="middle" class="status">DESIGN</text>
+
+  <!-- decorative motif -->
+  <path d="M 540 290 L 540 290.0 L 544 298.2 L 548 305.5 L 552 311.0 L 556 314.3 L 560 314.9 L 564 312.7 L 568 308.1 L 572 301.4 L 576 293.5 L 580 285.2 L 584 277.5 L 588 271.1 L 592 266.8 L 596 265.0 L 600 266.0 L 604 269.7 L 608 275.5 L 612 283.0 L 616 291.3 L 620 299.4 L 624 306.4 L 628 311.7 L 632 314.6 L 636 314.7 L 640 312.2 L 644 307.2 L 648 300.3 L 652 292.3 L 656 284.0 L 660 276.4 L 664 270.3 L 668 266.3 L 672 265.0 L 676 266.4 L 680 270.4 L 684 276.6 L 688 284.2 L 692 292.5 L 696 300.5 L 700 307.3" stroke="#ffb000" stroke-width="2" fill="none" opacity="0.55"/>
+</svg>

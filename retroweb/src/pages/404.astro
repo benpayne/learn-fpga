@@ -1,0 +1,100 @@
+---
+// 404.astro — Terminal-style "page not found" page.
+import PageLayout from '../layouts/PageLayout.astro';
+
+const base = import.meta.env.BASE_URL;
+---
+
+<PageLayout
+  title="404 — Not Found"
+  description="The page you requested could not be found."
+>
+  <section class="crt-error">
+    <h1 class="big-404" aria-label="Error 404">404</h1>
+    <p class="subtitle">PATH NOT FOUND</p>
+
+    <pre class="terminal-block" aria-hidden="true">
+<span class="prompt">retro-active:~$</span> cd /requested/page
+<span class="err">bash: cd: /requested/page: No such file or directory</span>
+<span class="prompt">retro-active:~$</span> <span class="typed">_</span>
+    </pre>
+
+    <p class="return">
+      <a href={base}>&larr; cd / &nbsp; (return home)</a>
+    </p>
+  </section>
+</PageLayout>
+
+<style>
+  .crt-error {
+    max-width: 48rem;
+    margin-inline: auto;
+    padding-block: var(--space-48);
+    text-align: center;
+    font-family: var(--font-mono);
+  }
+
+  .big-404 {
+    font-family: var(--font-heading);
+    font-size: clamp(5rem, 18vw, 10rem);
+    color: var(--color-accent-alt);
+    line-height: 1;
+    letter-spacing: -0.02em;
+    margin-bottom: var(--space-16);
+    text-shadow: 0 0 12px rgba(255, 176, 0, 0.35);
+  }
+
+  .subtitle {
+    font-family: var(--font-heading);
+    color: var(--color-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-size: 1rem;
+    margin-bottom: var(--space-32);
+  }
+
+  .terminal-block {
+    display: inline-block;
+    text-align: left;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: var(--space-16) var(--space-24);
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    white-space: pre;
+    margin: 0 auto var(--space-32);
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  .terminal-block .prompt {
+    color: var(--color-accent);
+  }
+
+  .terminal-block .err {
+    color: var(--color-accent-alt);
+  }
+
+  .terminal-block .typed {
+    color: var(--color-accent);
+    animation: blink 1s steps(2, start) infinite;
+  }
+
+  @keyframes blink {
+    to {
+      visibility: hidden;
+    }
+  }
+
+  .return {
+    margin-top: var(--space-16);
+    font-family: var(--font-mono);
+  }
+
+  .return a {
+    font-size: 1.05rem;
+  }
+</style>
