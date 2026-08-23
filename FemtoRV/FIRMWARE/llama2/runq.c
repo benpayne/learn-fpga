@@ -519,6 +519,14 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
             float *q = s->q + (uint32_t)h * head_size;
             float *att = s->att + (uint32_t)h * cfg->seq_len;
 
+            /* Sub-timers (feature 004 R48). PROF_ATTENTION still brackets the
+             * whole thing; the profiler charges cycles to the INNERMOST active
+             * category, so `attention` reports the residual and these three
+             * report the breakdown, with no double counting. Added because
+             * attention measured 170 cycles per multiply-add while a synthetic
+             * benchmark of the same access pattern measured 25 -- a 7x gap
+             * that had to be attributed rather than guessed at. */
+            prof_begin(PROF_ATT_SCORE);
             for (int t = 0; t <= pos; t++) {
                 const float *k = s->key_cache + loff + (uint32_t)t * kv_dim
                                   + (uint32_t)(h / kv_mul) * head_size;
@@ -527,9 +535,13 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
                 score /= sqrtf((float)head_size);
                 att[t] = score;
             }
+            prof_end(PROF_ATT_SCORE);
 
+            prof_begin(PROF_ATT_SOFT);
             softmax(att, pos + 1);
+            prof_end(PROF_ATT_SOFT);
 
+            prof_begin(PROF_ATT_SUM);
             float *xb = s->xb + (uint32_t)h * head_size;
             memset(xb, 0, (size_t)head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
@@ -538,6 +550,7 @@ static float *forward_q8(const Q8Config *cfg, const Q8Weights *w, Q8RunState *s,
                 float a = att[t];
                 for (int i = 0; i < head_size; i++) xb[i] += a * v[i];
             }
+            prof_end(PROF_ATT_SUM);
         }
         prof_end(PROF_ATTENTION);
 

@@ -59,7 +59,8 @@ static uint32_t run_tokens       = 0;
 static int      run_active       = 0;
 
 static const char *const cat_names[PROF_NCAT] = {
-    "matmul", "attention", "rmsnorm", "rope", "sample", "quant"
+    "matmul", "attention", "rmsnorm", "rope", "sample", "att_score", "att_soft", "att_sum",
+    "quant"
 };
 
 /* -------------------------------------------------------------- lifecycle */

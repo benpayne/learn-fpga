@@ -14,6 +14,9 @@ typedef enum {
     PROF_RMSNORM,
     PROF_ROPE,
     PROF_SAMPLE,
+    PROF_ATT_SCORE, /* attention sub-timers (feature 004 R48): score dots,   */
+    PROF_ATT_SOFT,  /* softmax, and the weighted sum. PROF_ATTENTION still   */
+    PROF_ATT_SUM,   /* wraps all three, so the totals stay comparable.       */
     PROF_QUANT,     /* activation quantization (runq.c only, feature 004 R2) --
                      * new scalar work the int8 path adds before every matmul;
                      * unused (always 0) by the fp32 llama2.c binary. */

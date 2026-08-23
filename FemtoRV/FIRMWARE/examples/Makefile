@@ -95,6 +95,20 @@ upload_sdram_memtest: sdram_memtest.bin
 # that linked only $< and reported success while silently omitting most
 # of the program -- the recipe below names every object explicitly so
 # that mistake cannot repeat here.
+# attn_bench: decomposes attention's 170 cycles/MAC into arithmetic vs memory,
+# so the KV-cache-vs-fp32-datapath decision is made from a measurement.
+attn_bench.o: attn_bench.c
+
+attn_bench.elf: sdramstart.o attn_bench.o $(RV_BINARIES)
+	$(RVLD) $(RVLDFLAGS) $(LDFLAGS_UPLOAD_SDRAM) sdramstart.o attn_bench.o -o attn_bench.elf $(FEMTORV32_LIBS_EX) $(RVGCC_LIB)
+
+attn_bench.bin: attn_bench.elf
+	$(RVOBJCOPY) -O binary $< $@
+	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+
+upload_attn_bench: attn_bench.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
 # sdput: writes a staged SDRAM buffer onto the SD card. Explicit multi-object
 # link like acc_test below, not the %.upload_sdram.elf pattern rule.
 sdput.o: sdput.c ../llama2/q8_format.h
