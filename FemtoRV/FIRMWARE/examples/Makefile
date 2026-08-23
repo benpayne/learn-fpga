@@ -72,6 +72,30 @@ sd_bench.bin: sd_bench.upload_sdram.elf
 upload_sd_bench: sd_bench.bin
 	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
 
+# ---- Serial-only demos for the minimal LLM profile ----
+# hello_serial and sd_ls are the GPU-free, monitor-loadable siblings of
+# hello.c and sd_dir.c. Those two are RetroKernel programs: they link at
+# 0x810000 via program.ld and write to the GPU, neither of which exists in
+# the colorlight_i5_llm profile. These link at 0x800000 through the
+# %.upload_sdram.elf pattern rule instead, so the BIOS monitor's 'L'/'G'
+# can run them directly. Explicit .bin rules, because the generic
+# %.bin: %.program.elf pattern rule above would otherwise claim them and
+# link them at the wrong address.
+
+hello_serial.bin: hello_serial.upload_sdram.elf
+	$(RVOBJCOPY) -O binary $< $@
+	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+
+upload_hello_serial: hello_serial.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
+sd_ls.bin: sd_ls.upload_sdram.elf
+	$(RVOBJCOPY) -O binary $< $@
+	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+
+upload_sd_ls: sd_ls.bin
+	python3 ../../TOOLS/xmodem_upload.py $< $(PORT) 800000 --follow
+
 # Explicit upload target for the memory test. MUST be 800000 to match
 # upload_sdram.ld -- the generic upload_% rule below uses 810000 (the
 # RetroKernel program address) and would load this at the wrong address
